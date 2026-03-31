@@ -96,32 +96,14 @@ impl TerminalApp {
         self.cols = width;
         self.rows = height;
 
-        // 填满整个可用空间而不是分配固定大小
-        let available_rect = ui.available_rect_before_wrap();
-
-        // 分配这个大小给终端渲染
-        ui.allocate_rect(available_rect, egui::Sense::click_and_drag());
-
+        // 直接渲染到整个可用空间，不分配任何特定大小
         self.renderer.render(ui, &terminal_guard, self.cursor_visible);
     }
 }
 
 impl eframe::App for TerminalApp {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let terminal_guard = self.terminal.lock();
-        let (width, height) = terminal_guard.get_dimensions();
-        self.cols = width;
-        self.rows = height;
-
-        ui.allocate_exact_size(
-            egui::vec2(
-                width as f32 * self.renderer.char_width + self.renderer.padding * 2.0,
-                height as f32 * self.renderer.line_height + self.renderer.padding * 2.0,
-            ),
-            egui::Sense::click_and_drag(),
-        );
-
-        self.renderer.render(ui, &terminal_guard, self.cursor_visible);
+    fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // UI handled in update()
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

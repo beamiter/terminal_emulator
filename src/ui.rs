@@ -28,28 +28,31 @@ impl TerminalRenderer {
         let rows = grid.len();
         let cols = if rows > 0 { grid[0].len() } else { 80 };
 
-        // 获取可用空间
-        let available_rect = ui.available_rect_before_wrap();
-        let available_width = available_rect.width();
-        let available_height = available_rect.height();
+        // 获取可用空间 - 这应该是整个 panel
+        let available = ui.available_size();
+        let available_width = available.x;
+        let available_height = available.y;
 
-        // 计算能够显示的字符网格大小（考虑到 padding）
-        let usable_width = available_width - self.padding * 2.0;
-        let usable_height = available_height - self.padding * 2.0;
+        eprintln!("[UI] 可用空间: {:.0} x {:.0}", available_width, available_height);
+        eprintln!("[UI] 网格: {} x {}", cols, rows);
 
-        // 计算实际的字符宽度和行高以填满可用空间
-        let char_width = (usable_width / cols as f32).max(4.0);  // 最小 4px/字符
-        let line_height = (usable_height / rows as f32).max(8.0); // 最小 8px/行
+        // 计算字符宽度和行高来填满空间
+        let char_width = (available_width / cols as f32).max(4.0);
+        let line_height = (available_height / rows as f32).max(8.0);
 
-        // 创建一个覆盖整个可用空间的矩形
+        eprintln!("[UI] 字符大小: {:.1} x {:.1}", char_width, line_height);
+
+        // 分配整个可用空间
         let (rect, response) = ui.allocate_exact_size(
             Vec2::new(available_width, available_height),
             egui::Sense::click_and_drag(),
         );
 
+        eprintln!("[UI] 分配的 rect: {:?}", rect);
+
         let painter = ui.painter_at(rect);
 
-        // 绘制背景
+        // 绘制背景 - 填满整个 rect
         painter.rect_filled(
             rect,
             egui::CornerRadius::ZERO,
@@ -57,16 +60,17 @@ impl TerminalRenderer {
         );
 
         let cursor_pos = terminal.get_cursor_pos();
+        let padding = 2.0;
 
-        // 绘制网格内容
+        // 绘制网格
         for row_idx in 0..rows {
             for col_idx in 0..cols {
                 let cell = &grid[row_idx][col_idx];
 
-                let x = rect.left() + self.padding + col_idx as f32 * char_width;
-                let y = rect.top() + self.padding + row_idx as f32 * line_height;
+                // 精确计算位置
+                let x = rect.left() + padding + col_idx as f32 * char_width;
+                let y = rect.top() + padding + row_idx as f32 * line_height;
 
-                // 确定背景颜色
                 let bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
                     color::defaults::selection()
                 } else if cell.flags.inverse {
@@ -82,8 +86,8 @@ impl TerminalRenderer {
 
                 painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
 
-                // 绘制文本
-                if cell.character != ' ' {
+                // 绘制字符
+                if cell.character != ' ' && cell.character.is_ascii_graphic() {
                     let fg_color = if cell.flags.inverse {
                         color::to_egui_color32(cell.background)
                     } else {
@@ -91,9 +95,7 @@ impl TerminalRenderer {
                     };
 
                     let text = cell.character.to_string();
-
-                    // 动态调整字体大小以适应可用空间
-                    let font_size = (line_height * 0.8).min(16.0).max(8.0);
+                    let font_size = (line_height * 0.7).min(14.0).max(6.0);
                     let mut font_id = FontId::monospace(font_size);
 
                     if cell.flags.bold {
@@ -106,14 +108,13 @@ impl TerminalRenderer {
                         fg_color,
                     );
 
-                    // 居中绘制字符
+                    // 居中绘制
                     let text_x = x + (char_width - galley.size().x) / 2.0;
                     let text_y = y + (line_height - galley.size().y) / 2.0;
                     painter.galley(egui::pos2(text_x, text_y), galley, Color32::TRANSPARENT);
 
-                    // 下划线
                     if cell.flags.underline {
-                        let underline_y = y + line_height - 2.0;
+                        let underline_y = y + line_height - 1.0;
                         painter.line_segment(
                             [egui::pos2(x, underline_y), egui::pos2(x + char_width, underline_y)],
                             egui::Stroke::new(1.0, fg_color),
@@ -122,20 +123,18 @@ impl TerminalRenderer {
                 }
 
                 // 绘制光标
-                if (row_idx, col_idx) == cursor_pos {
-                    if cursor_visible {
-                        painter.rect_filled(
-                            cell_rect,
-                            egui::CornerRadius::ZERO,
-                            Color32::from_rgba_unmultiplied(255, 255, 255, 40),
-                        );
-                        painter.rect_stroke(
-                            cell_rect,
-                            egui::CornerRadius::ZERO,
-                            egui::Stroke::new(2.0, color::defaults::CURSOR),
-                            egui::StrokeKind::Middle,
-                        );
-                    }
+                if (row_idx, col_idx) == cursor_pos && cursor_visible {
+                    painter.rect_filled(
+                        cell_rect,
+                        egui::CornerRadius::ZERO,
+                        Color32::from_rgba_unmultiplied(255, 255, 255, 50),
+                    );
+                    painter.rect_stroke(
+                        cell_rect,
+                        egui::CornerRadius::ZERO,
+                        egui::Stroke::new(2.0, color::defaults::CURSOR),
+                        egui::StrokeKind::Middle,
+                    );
                 }
             }
         }
