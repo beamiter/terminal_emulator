@@ -96,13 +96,11 @@ impl TerminalApp {
         self.cols = width;
         self.rows = height;
 
-        ui.allocate_exact_size(
-            egui::vec2(
-                width as f32 * self.renderer.char_width + self.renderer.padding * 2.0,
-                height as f32 * self.renderer.line_height + self.renderer.padding * 2.0,
-            ),
-            egui::Sense::click_and_drag(),
-        );
+        // 填满整个可用空间而不是分配固定大小
+        let available_rect = ui.available_rect_before_wrap();
+
+        // 分配这个大小给终端渲染
+        ui.allocate_rect(available_rect, egui::Sense::click_and_drag());
 
         self.renderer.render(ui, &terminal_guard, self.cursor_visible);
     }

@@ -28,16 +28,28 @@ impl TerminalRenderer {
         let rows = grid.len();
         let cols = if rows > 0 { grid[0].len() } else { 80 };
 
-        let terminal_width = cols as f32 * self.char_width + self.padding * 2.0;
-        let terminal_height = rows as f32 * self.line_height + self.padding * 2.0;
+        // 获取可用空间
+        let available_rect = ui.available_rect_before_wrap();
+        let available_width = available_rect.width();
+        let available_height = available_rect.height();
 
+        // 计算能够显示的字符网格大小（考虑到 padding）
+        let usable_width = available_width - self.padding * 2.0;
+        let usable_height = available_height - self.padding * 2.0;
+
+        // 计算实际的字符宽度和行高以填满可用空间
+        let char_width = (usable_width / cols as f32).max(4.0);  // 最小 4px/字符
+        let line_height = (usable_height / rows as f32).max(8.0); // 最小 8px/行
+
+        // 创建一个覆盖整个可用空间的矩形
         let (rect, response) = ui.allocate_exact_size(
-            Vec2::new(terminal_width, terminal_height),
+            Vec2::new(available_width, available_height),
             egui::Sense::click_and_drag(),
         );
 
         let painter = ui.painter_at(rect);
 
+        // 绘制背景
         painter.rect_filled(
             rect,
             egui::CornerRadius::ZERO,
@@ -46,16 +58,16 @@ impl TerminalRenderer {
 
         let cursor_pos = terminal.get_cursor_pos();
 
+        // 绘制网格内容
         for row_idx in 0..rows {
             for col_idx in 0..cols {
                 let cell = &grid[row_idx][col_idx];
 
-                let x = rect.left() + self.padding + col_idx as f32 * self.char_width;
-                let y = rect.top() + self.padding + row_idx as f32 * self.line_height;
+                let x = rect.left() + self.padding + col_idx as f32 * char_width;
+                let y = rect.top() + self.padding + row_idx as f32 * line_height;
 
-                // Determine background color
+                // 确定背景颜色
                 let bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
-                    // Selection highlight - slightly transparent
                     color::defaults::selection()
                 } else if cell.flags.inverse {
                     color::to_egui_color32(cell.foreground)
@@ -65,12 +77,12 @@ impl TerminalRenderer {
 
                 let cell_rect = egui::Rect::from_min_size(
                     egui::pos2(x, y),
-                    Vec2::new(self.char_width, self.line_height),
+                    Vec2::new(char_width, line_height),
                 );
 
                 painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
 
-                // Draw text if it's not a space
+                // 绘制文本
                 if cell.character != ' ' {
                     let fg_color = if cell.flags.inverse {
                         color::to_egui_color32(cell.background)
@@ -79,7 +91,10 @@ impl TerminalRenderer {
                     };
 
                     let text = cell.character.to_string();
-                    let mut font_id = FontId::monospace(self.font_size);
+
+                    // 动态调整字体大小以适应可用空间
+                    let font_size = (line_height * 0.8).min(16.0).max(8.0);
+                    let mut font_id = FontId::monospace(font_size);
 
                     if cell.flags.bold {
                         font_id.size *= 1.1;
@@ -91,22 +106,24 @@ impl TerminalRenderer {
                         fg_color,
                     );
 
-                    painter.galley(egui::pos2(x, y), galley, Color32::TRANSPARENT);
+                    // 居中绘制字符
+                    let text_x = x + (char_width - galley.size().x) / 2.0;
+                    let text_y = y + (line_height - galley.size().y) / 2.0;
+                    painter.galley(egui::pos2(text_x, text_y), galley, Color32::TRANSPARENT);
 
-                    // Draw underline if needed
+                    // 下划线
                     if cell.flags.underline {
-                        let underline_y = y + self.line_height - 2.0;
+                        let underline_y = y + line_height - 2.0;
                         painter.line_segment(
-                            [egui::pos2(x, underline_y), egui::pos2(x + self.char_width, underline_y)],
+                            [egui::pos2(x, underline_y), egui::pos2(x + char_width, underline_y)],
                             egui::Stroke::new(1.0, fg_color),
                         );
                     }
                 }
 
-                // Draw cursor with blinking effect
+                // 绘制光标
                 if (row_idx, col_idx) == cursor_pos {
                     if cursor_visible {
-                        // Block cursor
                         painter.rect_filled(
                             cell_rect,
                             egui::CornerRadius::ZERO,

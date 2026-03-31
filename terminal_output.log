@@ -1,0 +1,20 @@
+✓ Shell session started successfully
+[IOLoop] 后台 I/O 线程启动
+[IOLoop] 读取 150 字节的 PTY 数据
+[IOLoop] 后台线程仍在运行... (迭代: 1000)
+[IOLoop] 后台线程仍在运行... (迭代: 2000)
+[IOLoop] 后台线程仍在运行... (迭代: 3000)
+[IOLoop] 输入已写入 PTY (1 字节)
+[IOLoop] 读取 1 字节的 PTY 数据
+[IOLoop] 输入已写入 PTY (1 字节)
+[IOLoop] 读取 1 字节的 PTY 数据
+[IOLoop] 输入已写入 PTY (1 字节)
+[IOLoop] 读取 346 字节的 PTY 数据
+[IOLoop] 输入已写入 PTY (1 字节)
+[IOLoop] 读取 1 字节的 PTY 数据
+[IOLoop] 输入已写入 PTY (1 字节)
+[IOLoop] 读取 1 字节的 PTY 数据
+[IOLoop] 输入已写入 PTY (1 字节)
+[IOLoop] 读取 1 字节的 PTY 数据
+[IOLoop] 输入已写入 PTY (1 字节)
+[IOLoop] 读取 198 字节的 PTY 数据
