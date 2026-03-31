@@ -94,6 +94,8 @@ impl TerminalRenderer {
                     };
 
                     let text = cell.character.to_string();
+
+                    // Use simple text rendering via painter.text()
                     let font_size = (line_height * 0.7).min(14.0).max(6.0);
                     let mut font_id = FontId::monospace(font_size);
 
@@ -101,16 +103,18 @@ impl TerminalRenderer {
                         font_id.size *= 1.1;
                     }
 
-                    let galley = ui.painter().layout_no_wrap(
-                        text,
+                    // Left-align text in cell
+                    let text_x = x + 1.0;
+                    let text_y = y + 2.0;
+
+                    // Draw character directly
+                    painter.text(
+                        egui::pos2(text_x, text_y),
+                        egui::Align2::LEFT_TOP,
+                        &text,
                         font_id,
                         fg_color,
                     );
-
-                    // Left-align text in cell
-                    let text_x = x + 1.0;
-                    let text_y = y + (line_height - galley.size().y) / 2.0;
-                    painter.galley(egui::pos2(text_x, text_y), galley, Color32::TRANSPARENT);
 
                     if cell.flags.underline {
                         let underline_y = y + line_height - 1.0;
@@ -180,7 +184,6 @@ impl TerminalRenderer {
                     if !text.is_empty() && text.as_bytes()[0] < 32 {
                         continue;
                     }
-                    eprintln!("[INPUT] Text event: {:?}", text);
                     input.extend(text.as_bytes());
                 }
                 egui::Event::Key {

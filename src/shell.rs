@@ -85,8 +85,6 @@ impl ShellSession {
                     match pty_guard.read(&mut buf) {
                         Ok(n) if n > 0 => {
                             let data = buf[..n].to_vec();
-                            let preview = String::from_utf8_lossy(&data[..n.min(60)]);
-                            eprintln!("[IOLoop] 读取 {} 字节: {:?}", n, preview);
                             if event_tx.send(ShellEvent::Output(data)).is_err() {
                                 eprintln!("[IOLoop] 接收者已断开，退出循环");
                                 return;

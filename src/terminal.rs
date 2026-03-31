@@ -85,8 +85,6 @@ impl TerminalState {
 
     pub fn process_input(&mut self, input: &[u8]) {
         let mut i = 0;
-        let input_preview = String::from_utf8_lossy(&input[..input.len().min(80)]);
-        eprintln!("[TERMINAL] process_input: {:?}", input_preview);
 
         while i < input.len() {
             let byte = input[i];
