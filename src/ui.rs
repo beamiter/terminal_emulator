@@ -60,7 +60,7 @@ impl TerminalRenderer {
         );
 
         let cursor_pos = terminal.get_cursor_pos();
-        let padding = 2.0;
+        let padding = 0.0;  // 移除 padding 让内容顶格
 
         // 绘制网格
         for row_idx in 0..rows {
@@ -124,15 +124,16 @@ impl TerminalRenderer {
 
                 // 绘制光标
                 if (row_idx, col_idx) == cursor_pos && cursor_visible {
+                    // 使用深灰色的半透明填充
                     painter.rect_filled(
                         cell_rect,
                         egui::CornerRadius::ZERO,
-                        Color32::from_rgba_unmultiplied(255, 255, 255, 50),
+                        Color32::from_rgba_unmultiplied(80, 80, 80, 100),
                     );
                     painter.rect_stroke(
                         cell_rect,
                         egui::CornerRadius::ZERO,
-                        egui::Stroke::new(2.0, color::defaults::CURSOR),
+                        egui::Stroke::new(1.5, color::defaults::CURSOR),
                         egui::StrokeKind::Middle,
                     );
                 }

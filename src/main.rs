@@ -72,7 +72,7 @@ impl TerminalApp {
         let init_msg = b"Terminal Emulator v0.4.0\r\nEnter your commands:\r\n$ ";
         term.process_input(init_msg);
 
-        let renderer = TerminalRenderer::new(14.0, 5.0);
+        let renderer = TerminalRenderer::new(14.0, 0.0);  // padding 改为 0
         let clipboard = ClipboardManager::new().ok();
 
         TerminalApp {

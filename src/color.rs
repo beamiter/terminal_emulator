@@ -67,7 +67,7 @@ pub mod defaults {
 
     pub const FOREGROUND: Color32 = Color32::from_rgb(229, 229, 229);
     pub const BACKGROUND: Color32 = Color32::from_rgb(29, 29, 29);
-    pub const CURSOR: Color32 = Color32::from_rgb(229, 229, 229);
+    pub const CURSOR: Color32 = Color32::from_rgb(80, 80, 80);  // 深灰色光标
     pub fn selection() -> Color32 {
         Color32::from_rgba_unmultiplied(200, 200, 200, 100)
     }
