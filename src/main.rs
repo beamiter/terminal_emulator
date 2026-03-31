@@ -90,14 +90,20 @@ impl TerminalApp {
         }
     }
 
-    fn render_ui(&mut self, ui: &mut egui::Ui) {
+    fn render_ui(&mut self, ctx: &egui::Context) {
         let terminal_guard = self.terminal.lock();
         let (width, height) = terminal_guard.get_dimensions();
         self.cols = width;
         self.rows = height;
 
-        // 直接渲染到整个可用空间，不分配任何特定大小
-        self.renderer.render(ui, &terminal_guard, self.cursor_visible);
+        // 使用 Area 来完全自定义布局，避免 panel 的 padding
+        egui::Area::new(egui::Id::new("terminal_area"))
+            .fixed_pos(egui::pos2(0.0, 0.0))
+            .show(ctx, |ui| {
+                let screen_size = ctx.viewport_rect().size();
+                ui.set_max_size(screen_size);
+                self.renderer.render(ui, &terminal_guard, self.cursor_visible);
+            });
     }
 }
 
@@ -200,16 +206,8 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        // Main UI - 移除 padding 让内容顶格
-        #[allow(deprecated)]
-        {
-            egui::CentralPanel::default()
-                .frame(egui::Frame::none())
-                .show(ctx, |ui| {
-                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
-                    self.render_ui(ui);
-                });
-        }
+        // 渲染 UI - 使用 Area 实现真正的全屏填充
+        self.render_ui(ctx);
 
         // Request repaint for cursor blinking
         ctx.request_repaint();
