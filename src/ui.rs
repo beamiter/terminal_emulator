@@ -28,31 +28,31 @@ impl TerminalRenderer {
         let rows = grid.len();
         let cols = if rows > 0 { grid[0].len() } else { 80 };
 
-        // 获取可用空间 - 这应该是整个 panel
+        // Get available space
         let available = ui.available_size();
         let available_width = available.x;
         let available_height = available.y;
 
-        eprintln!("[UI] 可用空间: {:.0} x {:.0}", available_width, available_height);
-        eprintln!("[UI] 网格: {} x {}", cols, rows);
+        eprintln!("[UI] Available: {:.0} x {:.0}", available_width, available_height);
+        eprintln!("[UI] Grid: {} x {}", cols, rows);
 
-        // 计算字符宽度和行高来填满空间
+        // Calculate character width/height
         let char_width = (available_width / cols as f32).max(4.0);
         let line_height = (available_height / rows as f32).max(8.0);
 
-        eprintln!("[UI] 字符大小: {:.1} x {:.1}", char_width, line_height);
+        eprintln!("[UI] Char size: {:.1} x {:.1}", char_width, line_height);
 
-        // 分配整个可用空间
+        // Allocate the full available space
         let (rect, response) = ui.allocate_exact_size(
             Vec2::new(available_width, available_height),
             egui::Sense::click_and_drag(),
         );
 
-        eprintln!("[UI] 分配的 rect: {:?}", rect);
+        eprintln!("[UI] Rect: {:?}", rect);
 
         let painter = ui.painter_at(rect);
 
-        // 绘制背景 - 填满整个 rect
+        // Paint background for entire rect
         painter.rect_filled(
             rect,
             egui::CornerRadius::ZERO,
@@ -60,16 +60,15 @@ impl TerminalRenderer {
         );
 
         let cursor_pos = terminal.get_cursor_pos();
-        let padding = 0.0;  // 移除 padding 让内容顶格
 
-        // 绘制网格
+        // Render grid
         for row_idx in 0..rows {
             for col_idx in 0..cols {
                 let cell = &grid[row_idx][col_idx];
 
-                // 精确计算位置
-                let x = rect.left() + padding + col_idx as f32 * char_width;
-                let y = rect.top() + padding + row_idx as f32 * line_height;
+                // Position from rect top-left
+                let x = rect.left() + col_idx as f32 * char_width;
+                let y = rect.top() + row_idx as f32 * line_height;
 
                 let bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
                     color::defaults::selection()
@@ -86,7 +85,7 @@ impl TerminalRenderer {
 
                 painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
 
-                // 绘制字符
+                // Render character
                 if cell.character != ' ' && cell.character.is_ascii_graphic() {
                     let fg_color = if cell.flags.inverse {
                         color::to_egui_color32(cell.background)
@@ -108,8 +107,8 @@ impl TerminalRenderer {
                         fg_color,
                     );
 
-                    // 居中绘制
-                    let text_x = x + (char_width - galley.size().x) / 2.0;
+                    // Left-align text in cell
+                    let text_x = x + 1.0;
                     let text_y = y + (line_height - galley.size().y) / 2.0;
                     painter.galley(egui::pos2(text_x, text_y), galley, Color32::TRANSPARENT);
 
@@ -122,9 +121,8 @@ impl TerminalRenderer {
                     }
                 }
 
-                // 绘制光标
+                // Render cursor
                 if (row_idx, col_idx) == cursor_pos && cursor_visible {
-                    // 使用深灰色的半透明填充
                     painter.rect_filled(
                         cell_rect,
                         egui::CornerRadius::ZERO,
