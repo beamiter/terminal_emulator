@@ -22,7 +22,7 @@ impl TerminalRenderer {
         }
     }
 
-    pub fn render(&self, ui: &mut Ui, terminal: &TerminalState) -> Response {
+    pub fn render(&self, ui: &mut Ui, terminal: &TerminalState, cursor_visible: bool) -> Response {
         let grid = terminal.get_visible_cells();
 
         let rows = grid.len();
@@ -53,7 +53,9 @@ impl TerminalRenderer {
                 let x = rect.left() + self.padding + col_idx as f32 * self.char_width;
                 let y = rect.top() + self.padding + row_idx as f32 * self.line_height;
 
+                // Determine background color
                 let bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
+                    // Selection highlight - slightly transparent
                     color::defaults::selection()
                 } else if cell.flags.inverse {
                     color::to_egui_color32(cell.foreground)
@@ -68,6 +70,7 @@ impl TerminalRenderer {
 
                 painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
 
+                // Draw text if it's not a space
                 if cell.character != ' ' {
                     let fg_color = if cell.flags.inverse {
                         color::to_egui_color32(cell.background)
@@ -89,15 +92,33 @@ impl TerminalRenderer {
                     );
 
                     painter.galley(egui::pos2(x, y), galley, Color32::TRANSPARENT);
+
+                    // Draw underline if needed
+                    if cell.flags.underline {
+                        let underline_y = y + self.line_height - 2.0;
+                        painter.line_segment(
+                            [egui::pos2(x, underline_y), egui::pos2(x + self.char_width, underline_y)],
+                            egui::Stroke::new(1.0, fg_color),
+                        );
+                    }
                 }
 
+                // Draw cursor with blinking effect
                 if (row_idx, col_idx) == cursor_pos {
-                    painter.rect_stroke(
-                        cell_rect,
-                        egui::CornerRadius::ZERO,
-                        egui::Stroke::new(1.0, Color32::WHITE),
-                        egui::StrokeKind::Middle,
-                    );
+                    if cursor_visible {
+                        // Block cursor
+                        painter.rect_filled(
+                            cell_rect,
+                            egui::CornerRadius::ZERO,
+                            Color32::from_rgba_unmultiplied(255, 255, 255, 40),
+                        );
+                        painter.rect_stroke(
+                            cell_rect,
+                            egui::CornerRadius::ZERO,
+                            egui::Stroke::new(2.0, color::defaults::CURSOR),
+                            egui::StrokeKind::Middle,
+                        );
+                    }
                 }
             }
         }

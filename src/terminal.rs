@@ -194,6 +194,23 @@ impl TerminalState {
                 let n = params.first().copied().unwrap_or(1) as usize;
                 self.cursor_col = self.cursor_col.saturating_sub(n);
             }
+            'E' => {
+                // Move cursor down and to start of line
+                let n = params.first().copied().unwrap_or(1) as usize;
+                self.cursor_row = (self.cursor_row + n).min(self.grid.len() - 1);
+                self.cursor_col = 0;
+            }
+            'F' => {
+                // Move cursor up and to start of line
+                let n = params.first().copied().unwrap_or(1) as usize;
+                self.cursor_row = self.cursor_row.saturating_sub(n);
+                self.cursor_col = 0;
+            }
+            'G' => {
+                // Move cursor to column
+                let col = params.first().copied().unwrap_or(1) as usize;
+                self.cursor_col = col.saturating_sub(1).min(self.grid[0].len() - 1);
+            }
             'H' | 'f' => {
                 let row = params.get(0).copied().unwrap_or(1) as usize;
                 let col = params.get(1).copied().unwrap_or(1) as usize;
@@ -202,13 +219,56 @@ impl TerminalState {
             }
             'J' => {
                 match params.first().copied().unwrap_or(0) {
+                    0 => {
+                        // Clear from cursor to end of display
+                        for col in self.cursor_col..self.grid[0].len() {
+                            self.grid[self.cursor_row][col] = TerminalCell::default();
+                        }
+                        for row in (self.cursor_row + 1)..self.grid.len() {
+                            for col in 0..self.grid[0].len() {
+                                self.grid[row][col] = TerminalCell::default();
+                            }
+                        }
+                    }
+                    1 => {
+                        // Clear from start to cursor
+                        for row in 0..=self.cursor_row {
+                            let end_col = if row == self.cursor_row {
+                                self.cursor_col + 1
+                            } else {
+                                self.grid[0].len()
+                            };
+                            for col in 0..end_col {
+                                self.grid[row][col] = TerminalCell::default();
+                            }
+                        }
+                    }
                     2 => self.clear_screen(),
                     _ => {}
                 }
             }
             'K' => {
-                for col in self.cursor_col..self.grid[0].len() {
-                    self.grid[self.cursor_row][col] = TerminalCell::default();
+                // Clear line
+                match params.first().copied().unwrap_or(0) {
+                    0 => {
+                        // Clear from cursor to end of line
+                        for col in self.cursor_col..self.grid[0].len() {
+                            self.grid[self.cursor_row][col] = TerminalCell::default();
+                        }
+                    }
+                    1 => {
+                        // Clear from start of line to cursor
+                        for col in 0..=self.cursor_col {
+                            self.grid[self.cursor_row][col] = TerminalCell::default();
+                        }
+                    }
+                    2 => {
+                        // Clear entire line
+                        for col in 0..self.grid[0].len() {
+                            self.grid[self.cursor_row][col] = TerminalCell::default();
+                        }
+                    }
+                    _ => {}
                 }
             }
             'm' => {
@@ -223,12 +283,44 @@ impl TerminalState {
                 self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
                 self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
             }
+            'S' => {
+                // Scroll up
+                let n = params.first().copied().unwrap_or(1) as usize;
+                for _ in 0..n {
+                    if self.grid.len() > 0 {
+                        let cols = self.grid[0].len();
+                        let old_line = std::mem::replace(
+                            &mut self.grid[0],
+                            vec![TerminalCell::default(); cols],
+                        );
+                        self.grid.remove(0);
+                        self.grid.push(vec![TerminalCell::default(); cols]);
+                        if self.scrollback.len() >= self.max_scrollback {
+                            self.scrollback.pop_front();
+                        }
+                        self.scrollback.push_back(old_line);
+                    }
+                }
+            }
+            'T' => {
+                // Scroll down
+                let n = params.first().copied().unwrap_or(1) as usize;
+                for _ in 0..n {
+                    if self.grid.len() > 0 {
+                        let cols = self.grid[0].len();
+                        self.grid.pop();
+                        self.grid.insert(0, vec![TerminalCell::default(); cols]);
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     fn handle_sgr(&mut self, params: &[u16]) {
-        for &param in params {
+        let mut i = 0;
+        while i < params.len() {
+            let param = params[i];
             match param {
                 0 => {
                     self.current_flags = StyleFlags::default();
@@ -296,8 +388,56 @@ impl TerminalState {
                         _ => Color::Default,
                     };
                 }
+                // Extended color support: 38;5;n (256 color) and 38;2;r;g;b (RGB)
+                38 => {
+                    if i + 2 < params.len() {
+                        match params[i + 1] {
+                            5 => {
+                                // 256 color mode
+                                self.current_fg = Color::Indexed(params[i + 2] as u8);
+                                i += 2;
+                            }
+                            2 => {
+                                // RGB mode
+                                if i + 4 < params.len() {
+                                    self.current_fg = Color::Rgb(
+                                        params[i + 2] as u8,
+                                        params[i + 3] as u8,
+                                        params[i + 4] as u8,
+                                    );
+                                    i += 4;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                48 => {
+                    if i + 2 < params.len() {
+                        match params[i + 1] {
+                            5 => {
+                                // 256 color mode for background
+                                self.current_bg = Color::Indexed(params[i + 2] as u8);
+                                i += 2;
+                            }
+                            2 => {
+                                // RGB mode for background
+                                if i + 4 < params.len() {
+                                    self.current_bg = Color::Rgb(
+                                        params[i + 2] as u8,
+                                        params[i + 3] as u8,
+                                        params[i + 4] as u8,
+                                    );
+                                    i += 4;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 _ => {}
             }
+            i += 1;
         }
     }
 
