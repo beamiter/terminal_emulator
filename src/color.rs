@@ -18,7 +18,7 @@ pub fn to_egui_color32(color: Color) -> Color32 {
         Color::BrightBlue => Color32::from_rgb(85, 85, 255),
         Color::BrightMagenta => Color32::from_rgb(255, 85, 255),
         Color::BrightCyan => Color32::from_rgb(85, 255, 255),
-        Color::BrightWhite => Color32::from_rgb(255, 255, 255),
+        Color::BrightWhite => Color32::from_rgb(240, 240, 240),  // 稍微暗点的白，避免看不清
         Color::Indexed(idx) => color_256(idx),
         Color::Rgb(r, g, b) => Color32::from_rgb(r, g, b),
         Color::Default => Color32::from_rgb(229, 229, 229),
@@ -65,7 +65,7 @@ pub fn color_256(idx: u8) -> Color32 {
 pub mod defaults {
     use egui::Color32;
 
-    pub const FOREGROUND: Color32 = Color32::from_rgb(229, 229, 229);
+    pub const FOREGROUND: Color32 = Color32::from_rgb(200, 200, 200);  // 更深的灰色，更清晰
     pub const BACKGROUND: Color32 = Color32::from_rgb(29, 29, 29);
     pub const CURSOR: Color32 = Color32::from_rgb(80, 80, 80);  // 深灰色光标
     pub fn selection() -> Color32 {

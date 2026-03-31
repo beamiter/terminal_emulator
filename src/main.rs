@@ -200,12 +200,15 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        // Main UI
+        // Main UI - 移除 padding 让内容顶格
         #[allow(deprecated)]
         {
-            egui::CentralPanel::default().show(ctx, |ui| {
-                self.render_ui(ui);
-            });
+            egui::CentralPanel::default()
+                .frame(egui::Frame::none())
+                .show(ctx, |ui| {
+                    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                    self.render_ui(ui);
+                });
         }
 
         // Request repaint for cursor blinking
