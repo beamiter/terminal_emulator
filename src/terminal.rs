@@ -59,6 +59,7 @@ pub struct TerminalState {
     current_fg: Color,
     current_bg: Color,
     current_flags: StyleFlags,
+    pub window_title: String,
 }
 
 impl TerminalState {
@@ -78,6 +79,7 @@ impl TerminalState {
             current_fg: Color::Default,
             current_bg: Color::Default,
             current_flags: StyleFlags::default(),
+            window_title: String::new(),
         }
     }
 

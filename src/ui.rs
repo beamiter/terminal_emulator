@@ -161,6 +161,10 @@ impl TerminalRenderer {
         for event in events {
             match event {
                 egui::Event::Text(text) => {
+                    // 不处理特殊按键对应的文本事件
+                    if !text.is_empty() && text.as_bytes()[0] < 32 {
+                        continue;
+                    }
                     input.extend(text.as_bytes());
                 }
                 egui::Event::Key {
@@ -178,6 +182,11 @@ impl TerminalRenderer {
                         egui::Key::ArrowDown => Some("\x1b[B"),
                         egui::Key::ArrowRight => Some("\x1b[C"),
                         egui::Key::ArrowLeft => Some("\x1b[D"),
+                        egui::Key::Home => Some("\x1b[H"),
+                        egui::Key::End => Some("\x1b[F"),
+                        egui::Key::Delete => Some("\x1b[3~"),
+                        egui::Key::PageUp => Some("\x1b[5~"),
+                        egui::Key::PageDown => Some("\x1b[6~"),
                         _ => None,
                     };
 
@@ -185,11 +194,15 @@ impl TerminalRenderer {
                         input.extend(s.as_bytes());
                     }
 
+                    // 控制键组合
                     if modifiers.ctrl && key == egui::Key::C {
-                        input.extend(b"\x03");
+                        input.extend(b"\x03");  // SIGINT
                     }
                     if modifiers.ctrl && key == egui::Key::D {
-                        input.extend(b"\x04");
+                        input.extend(b"\x04");  // EOF
+                    }
+                    if modifiers.ctrl && key == egui::Key::L {
+                        input.extend(b"\x0c");  // 清屏（Ctrl+L）
                     }
                 }
                 _ => {}
