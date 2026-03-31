@@ -56,22 +56,21 @@ impl TerminalApp {
         let (shell, shell_rx) = match ShellSession::new(cols, rows) {
             Ok(session) => {
                 let rx = session.events().clone();
+                eprintln!("✓ Shell session started successfully");
                 (Some(session), Some(rx))
             }
             Err(e) => {
-                eprintln!("Failed to start shell: {}", e);
+                eprintln!("✗ Failed to start shell: {}", e);
                 (None, None)
             }
         };
 
-        // Show welcome message with colors
+        // 初始化终端显示
         let mut term = terminal;
-        let welcome = if shell.is_some() {
-            "Shell started successfully\r\n$ ".as_bytes()
-        } else {
-            "Failed to start shell\r\nYou can still test ANSI colors and terminal features\r\n$ ".as_bytes()
-        };
-        term.process_input(welcome);
+
+        // 写入初始提示
+        let init_msg = b"Terminal Emulator v0.4.0\r\nEnter your commands:\r\n$ ";
+        term.process_input(init_msg);
 
         let renderer = TerminalRenderer::new(14.0, 5.0);
         let clipboard = ClipboardManager::new().ok();

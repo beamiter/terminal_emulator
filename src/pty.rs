@@ -4,6 +4,11 @@ use std::ffi::CString;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+// 声明全局环境变量指针
+extern "C" {
+    static environ: *const *const libc::c_char;
+}
+
 #[cfg(unix)]
 mod unix_pty {
     use super::*;
@@ -76,39 +81,43 @@ mod unix_pty {
                         libc::close(slave);
                     }
 
-                    // 获取 shell 路径
-                    let shell = std::env::var("SHELL")
-                        .unwrap_or_else(|_| "/bin/bash".to_string());
+                    // 获取 shell 路径 - 在 fork 之前可能更安全，但这里应该也可以
+                    let shell_path = if let Ok(shell) = std::env::var("SHELL") {
+                        shell
+                    } else {
+                        "/bin/bash".to_string()
+                    };
 
-                    // 创建 C 字符串
-                    let shell_cstr = match CString::new(shell.clone()) {
+                    // 创建 C 字符串们
+                    let shell_cstr = match CString::new(shell_path.clone()) {
                         Ok(s) => s,
                         Err(_) => {
                             libc::perror(b"Invalid shell path\0".as_ptr() as *const i8);
-                            libc::exit(1);
+                            libc::exit(127);
                         }
                     };
 
-                    let shell_arg = match CString::new(shell.clone()) {
+                    // 使用简单的 "-bash" 作为 argv[0]
+                    let dash_bash = match CString::new("-bash") {
                         Ok(s) => s,
-                        Err(_) => libc::exit(1),
+                        Err(_) => {
+                            libc::perror(b"Invalid shell name\0".as_ptr() as *const i8);
+                            libc::exit(127);
+                        }
                     };
 
-                    // 执行 shell，使用 -i 为交互模式
+                    // 构造 argv
                     let argv = [
-                        shell_cstr.as_ptr(),
-                        shell_arg.as_ptr(),
+                        dash_bash.as_ptr(),
                         std::ptr::null(),
                     ];
 
-                    // 创建一个空环境，保持最小化
-                    let env = [std::ptr::null()];
-
-                    libc::execve(shell_cstr.as_ptr(), argv.as_ptr(), env.as_ptr());
+                    // 执行 shell，继承当前环境
+                    libc::execve(shell_cstr.as_ptr(), argv.as_ptr(), environ);
 
                     // 如果 execve 返回，说明出错
                     libc::perror(b"execve failed\0".as_ptr() as *const i8);
-                    libc::exit(1);
+                    libc::exit(127);
                 } else {
                     // 父进程分支
                     // 关闭 slave

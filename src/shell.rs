@@ -58,13 +58,23 @@ impl ShellSession {
     ) {
         let mut buf = vec![0u8; 4096];
         let mut last_alive_check = std::time::Instant::now();
+        let mut iteration = 0;
+
+        eprintln!("[IOLoop] 后台 I/O 线程启动");
 
         loop {
+            iteration += 1;
+
             // 处理输入队列（非阻塞）
             while let Ok(data) = input_rx.try_recv() {
                 if let Ok(mut pty_guard) = pty.lock() {
-                    if let Err(e) = pty_guard.write(&data) {
-                        let _ = event_tx.send(ShellEvent::Error(format!("Write error: {}", e)));
+                    match pty_guard.write(&data) {
+                        Ok(_) => {
+                            eprintln!("[IOLoop] 输入已写入 PTY ({} 字节)", data.len());
+                        }
+                        Err(e) => {
+                            let _ = event_tx.send(ShellEvent::Error(format!("Write error: {}", e)));
+                        }
                     }
                 }
             }
@@ -75,12 +85,14 @@ impl ShellSession {
                     match pty_guard.read(&mut buf) {
                         Ok(n) if n > 0 => {
                             let data = buf[..n].to_vec();
+                            eprintln!("[IOLoop] 读取 {} 字节的 PTY 数据", n);
                             if event_tx.send(ShellEvent::Output(data)).is_err() {
-                                // 接收者已断开，退出循环
+                                eprintln!("[IOLoop] 接收者已断开，退出循环");
                                 return;
                             }
                         }
                         Err(e) => {
+                            eprintln!("[IOLoop] 读取错误: {}", e);
                             let _ = event_tx.send(ShellEvent::Error(format!("Read error: {}", e)));
                         }
                         _ => {
@@ -91,8 +103,10 @@ impl ShellSession {
                     // 每100ms检查一次子进程状态
                     if last_alive_check.elapsed() > Duration::from_millis(100) {
                         if !pty_guard.is_alive() {
+                            eprintln!("[IOLoop] 检测到子进程已退出");
                             match pty_guard.wait_timeout(0) {
                                 Ok(exit_code) => {
+                                    eprintln!("[IOLoop] 子进程退出码: {}", exit_code);
                                     let _ = event_tx.send(ShellEvent::Exit(exit_code));
                                 }
                                 Err(e) => {
@@ -109,8 +123,13 @@ impl ShellSession {
                 }
             }
 
+            // 每1000次迭代（约10秒）输出一次状态
+            if iteration % 1000 == 0 {
+                eprintln!("[IOLoop] 后台线程仍在运行... (迭代: {})", iteration);
+            }
+
             // 睡眠以防止 CPU 忙轮询，保留 UI 响应性
-            thread::sleep(Duration::from_millis(10));
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 
