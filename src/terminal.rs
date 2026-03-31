@@ -85,6 +85,8 @@ impl TerminalState {
 
     pub fn process_input(&mut self, input: &[u8]) {
         let mut i = 0;
+        let input_preview = String::from_utf8_lossy(&input[..input.len().min(80)]);
+        eprintln!("[TERMINAL] process_input: {:?}", input_preview);
 
         while i < input.len() {
             let byte = input[i];
@@ -120,9 +122,35 @@ impl TerminalState {
                     }
                     i += 1;
                 }
+                b'\x1b' if i + 1 < input.len() && input[i + 1] == b']' => {
+                    // OSC (Operating System Command) sequence
+                    // Format: ESC ] ... BEL or ESC ] ... ESC \
+                    i += 2;  // Skip ESC ]
+
+                    // Read until BEL (0x07) or ESC \ (0x1b 0x5c)
+                    while i < input.len() {
+                        if input[i] == 0x07 {
+                            // BEL terminator
+                            i += 1;
+                            break;
+                        } else if i + 1 < input.len() && input[i] == 0x1b && input[i + 1] == 0x5c {
+                            // ESC \ terminator
+                            i += 2;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
                 b'\x1b' if i + 1 < input.len() && input[i + 1] == b'[' => {
-                    // Escape sequence
+                    // CSI (Control Sequence Introducer) - normal escape sequence
                     i += 2;
+
+                    // Skip private mode indicator (?)
+                    if i < input.len() && input[i] == b'?' {
+                        i += 1;
+                    }
+
                     let mut params = Vec::new();
                     let mut param_str = String::new();
 

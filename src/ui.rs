@@ -180,6 +180,7 @@ impl TerminalRenderer {
                     if !text.is_empty() && text.as_bytes()[0] < 32 {
                         continue;
                     }
+                    eprintln!("[INPUT] Text event: {:?}", text);
                     input.extend(text.as_bytes());
                 }
                 egui::Event::Key {
