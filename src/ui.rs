@@ -75,7 +75,11 @@ impl TerminalRenderer {
                 } else if cell.flags.inverse {
                     color::to_egui_color32(cell.foreground)
                 } else {
-                    color::to_egui_color32(cell.background)
+                    // Handle default background color specially
+                    match cell.background {
+                        crate::terminal::Color::Default => color::defaults::BACKGROUND,
+                        _ => color::to_egui_color32(cell.background),
+                    }
                 };
 
                 let cell_rect = egui::Rect::from_min_size(
@@ -102,7 +106,7 @@ impl TerminalRenderer {
                     }
 
                     let galley = ui.painter().layout_no_wrap(
-                        text,
+                        text.clone(),
                         font_id,
                         fg_color,
                     );
