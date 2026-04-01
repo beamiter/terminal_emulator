@@ -65,13 +65,17 @@ impl TerminalRenderer {
         // Track selection start on initial mouse down
         if response.drag_started() {
             if let Some(pos) = response.interact_pointer_pos() {
+                // Clamp position to rect bounds to prevent underflow
+                let clamped_x = (pos.x - rect.left()).max(0.0);
+                let clamped_y = (pos.y - rect.top()).max(0.0);
+
                 let col = if char_width > 0.0 {
-                    ((pos.x - rect.left()) / char_width) as usize
+                    ((clamped_x / char_width) as usize).min(cols - 1)
                 } else {
                     0
                 };
                 let row = if line_height > 0.0 {
-                    ((pos.y - rect.top()) / line_height) as usize
+                    ((clamped_y / line_height) as usize).min(rows - 1)
                 } else {
                     0
                 };
@@ -82,13 +86,17 @@ impl TerminalRenderer {
         // Update selection end during drag
         if response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {
+                // Clamp position to rect bounds to prevent underflow
+                let clamped_x = (pos.x - rect.left()).max(0.0);
+                let clamped_y = (pos.y - rect.top()).max(0.0);
+
                 let col = if char_width > 0.0 {
-                    ((pos.x - rect.left()) / char_width) as usize
+                    ((clamped_x / char_width) as usize).min(cols - 1)
                 } else {
                     0
                 };
                 let row = if line_height > 0.0 {
-                    ((pos.y - rect.top()) / line_height) as usize
+                    ((clamped_y / line_height) as usize).min(rows - 1)
                 } else {
                     0
                 };
