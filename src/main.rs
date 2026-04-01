@@ -140,20 +140,35 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Handle Ctrl+Shift+C for copy selection
-        if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl && i.modifiers.shift) {
+        // 打印所有按键事件用于调试
+        let all_events = ctx.input(|i| i.events.clone());
+        for evt in &all_events {
+            if let egui::Event::Key { key, pressed, modifiers, .. } = evt {
+                if *pressed {
+                    eprintln!("[update()] ALL Raw Key: {:?}, Ctrl: {}, Shift: {}, Alt: {}",
+                        key, modifiers.ctrl, modifiers.shift, modifiers.alt);
+                }
+            }
+        }
+
+        // Handle Ctrl+Shift+A for copy selection (改用 A 而不是 C)
+        if ctx.input(|i| i.key_pressed(egui::Key::A) && i.modifiers.ctrl && i.modifiers.shift) {
+            eprintln!("[update()] ✓ Detected Ctrl+Shift+A (copy)");
             if let Some(clipboard) = &self.clipboard {
                 let terminal = self.terminal.lock();
                 if let Some(text) = terminal.copy_selection() {
+                    eprintln!("[update()] Copied: {:?}", &text[..text.len().min(30)]);
                     let _ = clipboard.copy(&text);
                 }
             }
         }
 
-        // Handle Ctrl+Shift+V for paste
-        if ctx.input(|i| i.key_pressed(egui::Key::V) && i.modifiers.ctrl && i.modifiers.shift) {
+        // Handle Ctrl+Shift+D for paste (改用 D 而不是 V)
+        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && i.modifiers.shift) {
+            eprintln!("[update()] ✓ Detected Ctrl+Shift+D (paste)");
             if let Some(clipboard) = &self.clipboard {
                 if let Ok(text) = clipboard.paste() {
+                    eprintln!("[update()] Pasted: {:?}", &text[..text.len().min(30)]);
                     if !text.is_empty() {
                         if let Some(shell) = &self.shell {
                             let _ = shell.write(text.as_bytes());

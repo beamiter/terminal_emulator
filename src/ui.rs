@@ -239,6 +239,10 @@ impl TerminalRenderer {
                     modifiers,
                     ..
                 } => {
+                    // 打印所有按键事件用于调试
+                    eprintln!("[handle_keyboard_input] Key: {:?}, Ctrl: {}, Shift: {}, Alt: {}",
+                        key, modifiers.ctrl, modifiers.shift, modifiers.alt);
+
                     let seq = match key {
                         egui::Key::Enter => Some("\r"),
                         egui::Key::Escape => Some("\x1b"),
