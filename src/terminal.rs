@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use unicode_width::UnicodeWidthChar;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Color {
@@ -25,6 +26,8 @@ pub struct TerminalCell {
     pub foreground: Color,
     pub background: Color,
     pub flags: StyleFlags,
+    pub wide: bool,
+    pub wide_continuation: bool,
 }
 
 impl Default for TerminalCell {
@@ -34,6 +37,8 @@ impl Default for TerminalCell {
             foreground: Color::Default,
             background: Color::Default,
             flags: StyleFlags::default(),
+            wide: false,
+            wide_continuation: false,
         }
     }
 }
@@ -60,6 +65,11 @@ pub struct TerminalState {
     current_bg: Color,
     current_flags: StyleFlags,
     pub window_title: String,
+
+    // UTF-8 decoding buffer
+    utf8_buf: [u8; 4],
+    utf8_len: u8,
+    utf8_expected: u8,
 }
 
 impl TerminalState {
@@ -80,7 +90,70 @@ impl TerminalState {
             current_bg: Color::Default,
             current_flags: StyleFlags::default(),
             window_title: String::new(),
+            utf8_buf: [0; 4],
+            utf8_len: 0,
+            utf8_expected: 0,
         }
+    }
+
+    fn put_char(&mut self, ch: char) {
+        let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        if width == 0 {
+            return; // Skip zero-width characters for now
+        }
+
+        let cols = self.grid[self.cursor_row].len();
+
+        // If wide character doesn't fit at end of line, wrap to next line
+        if self.cursor_col + width > cols {
+            self.cursor_col = 0;
+            self.cursor_row += 1;
+            if self.cursor_row >= self.grid.len() {
+                self.cursor_row = self.grid.len() - 1;
+                self.scroll_down();
+            }
+        }
+
+        // If current position has a continuation cell to its left, clear the wide character
+        if self.cursor_col > 0 && self.grid[self.cursor_row][self.cursor_col].wide_continuation {
+            self.grid[self.cursor_row][self.cursor_col - 1] = TerminalCell::default();
+        }
+
+        // If current position has a wide character, clear its continuation cell
+        if self.grid[self.cursor_row][self.cursor_col].wide && self.cursor_col + 1 < cols {
+            self.grid[self.cursor_row][self.cursor_col + 1] = TerminalCell::default();
+        }
+
+        // Write character
+        let cell = &mut self.grid[self.cursor_row][self.cursor_col];
+        cell.character = ch;
+        cell.foreground = self.current_fg;
+        cell.background = self.current_bg;
+        cell.flags = self.current_flags;
+        cell.wide = width == 2;
+        cell.wide_continuation = false;
+
+        // Set up wide character continuation cell if needed
+        if width == 2 && self.cursor_col + 1 < cols {
+            let cont_cell = &mut self.grid[self.cursor_row][self.cursor_col + 1];
+            *cont_cell = TerminalCell::default();
+            cont_cell.wide_continuation = true;
+        }
+
+        self.cursor_col += width;
+    }
+
+    fn clear_cell(&mut self, row: usize, col: usize) {
+        let cols = self.grid[row].len();
+        // If clearing a continuation cell, also clear the wide character body
+        if self.grid[row][col].wide_continuation && col > 0 {
+            self.grid[row][col - 1] = TerminalCell::default();
+        }
+        // If clearing a wide character body, also clear the continuation cell
+        if self.grid[row][col].wide && col + 1 < cols {
+            self.grid[row][col + 1] = TerminalCell::default();
+        }
+        self.grid[row][col] = TerminalCell::default();
     }
 
     pub fn process_input(&mut self, input: &[u8]) {
@@ -178,26 +251,50 @@ impl TerminalState {
                     }
                 }
                 32..=126 => {
-                    // Printable character
-                    if self.cursor_col >= self.grid[self.cursor_row].len() {
-                        self.cursor_col = 0;
-                        self.cursor_row += 1;
-                        if self.cursor_row >= self.grid.len() {
-                            self.cursor_row = self.grid.len() - 1;
-                            self.scroll_down();
-                        }
-                    }
-
-                    let cell = &mut self.grid[self.cursor_row][self.cursor_col];
-                    cell.character = byte as char;
-                    cell.foreground = self.current_fg;
-                    cell.background = self.current_bg;
-                    cell.flags = self.current_flags;
-
-                    self.cursor_col += 1;
+                    // ASCII printable character
+                    self.put_char(byte as char);
+                    i += 1;
+                }
+                // UTF-8 2-byte sequence (0xC2-0xDF)
+                0xC2..=0xDF => {
+                    self.utf8_buf[0] = byte;
+                    self.utf8_len = 1;
+                    self.utf8_expected = 2;
+                    i += 1;
+                }
+                // UTF-8 3-byte sequence (0xE0-0xEF)
+                0xE0..=0xEF => {
+                    self.utf8_buf[0] = byte;
+                    self.utf8_len = 1;
+                    self.utf8_expected = 3;
+                    i += 1;
+                }
+                // UTF-8 4-byte sequence (0xF0-0xF4)
+                0xF0..=0xF4 => {
+                    self.utf8_buf[0] = byte;
+                    self.utf8_len = 1;
+                    self.utf8_expected = 4;
                     i += 1;
                 }
                 _ => {
+                    // Invalid byte or continuation byte with no sequence - skip
+                    if self.utf8_len > 0 && (byte & 0xC0) == 0x80 {
+                        // UTF-8 continuation byte
+                        self.utf8_buf[self.utf8_len as usize] = byte;
+                        self.utf8_len += 1;
+                        if self.utf8_len == self.utf8_expected {
+                            // Sequence complete, decode it
+                            if let Ok(s) = std::str::from_utf8(&self.utf8_buf[..self.utf8_len as usize]) {
+                                if let Some(ch) = s.chars().next() {
+                                    self.put_char(ch);
+                                }
+                            }
+                            self.utf8_len = 0;
+                        }
+                    } else {
+                        // Invalid continuation byte or stray byte - reset buffer and skip
+                        self.utf8_len = 0;
+                    }
                     i += 1;
                 }
             }
@@ -250,11 +347,11 @@ impl TerminalState {
                     0 => {
                         // Clear from cursor to end of display
                         for col in self.cursor_col..self.grid[0].len() {
-                            self.grid[self.cursor_row][col] = TerminalCell::default();
+                            self.clear_cell(self.cursor_row, col);
                         }
                         for row in (self.cursor_row + 1)..self.grid.len() {
                             for col in 0..self.grid[0].len() {
-                                self.grid[row][col] = TerminalCell::default();
+                                self.clear_cell(row, col);
                             }
                         }
                     }
@@ -267,7 +364,7 @@ impl TerminalState {
                                 self.grid[0].len()
                             };
                             for col in 0..end_col {
-                                self.grid[row][col] = TerminalCell::default();
+                                self.clear_cell(row, col);
                             }
                         }
                     }
@@ -281,19 +378,19 @@ impl TerminalState {
                     0 => {
                         // Clear from cursor to end of line
                         for col in self.cursor_col..self.grid[0].len() {
-                            self.grid[self.cursor_row][col] = TerminalCell::default();
+                            self.clear_cell(self.cursor_row, col);
                         }
                     }
                     1 => {
                         // Clear from start of line to cursor
                         for col in 0..=self.cursor_col {
-                            self.grid[self.cursor_row][col] = TerminalCell::default();
+                            self.clear_cell(self.cursor_row, col);
                         }
                     }
                     2 => {
                         // Clear entire line
                         for col in 0..self.grid[0].len() {
-                            self.grid[self.cursor_row][col] = TerminalCell::default();
+                            self.clear_cell(self.cursor_row, col);
                         }
                     }
                     _ => {}
@@ -517,7 +614,10 @@ impl TerminalState {
 
             if sel.start.0 == sel.end.0 {
                 for col in sel.start.1..=sel.end.1.min(cols - 1) {
-                    result.push(self.grid[sel.start.0][col].character);
+                    let cell = &self.grid[sel.start.0][col];
+                    if !cell.wide_continuation {
+                        result.push(cell.character);
+                    }
                 }
             } else {
                 for row in sel.start.0..=sel.end.0.min(self.grid.len() - 1) {
@@ -529,7 +629,10 @@ impl TerminalState {
                     };
 
                     for col in start_col..=end_col {
-                        result.push(self.grid[row][col].character);
+                        let cell = &self.grid[row][col];
+                        if !cell.wide_continuation {
+                            result.push(cell.character);
+                        }
                     }
 
                     if row < sel.end.0 {

@@ -25,7 +25,32 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Terminal Emulator - ANSI Color Support",
         options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
+            let mut fonts = egui::FontDefinitions::default();
+
+            // Try to load system CJK fonts
+            let cjk_font_paths = [
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+                "/usr/share/fonts/wenquanyi/wqy-zenhei.ttc",
+            ];
+
+            for path in &cjk_font_paths {
+                if let Ok(font_data) = std::fs::read(path) {
+                    fonts.font_data.insert(
+                        "cjk".to_owned(),
+                        std::sync::Arc::new(egui::FontData::from_owned(font_data)),
+                    );
+                    fonts.families
+                        .get_mut(&egui::FontFamily::Monospace)
+                        .unwrap()
+                        .push("cjk".to_owned());
+                    break;
+                }
+            }
+
+            cc.egui_ctx.set_fonts(fonts);
             Ok(Box::new(TerminalApp::new()))
         }),
     )

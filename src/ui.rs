@@ -82,15 +82,16 @@ impl TerminalRenderer {
                     }
                 };
 
+                let cell_width = if cell.wide { char_width * 2.0 } else { char_width };
                 let cell_rect = egui::Rect::from_min_size(
                     egui::pos2(x, y),
-                    Vec2::new(char_width, line_height),
+                    Vec2::new(cell_width, line_height),
                 );
 
                 painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
 
                 // Render character
-                if cell.character != ' ' && cell.character.is_ascii_graphic() {
+                if cell.character != ' ' && !cell.wide_continuation {
                     let fg_color = if cell.flags.inverse {
                         color::to_egui_color32(cell.background)
                     } else {
