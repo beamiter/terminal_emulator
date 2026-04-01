@@ -56,6 +56,14 @@ fn main() -> Result<(), eframe::Error> {
             }
 
             cc.egui_ctx.set_fonts(fonts);
+
+            // 设置暗色主题，避免浮夸的亮色背景
+            let mut visuals = egui::Visuals::dark();
+            visuals.window_fill = egui::Color32::from_rgb(29, 29, 29);
+            visuals.panel_fill = egui::Color32::from_rgb(29, 29, 29);
+            visuals.extreme_bg_color = egui::Color32::from_rgb(20, 20, 20);
+            cc.egui_ctx.set_visuals(visuals);
+
             Ok(Box::new(TerminalApp::new()))
         }),
     )
