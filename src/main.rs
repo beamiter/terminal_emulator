@@ -213,27 +213,15 @@ impl eframe::App for TerminalApp {
         let all_events = ctx.input(|i| i.events.clone());
         let mut consumed_keys = std::collections::HashSet::new();
 
-        // 处理粘贴事件（Ctrl+V 会被转换成这个）
-        for evt in &all_events {
-            if let egui::Event::Paste(content) = evt {
-                if !content.is_empty() {
-                    if let Some(shell) = &self.shell {
-                        let _ = shell.write(content.as_bytes());
-                    } else {
-                        let mut input_guard = self.input_queue.lock();
-                        input_guard.extend(content.as_bytes());
-                    }
-                    consumed_keys.insert("Paste");
-                }
-            }
-        }
+        // 不再拦截快捷键，完全释放给 shell
+        // Ctrl+C: shell 会收到 SIGINT（中断）
+        // Ctrl+V: 由输入法处理或正常键盘输入
+        // Ctrl+X: 不再做剪切
 
+        // 仅保留 Ctrl+Shift+C/V 用于终端的复制粘贴（不影响 shell）
         for evt in &all_events {
             if let egui::Event::Key { key, pressed, modifiers, .. } = evt {
-                // === 快捷键优先级：复制/粘贴 > 终端信号 ===
-                // 处理按键释放事件（pressed=false）来规避输入法延迟
-
-                // Ctrl+Shift+C: 强制复制（处理 pressed=false 来规避输入法）
+                // Ctrl+Shift+C: 终端复制选中文本
                 if *key == egui::Key::C && modifiers.ctrl && modifiers.shift && !*pressed {
                     if let Some(clipboard) = &self.clipboard {
                         let terminal = self.terminal.lock();
@@ -244,7 +232,7 @@ impl eframe::App for TerminalApp {
                     consumed_keys.insert("Ctrl+Shift+C");
                 }
 
-                // Ctrl+Shift+V: 强制粘贴
+                // Ctrl+Shift+V: 终端粘贴
                 if *key == egui::Key::V && modifiers.ctrl && modifiers.shift && !*pressed {
                     if let Some(clipboard) = &self.clipboard {
                         if let Ok(text) = clipboard.paste() {
@@ -259,49 +247,6 @@ impl eframe::App for TerminalApp {
                         }
                     }
                     consumed_keys.insert("Ctrl+Shift+V");
-                }
-
-                // 处理 pressed=true 事件作为备选
-                if *pressed {
-                    // Ctrl+C: 如果有选中，优先复制；否则发送 SIGINT
-                    if *key == egui::Key::C && modifiers.ctrl && !modifiers.shift {
-                        if let Some(text) = self.terminal.lock().copy_selection() {
-                            if let Some(clipboard) = &self.clipboard {
-                                let _ = clipboard.copy(&text);
-                            }
-                            consumed_keys.insert("Ctrl+C");
-                        }
-                        // 如果没有选中，放行给 handle_keyboard_input，发送 SIGINT
-                    }
-
-                    // Ctrl+X: 剪切（需要有选中文本）
-                    if *key == egui::Key::X && modifiers.ctrl && !modifiers.shift {
-                        if let Some(text) = self.terminal.lock().copy_selection() {
-                            if let Some(clipboard) = &self.clipboard {
-                                let _ = clipboard.copy(&text);
-                            }
-                            // 清除选中（剪切后）
-                            self.terminal.lock().clear_selection();
-                            consumed_keys.insert("Ctrl+X");
-                        }
-                    }
-
-                    // Ctrl+V: 粘贴（通常被转换成 Paste 事件，这里作为备份）
-                    if *key == egui::Key::V && modifiers.ctrl && !modifiers.shift {
-                        if let Some(clipboard) = &self.clipboard {
-                            if let Ok(text) = clipboard.paste() {
-                                if !text.is_empty() {
-                                    if let Some(shell) = &self.shell {
-                                        let _ = shell.write(text.as_bytes());
-                                    } else {
-                                        let mut input_guard = self.input_queue.lock();
-                                        input_guard.extend(text.as_bytes());
-                                    }
-                                }
-                            }
-                        }
-                        consumed_keys.insert("Ctrl+V");
-                    }
                 }
             }
         }
