@@ -70,6 +70,10 @@ pub struct TerminalState {
     current_flags: StyleFlags,
     pub window_title: String,
 
+    // Scrolling region (DECSTBM)
+    scroll_region_top: usize,
+    scroll_region_bottom: usize,
+
     // UTF-8 decoding buffer
     utf8_buf: [u8; 4],
     utf8_len: u8,
@@ -116,6 +120,8 @@ impl TerminalState {
             ime_enabled: false,
             preedit_text: String::new(),
             preedit_cursor: 0,
+            scroll_region_top: 0,
+            scroll_region_bottom: rows.saturating_sub(1),
             modes,
         }
     }
@@ -242,7 +248,8 @@ impl TerminalState {
                     i += 2;
 
                     // Skip private mode indicator (?)
-                    if i < input.len() && input[i] == b'?' {
+                    let is_private_mode = i < input.len() && input[i] == b'?';
+                    if is_private_mode {
                         i += 1;
                     }
 
@@ -270,6 +277,9 @@ impl TerminalState {
 
                     if i < input.len() {
                         let cmd = input[i] as char;
+                        if is_private_mode {
+                            eprintln!("[ANSI-RAW] CSI ? (private mode) cmd={}", cmd);
+                        }
                         self.handle_escape_sequence(&params, cmd);
                         i += 1;
                     }
@@ -326,6 +336,14 @@ impl TerminalState {
     }
 
     fn handle_escape_sequence(&mut self, params: &[u16], cmd: char) {
+        // Debug logging for vim commands
+        let params_str = params.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(";");
+        eprintln!("[ANSI] CSI {}{}{}  (cursor: {},{}, use_alt: {})",
+            if params_str.is_empty() { "(default)".to_string() } else { params_str.clone() },
+            if !params.is_empty() { ":" } else { "" },
+            cmd,
+            self.cursor_row, self.cursor_col, self.use_alt_buffer);
+
         match cmd {
             'A' => {
                 let n = params.first().copied().unwrap_or(1) as usize;
@@ -433,32 +451,68 @@ impl TerminalState {
                 self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
             }
             'S' => {
-                // Scroll up
+                // Scroll up (Scroll Up, SU) - content moves up, new lines appear at bottom
                 let n = params.first().copied().unwrap_or(1) as usize;
+                eprintln!("[ANSI-S] Scroll up {} lines in region {}-{}", n, self.scroll_region_top, self.scroll_region_bottom);
+
+                // Scroll within the scroll region by moving lines
                 for _ in 0..n {
-                    if self.grid.len() > 0 {
-                        let cols = self.grid[0].len();
-                        let old_line = std::mem::replace(
-                            &mut self.grid[0],
-                            vec![TerminalCell::default(); cols],
-                        );
-                        self.grid.remove(0);
-                        self.grid.push(vec![TerminalCell::default(); cols]);
-                        if self.scrollback.len() >= self.max_scrollback {
-                            self.scrollback.pop_front();
+                    if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
+                        let cols = self.grid[self.scroll_region_top].len();
+
+                        // Shift lines up within the region
+                        let mut new_lines = Vec::new();
+
+                        // Keep lines from top+1 to bottom
+                        for i in (self.scroll_region_top + 1)..=self.scroll_region_bottom {
+                            if i < self.grid.len() {
+                                new_lines.push(self.grid[i].clone());
+                            }
                         }
-                        self.scrollback.push_back(old_line);
+
+                        // Add a blank line at the bottom
+                        new_lines.push(vec![TerminalCell::default(); cols]);
+
+                        // Replace region lines
+                        for (i, line) in new_lines.iter().enumerate() {
+                            self.grid[self.scroll_region_top + i] = line.clone();
+                        }
+
+                        // Save scrolled-out line to scrollback only if it was the top line of the full screen
+                        if self.scroll_region_top == 0 {
+                            if self.scrollback.len() >= self.max_scrollback {
+                                self.scrollback.pop_front();
+                            }
+                        }
                     }
                 }
             }
             'T' => {
-                // Scroll down
+                // Scroll down (Scroll Down, SD) - content moves down, new lines appear at top
                 let n = params.first().copied().unwrap_or(1) as usize;
+                eprintln!("[ANSI-T] Scroll down {} lines in region {}-{}", n, self.scroll_region_top, self.scroll_region_bottom);
+
+                // Scroll within the scroll region by moving lines
                 for _ in 0..n {
-                    if self.grid.len() > 0 {
-                        let cols = self.grid[0].len();
-                        self.grid.pop();
-                        self.grid.insert(0, vec![TerminalCell::default(); cols]);
+                    if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
+                        let cols = self.grid[self.scroll_region_top].len();
+
+                        // Shift lines down within the region by collecting from bottom to top
+                        let mut new_lines = vec![vec![TerminalCell::default(); cols]]; // New blank line at top
+
+                        // Keep lines from top to bottom-1
+                        for i in self.scroll_region_top..self.scroll_region_bottom {
+                            if i < self.grid.len() {
+                                new_lines.push(self.grid[i].clone());
+                            }
+                        }
+
+                        // Replace region lines
+                        for (i, line) in new_lines.iter().enumerate() {
+                            if self.scroll_region_top + i <= self.scroll_region_bottom {
+                                self.grid[self.scroll_region_top + i] = line.clone();
+                            }
+                        }
                     }
                 }
             }
@@ -488,6 +542,27 @@ impl TerminalState {
                 for &mode in params {
                     self.reset_mode(mode);
                 }
+            }
+            'r' => {
+                // Set scroll region (DECSTBM)
+                let top = params.get(0).copied().unwrap_or(1) as usize;
+                let bottom = params.get(1).copied().unwrap_or(self.grid.len() as u16) as usize;
+
+                // Convert from 1-indexed to 0-indexed, and clamp to valid range
+                self.scroll_region_top = top.saturating_sub(1).min(self.grid.len().saturating_sub(1));
+                self.scroll_region_bottom = bottom.saturating_sub(1).min(self.grid.len().saturating_sub(1));
+
+                // If range is invalid, reset to full screen
+                if self.scroll_region_top > self.scroll_region_bottom {
+                    self.scroll_region_top = 0;
+                    self.scroll_region_bottom = self.grid.len().saturating_sub(1);
+                }
+
+                eprintln!("[ANSI-r] Set scroll region: {} to {}", self.scroll_region_top, self.scroll_region_bottom);
+
+                // Move cursor to home position when setting scroll region
+                self.cursor_row = 0;
+                self.cursor_col = 0;
             }
             _ => {}
         }
@@ -752,6 +827,7 @@ impl TerminalState {
 
     fn scroll_down(&mut self) {
         if self.grid.len() > 0 {
+            eprintln!("[SCROLL] scroll_down() in buffer (alt={})", self.use_alt_buffer);
             let cols = self.grid[0].len();
             let old_line = std::mem::replace(&mut self.grid[0], vec![TerminalCell::default(); cols]);
             self.grid.remove(0);
