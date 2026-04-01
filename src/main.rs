@@ -68,6 +68,7 @@ struct TerminalApp {
     last_cursor_blink: std::time::Instant,
     cursor_visible: bool,
     status_message: String,
+    test_text: String,  // 用于测试 Ctrl+X/C/V
 }
 
 impl TerminalApp {
@@ -112,6 +113,7 @@ impl TerminalApp {
             last_cursor_blink: std::time::Instant::now(),
             cursor_visible: true,
             status_message: String::new(),
+            test_text: String::from("Test Ctrl+C/X/V here"),
         }
     }
 
@@ -122,12 +124,22 @@ impl TerminalApp {
         self.cols = width;
         self.rows = height;
 
+        // 测试窗口：显示 egui 原生 TextEdit
+        egui::Window::new("Test KeyInput")
+            .fixed_pos(egui::pos2(10.0, 10.0))
+            .fixed_size(egui::vec2(400.0, 100.0))
+            .show(ctx, |ui| {
+                ui.label("Try Ctrl+C/X/V here to test:");
+                ui.text_edit_multiline(&mut self.test_text);
+                ui.label("(Check stderr for key events)");
+            });
+
         // 使用 Area 来完全自定义布局，避免 panel 的 padding
         egui::Area::new(egui::Id::new("terminal_area"))
-            .fixed_pos(egui::pos2(0.0, 0.0))
+            .fixed_pos(egui::pos2(0.0, 130.0))
             .show(ctx, |ui| {
                 let screen_size = ctx.viewport_rect().size();
-                ui.set_max_size(screen_size);
+                ui.set_max_size(egui::vec2(screen_size.x, screen_size.y - 130.0));
                 let mut terminal_guard = self.terminal.lock();
                 self.renderer.render(ui, &mut terminal_guard, self.cursor_visible);
             });
@@ -140,70 +152,120 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // 打印所有按键事件用于调试
+        // Step 1: 在 egui 层面先处理所有快捷键，阻止它们被传给 PTY
         let all_events = ctx.input(|i| i.events.clone());
+        let mut consumed_keys = std::collections::HashSet::new();
+
         for evt in &all_events {
-            if let egui::Event::Key { key, pressed, modifiers, .. } = evt {
-                if *pressed {
-                    eprintln!("[update()] ALL Raw Key: {:?}, Ctrl: {}, Shift: {}, Alt: {}",
-                        key, modifiers.ctrl, modifiers.shift, modifiers.alt);
+            if let egui::Event::Key { key, pressed: true, modifiers, .. } = evt {
+                // 打印所有 Ctrl+ 组合用于调试
+                if modifiers.ctrl {
+                    eprintln!("[Step1-Raw] Ctrl+{:?}, Shift: {}", key, modifiers.shift);
                 }
-            }
-        }
 
-        // Handle Ctrl+Shift+A for copy selection (改用 A 而不是 C)
-        if ctx.input(|i| i.key_pressed(egui::Key::A) && i.modifiers.ctrl && i.modifiers.shift) {
-            eprintln!("[update()] ✓ Detected Ctrl+Shift+A (copy)");
-            if let Some(clipboard) = &self.clipboard {
-                let terminal = self.terminal.lock();
-                if let Some(text) = terminal.copy_selection() {
-                    eprintln!("[update()] Copied: {:?}", &text[..text.len().min(30)]);
-                    let _ = clipboard.copy(&text);
-                }
-            }
-        }
+                // === 快捷键优先级：复制/粘贴 > 终端信号 ===
 
-        // Handle Ctrl+Shift+D for paste (改用 D 而不是 V)
-        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && i.modifiers.shift) {
-            eprintln!("[update()] ✓ Detected Ctrl+Shift+D (paste)");
-            if let Some(clipboard) = &self.clipboard {
-                if let Ok(text) = clipboard.paste() {
-                    eprintln!("[update()] Pasted: {:?}", &text[..text.len().min(30)]);
-                    if !text.is_empty() {
-                        if let Some(shell) = &self.shell {
-                            let _ = shell.write(text.as_bytes());
-                        } else {
-                            let mut input_guard = self.input_queue.lock();
-                            input_guard.extend(text.as_bytes());
+                // Ctrl+C: 如果有选中，优先复制；否则发送 SIGINT
+                if *key == egui::Key::C && modifiers.ctrl && !modifiers.shift {
+                    if let Some(text) = self.terminal.lock().copy_selection() {
+                        eprintln!("[Step1] ✓ Ctrl+C (copy selected text)");
+                        if let Some(clipboard) = &self.clipboard {
+                            let _ = clipboard.copy(&text);
                         }
+                        consumed_keys.insert("Ctrl+C");
+                    }
+                    // 如果没有选中，放行给 handle_keyboard_input，发送 SIGINT
+                }
+
+                // Ctrl+X: 剪切（需要有选中文本）
+                if *key == egui::Key::X && modifiers.ctrl && !modifiers.shift {
+                    if let Some(text) = self.terminal.lock().copy_selection() {
+                        eprintln!("[Step1] ✓ Ctrl+X (cut selected text)");
+                        if let Some(clipboard) = &self.clipboard {
+                            let _ = clipboard.copy(&text);
+                        }
+                        // 清除选中（剪切后）
+                        self.terminal.lock().clear_selection();
+                        consumed_keys.insert("Ctrl+X");
                     }
                 }
-            }
-        }
 
-        // Handle copy with F2 or Ctrl+Insert as alternatives
-        if ctx.input(|i| i.key_pressed(egui::Key::F2) || (i.key_pressed(egui::Key::Insert) && i.modifiers.ctrl && !i.modifiers.shift)) {
-            if let Some(clipboard) = &self.clipboard {
-                let terminal = self.terminal.lock();
-                if let Some(text) = terminal.copy_selection() {
-                    let _ = clipboard.copy(&text);
-                }
-            }
-        }
-
-        // Handle paste with F3 or Shift+Insert
-        if ctx.input(|i| i.key_pressed(egui::Key::F3) || (i.key_pressed(egui::Key::Insert) && i.modifiers.shift && !i.modifiers.ctrl)) {
-            if let Some(clipboard) = &self.clipboard {
-                if let Ok(text) = clipboard.paste() {
-                    if !text.is_empty() {
-                        if let Some(shell) = &self.shell {
-                            let _ = shell.write(text.as_bytes());
-                        } else {
-                            let mut input_guard = self.input_queue.lock();
-                            input_guard.extend(text.as_bytes());
+                // Ctrl+V: 粘贴
+                if *key == egui::Key::V && modifiers.ctrl && !modifiers.shift {
+                    eprintln!("[Step1] ✓ Ctrl+V (paste)");
+                    if let Some(clipboard) = &self.clipboard {
+                        if let Ok(text) = clipboard.paste() {
+                            eprintln!("[Step1] Pasted: {} chars", text.len());
+                            if !text.is_empty() {
+                                if let Some(shell) = &self.shell {
+                                    let _ = shell.write(text.as_bytes());
+                                } else {
+                                    let mut input_guard = self.input_queue.lock();
+                                    input_guard.extend(text.as_bytes());
+                                }
+                            }
                         }
                     }
+                    consumed_keys.insert("Ctrl+V");
                 }
+
+                // Ctrl+Shift+C: 强制复制
+                if *key == egui::Key::C && modifiers.ctrl && modifiers.shift {
+                    eprintln!("[Step1] ✓ Ctrl+Shift+C (force copy)");
+                    if let Some(clipboard) = &self.clipboard {
+                        let terminal = self.terminal.lock();
+                        if let Some(text) = terminal.copy_selection() {
+                            let _ = clipboard.copy(&text);
+                        }
+                    }
+                    consumed_keys.insert("Ctrl+Shift+C");
+                }
+
+                // Ctrl+Shift+V: 强制粘贴
+                if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
+                    eprintln!("[Step1] ✓ Ctrl+Shift+V (force paste)");
+                    if let Some(clipboard) = &self.clipboard {
+                        if let Ok(text) = clipboard.paste() {
+                            eprintln!("[Step1] Pasted: {} chars", text.len());
+                            if !text.is_empty() {
+                                if let Some(shell) = &self.shell {
+                                    let _ = shell.write(text.as_bytes());
+                                } else {
+                                    let mut input_guard = self.input_queue.lock();
+                                    input_guard.extend(text.as_bytes());
+                                }
+                            }
+                        }
+                    }
+                    consumed_keys.insert("Ctrl+Shift+V");
+                }
+            }
+        }
+
+        // Step 2: 处理普通键盘输入，传给 handle_keyboard_input
+        // 但排除已经被消费的按键
+        let mut keyboard_input = Vec::new();
+        self.renderer
+            .handle_keyboard_input(ctx, &mut keyboard_input, &consumed_keys);
+
+        if !keyboard_input.is_empty() {
+            let mut input_guard = self.input_queue.lock();
+            input_guard.extend(keyboard_input);
+        }
+
+        // Process queued input - send to shell instead of local terminal
+        {
+            let mut input_guard = self.input_queue.lock();
+            if !input_guard.is_empty() {
+                if let Some(shell) = &self.shell {
+                    // 发送输入到 shell
+                    let _ = shell.write(&input_guard);
+                } else {
+                    // 如果没有 shell，本地处理输入
+                    let mut terminal = self.terminal.lock();
+                    terminal.process_input(&input_guard);
+                }
+                input_guard.clear();
             }
         }
 
@@ -235,16 +297,6 @@ impl eframe::App for TerminalApp {
             self.last_cursor_blink = std::time::Instant::now();
         }
 
-        // Collect keyboard input
-        let mut keyboard_input = Vec::new();
-        self.renderer
-            .handle_keyboard_input(ctx, &mut keyboard_input);
-
-        if !keyboard_input.is_empty() {
-            let mut input_guard = self.input_queue.lock();
-            input_guard.extend(keyboard_input);
-        }
-
         // Handle Ctrl+Up/Down for scroll
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) && i.modifiers.ctrl) {
             // Ctrl+Down: scroll down
@@ -256,22 +308,6 @@ impl eframe::App for TerminalApp {
             // Ctrl+Up: scroll up
             let mut terminal = self.terminal.lock();
             terminal.scroll(3);
-        }
-
-        // Process queued input - send to shell instead of local terminal
-        {
-            let mut input_guard = self.input_queue.lock();
-            if !input_guard.is_empty() {
-                if let Some(shell) = &self.shell {
-                    // 发送输入到 shell
-                    let _ = shell.write(&input_guard);
-                } else {
-                    // 如果没有 shell，本地处理输入
-                    let mut terminal = self.terminal.lock();
-                    terminal.process_input(&input_guard);
-                }
-                input_guard.clear();
-            }
         }
 
         // 渲染 UI - 使用 Area 实现真正的全屏填充

@@ -221,6 +221,7 @@ impl TerminalRenderer {
         &self,
         ctx: &egui::Context,
         input: &mut Vec<u8>,
+        consumed_keys: &std::collections::HashSet<&str>,
     ) {
         let events = ctx.input(|i| i.events.clone());
 
@@ -239,9 +240,21 @@ impl TerminalRenderer {
                     modifiers,
                     ..
                 } => {
-                    // 打印所有按键事件用于调试
-                    eprintln!("[handle_keyboard_input] Key: {:?}, Ctrl: {}, Shift: {}, Alt: {}",
-                        key, modifiers.ctrl, modifiers.shift, modifiers.alt);
+                    // 检查该按键是否已被上层处理
+                    let key_combo = match key {
+                        egui::Key::C if modifiers.ctrl && !modifiers.shift => "Ctrl+C",
+                        egui::Key::C if modifiers.ctrl && modifiers.shift => "Ctrl+Shift+C",
+                        egui::Key::X if modifiers.ctrl && !modifiers.shift => "Ctrl+X",
+                        egui::Key::V if modifiers.ctrl && !modifiers.shift => "Ctrl+V",
+                        egui::Key::V if modifiers.ctrl && modifiers.shift => "Ctrl+Shift+V",
+                        _ => "",
+                    };
+
+                    // 如果已被消费，跳过处理
+                    if !key_combo.is_empty() && consumed_keys.contains(key_combo) {
+                        eprintln!("[handle_keyboard_input] Skipping {} (already consumed)", key_combo);
+                        continue;
+                    }
 
                     let seq = match key {
                         egui::Key::Enter => Some("\r"),
@@ -264,7 +277,7 @@ impl TerminalRenderer {
                         input.extend(s.as_bytes());
                     }
 
-                    // 控制键组合
+                    // 控制键组合（Ctrl+C 只在没有选中时发送 SIGINT）
                     if modifiers.ctrl && !modifiers.shift && key == egui::Key::C {
                         input.extend(b"\x03");  // SIGINT
                     }

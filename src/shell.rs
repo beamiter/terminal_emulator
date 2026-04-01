@@ -92,6 +92,20 @@ impl ShellSession {
                         }
                         Err(e) => {
                             eprintln!("[IOLoop] 读取错误: {}", e);
+                            // 读取失败可能意味着进程已退出，立即检查
+                            if !pty_guard.is_alive() {
+                                eprintln!("[IOLoop] 读取失败且进程已退出，退出循环");
+                                match pty_guard.wait_timeout(0) {
+                                    Ok(exit_code) => {
+                                        let _ = event_tx.send(ShellEvent::Exit(exit_code));
+                                    }
+                                    Err(e) => {
+                                        let _ = event_tx.send(ShellEvent::Error(format!("Process exit error: {}", e)));
+                                    }
+                                }
+                                return;
+                            }
+                            // 进程仍活着但读取失败（可能是临时网络问题等），继续
                             let _ = event_tx.send(ShellEvent::Error(format!("Read error: {}", e)));
                         }
                         _ => {
