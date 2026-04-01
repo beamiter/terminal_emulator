@@ -68,9 +68,30 @@ impl ShellSession {
             // 处理输入队列（非阻塞）
             while let Ok(data) = input_rx.try_recv() {
                 if let Ok(mut pty_guard) = pty.lock() {
+                    // 检查是否包含特殊字节码
+                    let has_sigint = data.contains(&0x03);  // Ctrl+C
+                    let has_ctrl_x = data.contains(&0x18);  // Ctrl+X
+                    let has_ctrl_v = data.contains(&0x16);  // Ctrl+V
+
+                    if has_sigint || has_ctrl_x || has_ctrl_v {
+                        eprintln!("[IOLoop-DEBUG] ⚠ 检测到特殊字节码: SIGINT={} Ctrl+X={} Ctrl+V={}",
+                            has_sigint, has_ctrl_x, has_ctrl_v);
+                    }
+
+                    // 打印前20个字节便于调试
+                    let preview = data.iter()
+                        .take(20)
+                        .map(|b| format!("{:02x}", b))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    eprintln!("[IOLoop] 输入已写入 PTY ({} 字节): [{}{}]",
+                        data.len(),
+                        preview,
+                        if data.len() > 20 { " ..." } else { "" });
+
                     match pty_guard.write(&data) {
                         Ok(_) => {
-                            eprintln!("[IOLoop] 输入已写入 PTY ({} 字节)", data.len());
+                            // 已打印
                         }
                         Err(e) => {
                             let _ = event_tx.send(ShellEvent::Error(format!("Write error: {}", e)));

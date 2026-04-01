@@ -152,9 +152,48 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Step 1: 在 egui 层面先处理所有快捷键，阻止它们被传给 PTY
+        // Step 1: 在 egui 层面先处理所有快捷键和粘贴事件
         let all_events = ctx.input(|i| i.events.clone());
         let mut consumed_keys = std::collections::HashSet::new();
+
+        eprintln!("\n[Step1] 本帧接收 {} 个事件:", all_events.len());
+        for (idx, evt) in all_events.iter().enumerate() {
+            match evt {
+                egui::Event::Key { key, physical_key, pressed, repeat, modifiers } => {
+                    eprintln!("  [{}] Key: key={:?}, physical={:?}, pressed={}, repeat={}, ctrl={}, shift={}, alt={}, cmd={}",
+                        idx, key, physical_key, pressed, repeat, modifiers.ctrl, modifiers.shift, modifiers.alt, modifiers.command);
+                }
+                egui::Event::Text(text) => {
+                    let hex = text.chars()
+                        .map(|c| format!("U+{:04X}", c as u32))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    eprintln!("  [{}] Text: {:?} ({})", idx, text, hex);
+                }
+                egui::Event::Paste(content) => {
+                    eprintln!("  [{}] Paste: {} chars", idx, content.len());
+                }
+                _ => {
+                    eprintln!("  [{}] Other: {:?}", idx, evt);
+                }
+            }
+        }
+
+        // 处理粘贴事件（Ctrl+V 会被转换成这个）
+        for evt in &all_events {
+            if let egui::Event::Paste(content) = evt {
+                eprintln!("[Step1] ✓ Detected Paste event: {} chars", content.len());
+                if !content.is_empty() {
+                    if let Some(shell) = &self.shell {
+                        let _ = shell.write(content.as_bytes());
+                    } else {
+                        let mut input_guard = self.input_queue.lock();
+                        input_guard.extend(content.as_bytes());
+                    }
+                    consumed_keys.insert("Paste");
+                }
+            }
+        }
 
         for evt in &all_events {
             if let egui::Event::Key { key, pressed: true, modifiers, .. } = evt {
@@ -190,9 +229,9 @@ impl eframe::App for TerminalApp {
                     }
                 }
 
-                // Ctrl+V: 粘贴
+                // Ctrl+V: 粘贴（通常被转换成 Paste 事件，这里作为备份）
                 if *key == egui::Key::V && modifiers.ctrl && !modifiers.shift {
-                    eprintln!("[Step1] ✓ Ctrl+V (paste)");
+                    eprintln!("[Step1] ✓ Ctrl+V (paste) - as Key event");
                     if let Some(clipboard) = &self.clipboard {
                         if let Ok(text) = clipboard.paste() {
                             eprintln!("[Step1] Pasted: {} chars", text.len());
@@ -245,10 +284,21 @@ impl eframe::App for TerminalApp {
         // Step 2: 处理普通键盘输入，传给 handle_keyboard_input
         // 但排除已经被消费的按键
         let mut keyboard_input = Vec::new();
+        eprintln!("[Step2-DEBUG] consumed_keys 包含: {:?}", consumed_keys);
         self.renderer
             .handle_keyboard_input(ctx, &mut keyboard_input, &consumed_keys);
 
         if !keyboard_input.is_empty() {
+            let preview = keyboard_input.iter()
+                .take(20)
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+            eprintln!("[Step2-DEBUG] 收到键盘输入 ({} 字节): [{}{}]",
+                keyboard_input.len(),
+                preview,
+                if keyboard_input.len() > 20 { " ..." } else { "" });
+
             let mut input_guard = self.input_queue.lock();
             input_guard.extend(keyboard_input);
         }
