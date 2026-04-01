@@ -66,6 +66,11 @@ impl TerminalRenderer {
             for col_idx in 0..cols {
                 let cell = &grid[row_idx][col_idx];
 
+                // Skip rendering wide character continuations - they are handled by the wide character itself
+                if cell.wide_continuation {
+                    continue;
+                }
+
                 // Position from rect top-left
                 let x = rect.left() + col_idx as f32 * char_width;
                 let y = rect.top() + row_idx as f32 * line_height;
@@ -99,7 +104,10 @@ impl TerminalRenderer {
                     };
 
                     let text = cell.character.to_string();
-                    let font_size = (line_height * 0.7).min(14.0).max(6.0);
+                    // Font size should fit within cell width, not just line height
+                    // For wide characters, max width is char_width * 2
+                    let max_font_size = (char_width * 0.9).max(8.0);
+                    let font_size = (line_height * 0.7).min(max_font_size);
                     let mut font_id = FontId::monospace(font_size);
 
                     if cell.flags.bold {
