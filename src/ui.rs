@@ -287,6 +287,7 @@ impl TerminalRenderer {
                         continue;
                     }
 
+                    // Handle normal key sequences
                     let seq = match key {
                         egui::Key::Enter => Some("\r"),
                         egui::Key::Escape => Some("\x1b"),
@@ -308,15 +309,37 @@ impl TerminalRenderer {
                         input.extend(s.as_bytes());
                     }
 
-                    // 控制键组合（Ctrl+C 只在没有选中时发送 SIGINT）
-                    if modifiers.ctrl && !modifiers.shift && key == egui::Key::C {
-                        input.extend(b"\x03");  // SIGINT
-                    }
-                    if modifiers.ctrl && key == egui::Key::D {
-                        input.extend(b"\x04");  // EOF
-                    }
-                    if modifiers.ctrl && key == egui::Key::L {
-                        input.extend(b"\x0c");  // 清屏（Ctrl+L）
+                    // Handle Ctrl+letter combinations (send control characters)
+                    if modifiers.ctrl && !modifiers.shift && !modifiers.alt {
+                        match key {
+                            egui::Key::A => input.push(0x01), // Ctrl+A
+                            egui::Key::B => input.push(0x02), // Ctrl+B (backward page in vim)
+                            egui::Key::C => input.push(0x03), // Ctrl+C (SIGINT)
+                            egui::Key::D => input.push(0x04), // Ctrl+D (EOF)
+                            egui::Key::E => input.push(0x05), // Ctrl+E
+                            egui::Key::F => input.push(0x06), // Ctrl+F (forward page in vim)
+                            egui::Key::G => input.push(0x07), // Ctrl+G
+                            egui::Key::H => input.push(0x08), // Ctrl+H (backspace)
+                            egui::Key::I => input.push(0x09), // Ctrl+I (tab)
+                            egui::Key::J => input.push(0x0a), // Ctrl+J (linefeed)
+                            egui::Key::K => input.push(0x0b), // Ctrl+K
+                            egui::Key::L => input.push(0x0c), // Ctrl+L (clear screen)
+                            egui::Key::M => input.push(0x0d), // Ctrl+M (return)
+                            egui::Key::N => input.push(0x0e), // Ctrl+N
+                            egui::Key::O => input.push(0x0f), // Ctrl+O
+                            egui::Key::P => input.push(0x10), // Ctrl+P
+                            egui::Key::Q => input.push(0x11), // Ctrl+Q
+                            egui::Key::R => input.push(0x12), // Ctrl+R
+                            egui::Key::S => input.push(0x13), // Ctrl+S
+                            egui::Key::T => input.push(0x14), // Ctrl+T
+                            egui::Key::U => input.push(0x15), // Ctrl+U (delete line in vim)
+                            egui::Key::V => input.push(0x16), // Ctrl+V (paste/literal)
+                            egui::Key::W => input.push(0x17), // Ctrl+W
+                            egui::Key::X => input.push(0x18), // Ctrl+X
+                            egui::Key::Y => input.push(0x19), // Ctrl+Y
+                            egui::Key::Z => input.push(0x1a), // Ctrl+Z (suspend)
+                            _ => {}
+                        }
                     }
                 }
                 _ => {}
