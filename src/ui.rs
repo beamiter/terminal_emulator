@@ -37,8 +37,9 @@ impl TerminalRenderer {
         // eprintln!("[UI] Grid: {} x {}", cols, rows);
 
         // Calculate character width/height
-        let char_width = (available_width / cols as f32).max(4.0);
         let line_height = (available_height / rows as f32).max(8.0);
+        // For monospace fonts, use tighter spacing (0.45 for more compact display)
+        let char_width = line_height * 0.45;
 
         // eprintln!("[UI] Char size: {:.1} x {:.1}", char_width, line_height);
 
