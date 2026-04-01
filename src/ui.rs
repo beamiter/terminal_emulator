@@ -197,6 +197,28 @@ impl TerminalRenderer {
             }
         }
 
+        // Render IME preedit text below cursor
+        if !terminal.preedit_text.is_empty() && terminal.ime_enabled {
+            let preedit_display = format!("➜ {}", terminal.preedit_text);
+
+            // 在光标下方显示预编辑文本
+            let preedit_x = rect.left() + cursor_pos.1 as f32 * char_width;
+            let preedit_y = rect.top() + cursor_pos.0 as f32 * line_height + line_height;
+
+            // 确保不超出屏幕范围
+            if preedit_y + line_height <= rect.bottom() {
+                let font_size_preedit = (line_height * 0.7).min(char_width * 0.9).max(8.0);
+                let font_id = FontId::monospace(font_size_preedit);
+                let galley = ui.painter().layout_no_wrap(
+                    preedit_display,
+                    font_id,
+                    Color32::from_rgb(200, 200, 0),  // 黄色标记
+                );
+
+                painter.galley(egui::pos2(preedit_x, preedit_y), galley, Color32::WHITE);
+            }
+        }
+
         response
     }
 

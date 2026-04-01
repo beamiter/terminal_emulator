@@ -42,8 +42,13 @@ fn main() -> Result<(), eframe::Error> {
                         "cjk".to_owned(),
                         std::sync::Arc::new(egui::FontData::from_owned(font_data)),
                     );
+                    // 添加到所有字体族，确保 TextEdit 也能显示
                     fonts.families
                         .get_mut(&egui::FontFamily::Monospace)
+                        .unwrap()
+                        .push("cjk".to_owned());
+                    fonts.families
+                        .get_mut(&egui::FontFamily::Proportional)
                         .unwrap()
                         .push("cjk".to_owned());
                     break;
@@ -68,6 +73,7 @@ struct TerminalApp {
     last_cursor_blink: std::time::Instant,
     cursor_visible: bool,
     status_message: String,
+    ime_buffer: String,  // IME 输入缓冲区
 }
 
 impl TerminalApp {
@@ -112,6 +118,7 @@ impl TerminalApp {
             last_cursor_blink: std::time::Instant::now(),
             cursor_visible: true,
             status_message: String::new(),
+            ime_buffer: String::new(),
         }
     }
 
@@ -122,14 +129,36 @@ impl TerminalApp {
         self.cols = width;
         self.rows = height;
 
+        let screen_rect = ctx.viewport_rect();
+        let screen_width = screen_rect.width();
+        let screen_height = screen_rect.height();
+
         // 使用 Area 来完全自定义布局，避免 panel 的 padding
+        // 留出底部 30px 空间给输入框
         egui::Area::new(egui::Id::new("terminal_area"))
             .fixed_pos(egui::pos2(0.0, 0.0))
             .show(ctx, |ui| {
-                let screen_size = ctx.viewport_rect().size();
-                ui.set_max_size(screen_size);
+                let mut size = screen_rect.size();
+                size.y -= 30.0;  // 留出底部空间
+                ui.set_max_size(size);
+
                 let mut terminal_guard = self.terminal.lock();
                 self.renderer.render(ui, &mut terminal_guard, self.cursor_visible);
+            });
+
+        // 底部输入框 - 始终显示
+        egui::Area::new(egui::Id::new("ime_input_bar"))
+            .fixed_pos(egui::pos2(0.0, screen_height - 30.0))
+            .show(ctx, |ui| {
+                ui.allocate_exact_size(
+                    egui::vec2(screen_width, 30.0),
+                    egui::Sense::click(),
+                );
+
+                ui.horizontal(|ui| {
+                    ui.label("中文输入:");
+                    ui.text_edit_singleline(&mut self.ime_buffer);
+                });
             });
     }
 }
@@ -140,7 +169,47 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Step 1: 在 egui 层面先处理所有快捷键和粘贴事件
+        // Step 1: 处理 IME 事件（在快捷键处理之前）
+        let all_events = ctx.input(|i| i.events.clone());
+        for evt in &all_events {
+            if let egui::Event::Ime(ime_event) = evt {
+                let mut terminal = self.terminal.lock();
+                match ime_event {
+                    egui::ImeEvent::Enabled => {
+                        eprintln!("[IME] Enabled");
+                        terminal.ime_enabled = true;
+                    }
+                    egui::ImeEvent::Preedit(text) => {
+                        eprintln!("[IME] Preedit: {:?}", text);
+                        terminal.set_preedit(text.clone(), text.len());
+                    }
+                    egui::ImeEvent::Commit(text) => {
+                        eprintln!("[IME] Commit: {:?}", text);
+                        terminal.clear_preedit();
+                        // 将提交的文本发送给 shell
+                        if !text.is_empty() {
+                            if let Some(shell) = &self.shell {
+                                let _ = shell.write(text.as_bytes());
+                            } else {
+                                let mut input_guard = self.input_queue.lock();
+                                input_guard.extend(text.as_bytes());
+                            }
+                        }
+                        terminal.ime_enabled = false;
+                        // 清除 IME 输入缓冲区
+                        self.ime_buffer.clear();
+                    }
+                    egui::ImeEvent::Disabled => {
+                        eprintln!("[IME] Disabled");
+                        terminal.ime_enabled = false;
+                        terminal.clear_preedit();
+                        self.ime_buffer.clear();
+                    }
+                }
+            }
+        }
+
+        // Step 2: 在 egui 层面先处理所有快捷键和粘贴事件
         let all_events = ctx.input(|i| i.events.clone());
         let mut consumed_keys = std::collections::HashSet::new();
 

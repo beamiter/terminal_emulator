@@ -70,6 +70,11 @@ pub struct TerminalState {
     utf8_buf: [u8; 4],
     utf8_len: u8,
     utf8_expected: u8,
+
+    // IME support
+    pub ime_enabled: bool,
+    pub preedit_text: String,
+    pub preedit_cursor: usize,
 }
 
 impl TerminalState {
@@ -93,6 +98,9 @@ impl TerminalState {
             utf8_buf: [0; 4],
             utf8_len: 0,
             utf8_expected: 0,
+            ime_enabled: false,
+            preedit_text: String::new(),
+            preedit_cursor: 0,
         }
     }
 
@@ -693,5 +701,22 @@ impl TerminalState {
         } else {
             false
         }
+    }
+
+    // IME support methods
+    pub fn set_preedit(&mut self, text: String, cursor: usize) {
+        self.preedit_text = text;
+        self.preedit_cursor = cursor;
+    }
+
+    pub fn clear_preedit(&mut self) {
+        self.preedit_text.clear();
+        self.preedit_cursor = 0;
+    }
+
+    pub fn commit_preedit(&mut self) -> String {
+        let result = self.preedit_text.clone();
+        self.clear_preedit();
+        result
     }
 }
