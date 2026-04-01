@@ -574,6 +574,40 @@ impl TerminalState {
                     _ => {}
                 }
             }
+            'L' => {
+                // Insert line(s) at cursor position (push lines down)
+                let n = params.first().copied().unwrap_or(1) as usize;
+                eprintln!("[ANSI-L] Insert {} line(s) at row {} (region {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
+
+                for _ in 0..n {
+                    if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
+                        let cols = self.grid[self.cursor_row].len();
+                        // Remove the last line of the region
+                        if self.scroll_region_bottom < self.grid.len() {
+                            self.grid.remove(self.scroll_region_bottom);
+                        }
+                        // Insert blank line at cursor position
+                        self.grid.insert(self.cursor_row, vec![TerminalCell::default(); cols]);
+                    }
+                }
+            }
+            'M' => {
+                // Delete line(s) at cursor position (pull lines up)
+                let n = params.first().copied().unwrap_or(1) as usize;
+                eprintln!("[ANSI-M] Delete {} line(s) at row {} (region {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
+
+                for _ in 0..n {
+                    if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
+                        let cols = self.grid[self.cursor_row].len();
+                        // Remove line at cursor position
+                        if self.cursor_row < self.grid.len() {
+                            self.grid.remove(self.cursor_row);
+                        }
+                        // Insert blank line at bottom of region
+                        self.grid.insert(self.scroll_region_bottom, vec![TerminalCell::default(); cols]);
+                    }
+                }
+            }
             'm' => {
                 // SGR - Select Graphic Rendition
                 self.handle_sgr(params);
