@@ -132,6 +132,8 @@ impl TerminalState {
             return; // Skip zero-width characters for now
         }
 
+        eprintln!("[PUT_CHAR] '{}' at ({},{}) width={}", ch, self.cursor_row, self.cursor_col, width);
+
         let cols = self.grid[self.cursor_row].len();
 
         // If wide character doesn't fit at end of line, wrap to next line
@@ -187,6 +189,19 @@ impl TerminalState {
     }
 
     pub fn process_input(&mut self, input: &[u8]) {
+        // Log first 100 bytes as hex for debugging
+        if input.len() > 0 {
+            let preview = input.iter()
+                .take(100)
+                .map(|b| format!("{:02x}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
+            eprintln!("[INPUT-HEX] len={} data=[{}{}]",
+                input.len(),
+                preview,
+                if input.len() > 100 { " ..." } else { "" });
+        }
+
         let mut i = 0;
 
         while i < input.len() {
@@ -200,10 +215,36 @@ impl TerminalState {
                     i += 1;
                 }
                 b'\n' => {
-                    self.cursor_row += 1;
-                    if self.cursor_row >= self.grid.len() {
-                        self.cursor_row = self.grid.len() - 1;
-                        self.scroll_down();
+                    // Linefeed - move cursor down or scroll
+                    eprintln!("[LF] Linefeed at row {}, region {}-{}", self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
+
+                    if self.cursor_row < self.scroll_region_bottom {
+                        // Cursor is not at bottom of scroll region, just move down
+                        self.cursor_row += 1;
+                    } else {
+                        // Cursor is at bottom of scroll region, scroll the region
+                        eprintln!("[LF] At bottom of region, scrolling...");
+                        // Scroll up within the scroll region
+                        if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
+                            let cols = self.grid[self.scroll_region_top].len();
+                            let mut new_lines = Vec::new();
+
+                            // Keep lines from top+1 to bottom
+                            for i in (self.scroll_region_top + 1)..=self.scroll_region_bottom {
+                                if i < self.grid.len() {
+                                    new_lines.push(self.grid[i].clone());
+                                }
+                            }
+
+                            // Add a blank line at the bottom
+                            new_lines.push(vec![TerminalCell::default(); cols]);
+
+                            // Replace region lines
+                            for (i, line) in new_lines.iter().enumerate() {
+                                self.grid[self.scroll_region_top + i] = line.clone();
+                            }
+                        }
+                        // Cursor stays at bottom row of the scroll region
                     }
                     i += 1;
                 }
