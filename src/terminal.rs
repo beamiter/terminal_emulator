@@ -452,10 +452,38 @@ impl TerminalState {
 
         match cmd {
             'A' => {
+                // Cursor up - should scroll region down if at top
                 let n = params.first().copied().unwrap_or(1) as usize;
-                eprintln!("[ANSI-A] Cursor up {} from row {}", n, self.cursor_row);
-                self.cursor_row = self.cursor_row.saturating_sub(n);
-                eprintln!("[ANSI-A] New cursor row: {}", self.cursor_row);
+                eprintln!("[ANSI-A] Cursor up {} from row {} (scroll region: {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
+
+                for _ in 0..n {
+                    if self.cursor_row > self.scroll_region_top {
+                        // Cursor is not at top of scroll region, just move up
+                        self.cursor_row -= 1;
+                    } else {
+                        // Cursor is at top of scroll region, scroll the region down
+                        eprintln!("[ANSI-A] At top of region, scrolling down...");
+                        if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
+                            let cols = self.grid[self.scroll_region_top].len();
+                            let mut new_lines = vec![vec![TerminalCell::default(); cols]]; // New blank line at top
+
+                            // Keep lines from top to bottom-1
+                            for i in self.scroll_region_top..self.scroll_region_bottom {
+                                if i < self.grid.len() {
+                                    new_lines.push(self.grid[i].clone());
+                                }
+                            }
+
+                            // Replace region lines
+                            for (j, line) in new_lines.iter().enumerate() {
+                                if self.scroll_region_top + j <= self.scroll_region_bottom {
+                                    self.grid[self.scroll_region_top + j] = line.clone();
+                                }
+                            }
+                        }
+                        // Cursor stays at top row
+                    }
+                }
             }
             'B' => {
                 let n = params.first().copied().unwrap_or(1) as usize;
