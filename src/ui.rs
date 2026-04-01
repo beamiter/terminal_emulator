@@ -261,7 +261,7 @@ impl TerminalRenderer {
                     }
 
                     // 控制键组合
-                    if modifiers.ctrl && key == egui::Key::C {
+                    if modifiers.ctrl && !modifiers.shift && key == egui::Key::C {
                         input.extend(b"\x03");  // SIGINT
                     }
                     if modifiers.ctrl && key == egui::Key::D {

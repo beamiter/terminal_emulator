@@ -140,7 +140,33 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Handle copy with F2 or Ctrl+Insert
+        // Handle Ctrl+Shift+C for copy selection
+        if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl && i.modifiers.shift) {
+            if let Some(clipboard) = &self.clipboard {
+                let terminal = self.terminal.lock();
+                if let Some(text) = terminal.copy_selection() {
+                    let _ = clipboard.copy(&text);
+                }
+            }
+        }
+
+        // Handle Ctrl+Shift+V for paste
+        if ctx.input(|i| i.key_pressed(egui::Key::V) && i.modifiers.ctrl && i.modifiers.shift) {
+            if let Some(clipboard) = &self.clipboard {
+                if let Ok(text) = clipboard.paste() {
+                    if !text.is_empty() {
+                        if let Some(shell) = &self.shell {
+                            let _ = shell.write(text.as_bytes());
+                        } else {
+                            let mut input_guard = self.input_queue.lock();
+                            input_guard.extend(text.as_bytes());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Handle copy with F2 or Ctrl+Insert as alternatives
         if ctx.input(|i| i.key_pressed(egui::Key::F2) || (i.key_pressed(egui::Key::Insert) && i.modifiers.ctrl && !i.modifiers.shift)) {
             if let Some(clipboard) = &self.clipboard {
                 let terminal = self.terminal.lock();
