@@ -68,6 +68,8 @@ struct TerminalApp {
     last_cursor_blink: std::time::Instant,
     cursor_visible: bool,
     status_message: String,
+    selection_start: Option<(usize, usize)>,
+    is_selecting: bool,
 }
 
 impl TerminalApp {
@@ -112,11 +114,13 @@ impl TerminalApp {
             last_cursor_blink: std::time::Instant::now(),
             cursor_visible: true,
             status_message: String::new(),
+            selection_start: None,
+            is_selecting: false,
         }
     }
 
     fn render_ui(&mut self, ctx: &egui::Context) {
-        let terminal_guard = self.terminal.lock();
+        let mut terminal_guard = self.terminal.lock();
         let (width, height) = terminal_guard.get_dimensions();
         self.cols = width;
         self.rows = height;
@@ -127,7 +131,7 @@ impl TerminalApp {
             .show(ctx, |ui| {
                 let screen_size = ctx.viewport_rect().size();
                 ui.set_max_size(screen_size);
-                self.renderer.render(ui, &terminal_guard, self.cursor_visible);
+                self.renderer.render(ui, &mut terminal_guard, self.cursor_visible);
             });
     }
 }
@@ -186,8 +190,11 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        // Handle Ctrl+V for paste
-        if ctx.input(|i| i.key_pressed(egui::Key::V) && i.modifiers.ctrl) {
+        // Handle Ctrl+V and Ctrl+Shift+V for paste
+        if ctx.input(|i|
+            (i.key_pressed(egui::Key::V) && i.modifiers.ctrl && !i.modifiers.shift) ||
+            (i.key_pressed(egui::Key::V) && i.modifiers.ctrl && i.modifiers.shift)
+        ) {
             if let Some(clipboard) = &self.clipboard {
                 if let Ok(text) = clipboard.paste() {
                     if !text.is_empty() {

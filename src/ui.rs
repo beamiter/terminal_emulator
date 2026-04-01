@@ -22,7 +22,7 @@ impl TerminalRenderer {
         }
     }
 
-    pub fn render(&self, ui: &mut Ui, terminal: &TerminalState, cursor_visible: bool) -> Response {
+    pub fn render(&self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool) -> Response {
         let grid = terminal.get_visible_cells();
 
         let rows = grid.len();
@@ -60,6 +60,28 @@ impl TerminalRenderer {
         );
 
         let cursor_pos = terminal.get_cursor_pos();
+
+        // Handle mouse events for text selection
+        // Track selection start on initial mouse down
+        if response.drag_started() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let col = ((pos.x - rect.left()) / char_width) as usize;
+                let row = ((pos.y - rect.top()) / line_height) as usize;
+                terminal.select_text((row, col), (row, col));
+            }
+        }
+
+        // Update selection end during drag
+        if response.dragged() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let col = ((pos.x - rect.left()) / char_width) as usize;
+                let row = ((pos.y - rect.top()) / line_height) as usize;
+                // Get the selection start
+                if let Some(sel) = terminal.selection {
+                    terminal.select_text(sel.start, (row, col));
+                }
+            }
+        }
 
         // Render grid
         for row_idx in 0..rows {
