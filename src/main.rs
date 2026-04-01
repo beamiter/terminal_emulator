@@ -68,8 +68,6 @@ struct TerminalApp {
     last_cursor_blink: std::time::Instant,
     cursor_visible: bool,
     status_message: String,
-    selection_start: Option<(usize, usize)>,
-    is_selecting: bool,
 }
 
 impl TerminalApp {
@@ -114,14 +112,13 @@ impl TerminalApp {
             last_cursor_blink: std::time::Instant::now(),
             cursor_visible: true,
             status_message: String::new(),
-            selection_start: None,
-            is_selecting: false,
         }
     }
 
     fn render_ui(&mut self, ctx: &egui::Context) {
-        let mut terminal_guard = self.terminal.lock();
+        let terminal_guard = self.terminal.lock();
         let (width, height) = terminal_guard.get_dimensions();
+        drop(terminal_guard); // 释放锁，允许后续修改
         self.cols = width;
         self.rows = height;
 
@@ -131,6 +128,7 @@ impl TerminalApp {
             .show(ctx, |ui| {
                 let screen_size = ctx.viewport_rect().size();
                 ui.set_max_size(screen_size);
+                let mut terminal_guard = self.terminal.lock();
                 self.renderer.render(ui, &mut terminal_guard, self.cursor_visible);
             });
     }
@@ -142,6 +140,32 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Handle copy with F2 or Ctrl+Insert
+        if ctx.input(|i| i.key_pressed(egui::Key::F2) || (i.key_pressed(egui::Key::Insert) && i.modifiers.ctrl && !i.modifiers.shift)) {
+            if let Some(clipboard) = &self.clipboard {
+                let terminal = self.terminal.lock();
+                if let Some(text) = terminal.copy_selection() {
+                    let _ = clipboard.copy(&text);
+                }
+            }
+        }
+
+        // Handle paste with F3 or Shift+Insert
+        if ctx.input(|i| i.key_pressed(egui::Key::F3) || (i.key_pressed(egui::Key::Insert) && i.modifiers.shift && !i.modifiers.ctrl)) {
+            if let Some(clipboard) = &self.clipboard {
+                if let Ok(text) = clipboard.paste() {
+                    if !text.is_empty() {
+                        if let Some(shell) = &self.shell {
+                            let _ = shell.write(text.as_bytes());
+                        } else {
+                            let mut input_guard = self.input_queue.lock();
+                            input_guard.extend(text.as_bytes());
+                        }
+                    }
+                }
+            }
+        }
+
         // 处理 shell 事件
         if let Some(rx) = &self.shell_rx {
             while let Ok(event) = rx.try_recv() {
@@ -178,35 +202,6 @@ impl eframe::App for TerminalApp {
         if !keyboard_input.is_empty() {
             let mut input_guard = self.input_queue.lock();
             input_guard.extend(keyboard_input);
-        }
-
-        // Handle Ctrl+Shift+C for copy selection
-        if ctx.input(|i| i.key_pressed(egui::Key::C) && i.modifiers.ctrl && i.modifiers.shift) {
-            if let Some(clipboard) = &self.clipboard {
-                let terminal = self.terminal.lock();
-                if let Some(text) = terminal.copy_selection() {
-                    let _ = clipboard.copy(&text);
-                }
-            }
-        }
-
-        // Handle Ctrl+V and Ctrl+Shift+V for paste
-        if ctx.input(|i|
-            (i.key_pressed(egui::Key::V) && i.modifiers.ctrl && !i.modifiers.shift) ||
-            (i.key_pressed(egui::Key::V) && i.modifiers.ctrl && i.modifiers.shift)
-        ) {
-            if let Some(clipboard) = &self.clipboard {
-                if let Ok(text) = clipboard.paste() {
-                    if !text.is_empty() {
-                        if let Some(shell) = &self.shell {
-                            let _ = shell.write(text.as_bytes());
-                        } else {
-                            let mut input_guard = self.input_queue.lock();
-                            input_guard.extend(text.as_bytes());
-                        }
-                    }
-                }
-            }
         }
 
         // Handle Ctrl+Up/Down for scroll

@@ -33,14 +33,14 @@ impl TerminalRenderer {
         let available_width = available.x;
         let available_height = available.y;
 
-        eprintln!("[UI] Available: {:.0} x {:.0}", available_width, available_height);
-        eprintln!("[UI] Grid: {} x {}", cols, rows);
+        // eprintln!("[UI] Available: {:.0} x {:.0}", available_width, available_height);
+        // eprintln!("[UI] Grid: {} x {}", cols, rows);
 
         // Calculate character width/height
         let char_width = (available_width / cols as f32).max(4.0);
         let line_height = (available_height / rows as f32).max(8.0);
 
-        eprintln!("[UI] Char size: {:.1} x {:.1}", char_width, line_height);
+        // eprintln!("[UI] Char size: {:.1} x {:.1}", char_width, line_height);
 
         // Allocate the full available space
         let (rect, response) = ui.allocate_exact_size(
@@ -48,7 +48,7 @@ impl TerminalRenderer {
             egui::Sense::click_and_drag(),
         );
 
-        eprintln!("[UI] Rect: {:?}", rect);
+        // eprintln!("[UI] Rect: {:?}", rect);
 
         let painter = ui.painter_at(rect);
 
@@ -65,8 +65,16 @@ impl TerminalRenderer {
         // Track selection start on initial mouse down
         if response.drag_started() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let col = ((pos.x - rect.left()) / char_width) as usize;
-                let row = ((pos.y - rect.top()) / line_height) as usize;
+                let col = if char_width > 0.0 {
+                    ((pos.x - rect.left()) / char_width) as usize
+                } else {
+                    0
+                };
+                let row = if line_height > 0.0 {
+                    ((pos.y - rect.top()) / line_height) as usize
+                } else {
+                    0
+                };
                 terminal.select_text((row, col), (row, col));
             }
         }
@@ -74,9 +82,16 @@ impl TerminalRenderer {
         // Update selection end during drag
         if response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {
-                let col = ((pos.x - rect.left()) / char_width) as usize;
-                let row = ((pos.y - rect.top()) / line_height) as usize;
-                // Get the selection start
+                let col = if char_width > 0.0 {
+                    ((pos.x - rect.left()) / char_width) as usize
+                } else {
+                    0
+                };
+                let row = if line_height > 0.0 {
+                    ((pos.y - rect.top()) / line_height) as usize
+                } else {
+                    0
+                };
                 if let Some(sel) = terminal.selection {
                     terminal.select_text(sel.start, (row, col));
                 }
