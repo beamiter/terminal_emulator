@@ -51,15 +51,19 @@ pub struct Selection {
 
 pub struct TerminalState {
     pub grid: Vec<Vec<TerminalCell>>,
+    alt_grid: Vec<Vec<TerminalCell>>,
     pub scrollback: VecDeque<Vec<TerminalCell>>,
     pub selection: Option<Selection>,
     pub scroll_offset: usize,
     max_scrollback: usize,
+    use_alt_buffer: bool,
 
     pub cursor_row: usize,
     pub cursor_col: usize,
     saved_cursor_row: usize,
     saved_cursor_col: usize,
+    alt_cursor_row: usize,
+    alt_cursor_col: usize,
 
     current_fg: Color,
     current_bg: Color,
@@ -75,22 +79,33 @@ pub struct TerminalState {
     pub ime_enabled: bool,
     pub preedit_text: String,
     pub preedit_cursor: usize,
+
+    // DECSET modes
+    modes: std::collections::HashSet<u16>,
 }
 
 impl TerminalState {
     pub fn new(cols: usize, rows: usize) -> Self {
         let grid = vec![vec![TerminalCell::default(); cols]; rows];
+        let alt_grid = vec![vec![TerminalCell::default(); cols]; rows];
+
+        let mut modes = std::collections::HashSet::new();
+        modes.insert(25); // Cursor visible by default
 
         TerminalState {
             grid,
+            alt_grid,
             scrollback: VecDeque::new(),
             selection: None,
             scroll_offset: 0,
             max_scrollback: 10000,
+            use_alt_buffer: false,
             cursor_row: 0,
             cursor_col: 0,
             saved_cursor_row: 0,
             saved_cursor_col: 0,
+            alt_cursor_row: 0,
+            alt_cursor_col: 0,
             current_fg: Color::Default,
             current_bg: Color::Default,
             current_flags: StyleFlags::default(),
@@ -101,6 +116,7 @@ impl TerminalState {
             ime_enabled: false,
             preedit_text: String::new(),
             preedit_cursor: 0,
+            modes,
         }
     }
 
@@ -446,6 +462,33 @@ impl TerminalState {
                     }
                 }
             }
+            'n' => {
+                // DSR - Device Status Report
+                // ESC[6n requests cursor position
+                if params.first().copied().unwrap_or(0) == 6 {
+                    // Respond with CPR (Cursor Position Report): ESC[row;colR
+                    // Row and Col are 1-indexed
+                    let row = (self.cursor_row + 1) as u16;
+                    let col = (self.cursor_col + 1) as u16;
+
+                    // Store response for the application to read
+                    // For now, we'll print it to debug
+                    eprintln!("[CPR] Cursor at {}; {}", row, col);
+                    // TODO: Send response back to application via PTY
+                }
+            }
+            'h' => {
+                // Set mode (DECSET)
+                for &mode in params {
+                    self.set_mode(mode);
+                }
+            }
+            'l' => {
+                // Reset mode (DECRST)
+                for &mode in params {
+                    self.reset_mode(mode);
+                }
+            }
             _ => {}
         }
     }
@@ -584,6 +627,129 @@ impl TerminalState {
         self.cursor_col = 0;
     }
 
+    fn set_mode(&mut self, mode: u16) {
+        match mode {
+            25 => {
+                // Show cursor (mode 25)
+                self.modes.insert(25);
+            }
+            1000 | 1001 | 1002 | 1003 => {
+                // Mouse reporting modes
+                self.modes.insert(mode);
+            }
+            1006 => {
+                // SGR mouse reporting format
+                self.modes.insert(mode);
+            }
+            1049 => {
+                // Alternate screen buffer
+                if !self.use_alt_buffer {
+                    // Save main buffer state (cursor position)
+                    self.saved_cursor_row = self.cursor_row;
+                    self.saved_cursor_col = self.cursor_col;
+
+                    // Switch to alternate buffer
+                    std::mem::swap(&mut self.grid, &mut self.alt_grid);
+                    self.alt_cursor_row = self.cursor_row;
+                    self.alt_cursor_col = self.cursor_col;
+                    self.use_alt_buffer = true;
+
+                    // Clear alt buffer and move cursor to home
+                    self.clear_screen();
+                    self.modes.insert(1049);
+                }
+            }
+            7 => {
+                // Autowrap mode
+                self.modes.insert(7);
+            }
+            _ => {
+                // Unknown mode, just store it
+                self.modes.insert(mode);
+            }
+        }
+    }
+
+    fn reset_mode(&mut self, mode: u16) {
+        match mode {
+            25 => {
+                // Hide cursor
+                self.modes.remove(&25);
+            }
+            1000 | 1001 | 1002 | 1003 => {
+                // Disable mouse reporting
+                self.modes.remove(&mode);
+            }
+            1006 => {
+                // Disable SGR mouse reporting format
+                self.modes.remove(&mode);
+            }
+            1049 => {
+                // Restore main screen buffer
+                if self.use_alt_buffer {
+                    // Save alt buffer state (cursor position)
+                    self.alt_cursor_row = self.cursor_row;
+                    self.alt_cursor_col = self.cursor_col;
+
+                    // Switch back to main buffer
+                    std::mem::swap(&mut self.grid, &mut self.alt_grid);
+                    self.cursor_row = self.saved_cursor_row;
+                    self.cursor_col = self.saved_cursor_col;
+                    self.use_alt_buffer = false;
+                    self.modes.remove(&1049);
+                }
+            }
+            7 => {
+                // Disable autowrap
+                self.modes.remove(&7);
+            }
+            _ => {
+                // Unknown mode, just remove it
+                self.modes.remove(&mode);
+            }
+        }
+    }
+
+    pub fn is_cursor_visible(&self) -> bool {
+        // Cursor is visible when mode 25 is SET (via \x1b[?25h)
+        // Hidden when mode 25 is RESET (via \x1b[?25l)
+        // Default to visible
+        self.modes.contains(&25)
+    }
+
+    pub fn get_mouse_report(&self, button: u8, col: usize, row: usize) -> Option<String> {
+        // Check if any mouse reporting mode is enabled
+        if !self.modes.contains(&1000) && !self.modes.contains(&1002) && !self.modes.contains(&1003) {
+            return None;
+        }
+
+        // SGR format (mode 1006) is preferred: CSI < button ; col ; row M/m
+        // Standard format (mode 1000/1002): CSI M button col row (3 bytes)
+
+        if self.modes.contains(&1006) {
+            // SGR format: CSI < button ; x ; y M (button press) or m (button release)
+            // For now, we'll generate press events (M) - release tracking would need more state
+            let x = (col as u32 + 1).min(255); // 1-indexed, max 255
+            let y = (row as u32 + 1).min(255); // 1-indexed, max 255
+            Some(format!("\x1b[<{};{};{}M", button, x, y))
+        } else {
+            // Standard xterm format: CSI M button col row (raw bytes)
+            // Col and row are offset by 32 (space character)
+            let button_byte = (32 + button) as u8;
+            let col_byte = (32 + (col as u8).min(223)) as u8;
+            let row_byte = (32 + (row as u8).min(223)) as u8;
+            Some(format!("\x1b[M{}{}{}", button_byte as char, col_byte as char, row_byte as char))
+        }
+    }
+
+    pub fn is_mouse_enabled(&self) -> bool {
+        self.modes.contains(&1000) || self.modes.contains(&1002) || self.modes.contains(&1003)
+    }
+
+    pub fn is_mouse_motion_enabled(&self) -> bool {
+        self.modes.contains(&1002) || self.modes.contains(&1003)
+    }
+
     fn scroll_down(&mut self) {
         if self.grid.len() > 0 {
             let cols = self.grid[0].len();
@@ -599,7 +765,42 @@ impl TerminalState {
     }
 
     pub fn get_visible_cells(&self) -> Vec<Vec<TerminalCell>> {
-        self.grid.clone()
+        let rows = self.grid.len();
+        let cols = if rows > 0 { self.grid[0].len() } else { 80 };
+
+        // If not scrolling back, show current grid
+        if self.scroll_offset == 0 {
+            return self.grid.clone();
+        }
+
+        // Build view from scrollback + current grid
+        let mut result = Vec::new();
+
+        // Show lines from scrollback (if scroll_offset < scrollback.len())
+        if self.scroll_offset > 0 && !self.scrollback.is_empty() {
+            let start_idx = self.scrollback.len().saturating_sub(self.scroll_offset);
+            for i in start_idx..self.scrollback.len() {
+                if result.len() < rows {
+                    result.push(self.scrollback[i].clone());
+                }
+            }
+        }
+
+        // Fill remaining rows with current grid
+        for row in &self.grid {
+            if result.len() < rows {
+                result.push(row.clone());
+            } else {
+                break;
+            }
+        }
+
+        // Pad with empty rows if needed
+        while result.len() < rows {
+            result.push(vec![TerminalCell::default(); cols]);
+        }
+
+        result
     }
 
     pub fn get_cursor_pos(&self) -> (usize, usize) {
@@ -655,11 +856,26 @@ impl TerminalState {
 
     pub fn scroll(&mut self, lines: isize) {
         if lines > 0 {
+            // Scroll up (show earlier lines)
             self.scroll_offset = self.scroll_offset.saturating_add(lines as usize);
         } else {
+            // Scroll down (show later lines)
             self.scroll_offset = self.scroll_offset.saturating_sub((-lines) as usize);
         }
-        self.scroll_offset = self.scroll_offset.min(self.scrollback.len());
+
+        // Clamp scroll_offset to valid range
+        let max_scroll = self.scrollback.len();
+        self.scroll_offset = self.scroll_offset.min(max_scroll);
+
+        // When scrolling to bottom (offset 0), reset to live view
+        if self.scroll_offset == 0 {
+            self.scroll_offset = 0;
+        }
+    }
+
+    pub fn reset_scroll(&mut self) {
+        // Reset to showing live output (bottom of scrollback)
+        self.scroll_offset = 0;
     }
 
     pub fn on_resize(&mut self, cols: usize, rows: usize) {

@@ -301,9 +301,21 @@ impl eframe::App for TerminalApp {
         }
 
         // Handle cursor blinking (500ms on, 500ms off)
-        if self.last_cursor_blink.elapsed() > Duration::from_millis(500) {
-            self.cursor_visible = !self.cursor_visible;
-            self.last_cursor_blink = std::time::Instant::now();
+        // Only blink if the application hasn't hidden the cursor
+        {
+            let terminal = self.terminal.lock();
+            let app_wants_cursor_visible = terminal.is_cursor_visible();
+            drop(terminal);
+
+            if app_wants_cursor_visible {
+                if self.last_cursor_blink.elapsed() > Duration::from_millis(500) {
+                    self.cursor_visible = !self.cursor_visible;
+                    self.last_cursor_blink = std::time::Instant::now();
+                }
+            } else {
+                // Application has hidden cursor via \x1b[?25l
+                self.cursor_visible = false;
+            }
         }
 
         // Handle Ctrl+Up/Down for scroll
@@ -317,6 +329,99 @@ impl eframe::App for TerminalApp {
             // Ctrl+Up: scroll up
             let mut terminal = self.terminal.lock();
             terminal.scroll(3);
+        }
+
+        // Handle PageUp/PageDown for scrolling through scrollback
+        if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+            // PageUp: scroll up by one page (roughly screen height)
+            let mut terminal = self.terminal.lock();
+            let (_, rows) = terminal.get_dimensions();
+            terminal.scroll(rows as isize);
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+            // PageDown: scroll down by one page
+            let mut terminal = self.terminal.lock();
+            let (_, rows) = terminal.get_dimensions();
+            terminal.scroll(-(rows as isize));
+        }
+
+        // Handle mouse scroll wheel
+        let scroll_delta = ctx.input(|i| i.smooth_scroll_delta.y);
+        if scroll_delta != 0.0 {
+            let mut terminal = self.terminal.lock();
+            let scroll_lines = if scroll_delta > 0.0 { 3 } else { -3 };
+            terminal.scroll(scroll_lines);
+        }
+
+        // Handle mouse clicks and movement for applications supporting mouse reporting
+        let mouse_reports: Vec<String> = {
+            let terminal = self.terminal.lock();
+            if !terminal.is_mouse_enabled() {
+                drop(terminal);
+                Vec::new()
+            } else {
+                let mut reports = Vec::new();
+
+                // Get current mouse position from context
+                if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+                    // Get screen rect (same as in render_ui)
+                    let screen_rect = ctx.viewport_rect();
+                    let char_width = (screen_rect.width() / self.cols as f32).max(4.0);
+                    let line_height = (screen_rect.height() / self.rows as f32).max(8.0);
+
+                    // Calculate grid coordinates
+                    let clamped_x = (pos.x - screen_rect.left()).max(0.0);
+                    let clamped_y = (pos.y - screen_rect.top()).max(0.0);
+
+                    let col = if char_width > 0.0 {
+                        ((clamped_x / char_width) as usize).min(self.cols - 1)
+                    } else {
+                        0
+                    };
+                    let row = if line_height > 0.0 {
+                        ((clamped_y / line_height) as usize).min(self.rows - 1)
+                    } else {
+                        0
+                    };
+
+                    // Check for button presses
+                    let button_pressed = ctx.input(|i| {
+                        let mut btns = Vec::new();
+                        if i.pointer.button_pressed(egui::PointerButton::Primary) {
+                            btns.push(0); // Left button
+                        }
+                        if i.pointer.button_pressed(egui::PointerButton::Secondary) {
+                            btns.push(2); // Right button
+                        }
+                        if i.pointer.button_pressed(egui::PointerButton::Middle) {
+                            btns.push(1); // Middle button
+                        }
+                        btns
+                    });
+
+                    for button_num in button_pressed {
+                        if let Some(report) = terminal.get_mouse_report(button_num, col, row) {
+                            reports.push(report);
+                        }
+                    }
+                }
+
+                drop(terminal);
+                reports
+            }
+        };
+
+        // Send mouse reports to shell
+        if !mouse_reports.is_empty() {
+            for report in mouse_reports {
+                if let Some(shell) = &self.shell {
+                    let _ = shell.write(report.as_bytes());
+                } else {
+                    let mut input_guard = self.input_queue.lock();
+                    input_guard.extend(report.as_bytes());
+                }
+            }
         }
 
         // 渲染 UI - 使用 Area 实现真正的全屏填充
