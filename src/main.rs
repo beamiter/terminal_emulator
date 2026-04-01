@@ -133,40 +133,20 @@ impl TerminalApp {
     fn render_ui(&mut self, ctx: &egui::Context) {
         let terminal_guard = self.terminal.lock();
         let (width, height) = terminal_guard.get_dimensions();
-        drop(terminal_guard); // 释放锁，允许后续修改
+        drop(terminal_guard);
         self.cols = width;
         self.rows = height;
 
-        let screen_rect = ctx.viewport_rect();
-        let screen_width = screen_rect.width();
-        let screen_height = screen_rect.height();
+        // 使用 CentralPanel 来填充整个窗口，使用深色背景
+        let frame = egui::Frame::NONE
+            .fill(egui::Color32::from_rgb(29, 29, 29))
+            .inner_margin(0.0);
 
-        // 使用 Area 来完全自定义布局，避免 panel 的 padding
-        // 留出底部 30px 空间给输入框
-        egui::Area::new(egui::Id::new("terminal_area"))
-            .fixed_pos(egui::pos2(0.0, 0.0))
+        egui::CentralPanel::default()
+            .frame(frame)
             .show(ctx, |ui| {
-                let mut size = screen_rect.size();
-                size.y -= 30.0;  // 留出底部空间
-                ui.set_max_size(size);
-
                 let mut terminal_guard = self.terminal.lock();
                 self.renderer.render(ui, &mut terminal_guard, self.cursor_visible);
-            });
-
-        // 底部输入框 - 始终显示
-        egui::Area::new(egui::Id::new("ime_input_bar"))
-            .fixed_pos(egui::pos2(0.0, screen_height - 30.0))
-            .show(ctx, |ui| {
-                ui.allocate_exact_size(
-                    egui::vec2(screen_width, 30.0),
-                    egui::Sense::click(),
-                );
-
-                ui.horizontal(|ui| {
-                    ui.label("中文输入:");
-                    ui.text_edit_singleline(&mut self.ime_buffer);
-                });
             });
     }
 }
