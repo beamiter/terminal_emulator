@@ -16,6 +16,12 @@ fn resolve_background_color(color_value: crate::terminal::Color) -> Color32 {
     }
 }
 
+fn snapped_span(origin: f32, index: usize, cell_size: f32) -> (f32, f32) {
+    let start = (origin + index as f32 * cell_size).round();
+    let end = (origin + (index + 1) as f32 * cell_size).round();
+    (start, (end - start).max(1.0))
+}
+
 pub struct TerminalRenderer {
     pub font_size: f32,
     pub char_width: f32,
@@ -134,8 +140,8 @@ impl TerminalRenderer {
                 }
 
                 // Position from rect top-left
-                let x = rect.left() + col_idx as f32 * char_width;
-                let y = rect.top() + row_idx as f32 * line_height;
+                let (x, snapped_width) = snapped_span(rect.left(), col_idx, char_width);
+                let (y, snapped_height) = snapped_span(rect.top(), row_idx, line_height);
 
                 let bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
                     color::defaults::selection()
@@ -145,13 +151,20 @@ impl TerminalRenderer {
                     resolve_background_color(cell.background)
                 };
 
-                let cell_width = if cell.wide { char_width * 2.0 } else { char_width };
+                let cell_width = if cell.wide {
+                    let (_, next_width) = snapped_span(rect.left(), col_idx + 1, char_width);
+                    snapped_width + next_width
+                } else {
+                    snapped_width
+                };
                 let cell_rect = egui::Rect::from_min_size(
                     egui::pos2(x, y),
-                    Vec2::new(cell_width, line_height),
+                    Vec2::new(cell_width, snapped_height),
                 );
 
-                painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
+                if bg_color != color::defaults::BACKGROUND {
+                    painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
+                }
 
                 // Render character
                 if cell.character != ' ' && !cell.wide_continuation {
@@ -175,14 +188,14 @@ impl TerminalRenderer {
                     );
 
                     let text_x = x + (cell_width - galley.size().x).max(0.0) / 2.0;
-                    let text_y = y + (line_height - galley.size().y) / 2.0;
+                    let text_y = y + (snapped_height - galley.size().y) / 2.0;
 
                     painter.galley(egui::pos2(text_x, text_y), galley, fg_color);
 
                     if cell.flags.underline {
                         let underline_y = y + line_height - 1.0;
                         painter.line_segment(
-                            [egui::pos2(x, underline_y), egui::pos2(x + char_width, underline_y)],
+                            [egui::pos2(x, underline_y), egui::pos2(x + cell_width, underline_y)],
                             egui::Stroke::new(1.0, fg_color),
                         );
                     }
