@@ -82,7 +82,6 @@ struct TerminalApp {
     last_cursor_blink: std::time::Instant,
     cursor_visible: bool,
     status_message: String,
-    ime_buffer: String,  // IME 输入缓冲区
 }
 
 impl TerminalApp {
@@ -127,7 +126,6 @@ impl TerminalApp {
             last_cursor_blink: std::time::Instant::now(),
             cursor_visible: true,
             status_message: String::new(),
-            ime_buffer: String::new(),
         }
     }
 
@@ -167,8 +165,10 @@ impl eframe::App for TerminalApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Step 1: 处理 IME 事件（在快捷键处理之前）
         let all_events = ctx.input(|i| i.events.clone());
+        let mut saw_ime_event = false;
         for evt in &all_events {
             if let egui::Event::Ime(ime_event) = evt {
+                saw_ime_event = true;
                 let mut terminal = self.terminal.lock();
                 match ime_event {
                     egui::ImeEvent::Enabled => {
@@ -192,14 +192,11 @@ impl eframe::App for TerminalApp {
                             }
                         }
                         terminal.ime_enabled = false;
-                        // 清除 IME 输入缓冲区
-                        self.ime_buffer.clear();
                     }
                     egui::ImeEvent::Disabled => {
                         crate::debug_log!("[IME] Disabled");
                         terminal.ime_enabled = false;
                         terminal.clear_preedit();
-                        self.ime_buffer.clear();
                     }
                 }
             }
@@ -259,7 +256,7 @@ impl eframe::App for TerminalApp {
         // 但排除已经被消费的按键
         let mut keyboard_input = Vec::new();
         self.renderer
-            .handle_keyboard_input(ctx, &mut keyboard_input, &consumed_keys);
+            .handle_keyboard_input(ctx, &mut keyboard_input, &consumed_keys, saw_ime_event);
 
         if !keyboard_input.is_empty() {
             let mut input_guard = self.input_queue.lock();

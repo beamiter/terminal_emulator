@@ -22,6 +22,12 @@ fn snapped_span(origin: f32, index: usize, cell_size: f32) -> (f32, f32) {
     (start, (end - start).max(1.0))
 }
 
+fn cursor_rect(rect: egui::Rect, row: usize, col: usize, char_width: f32, line_height: f32) -> egui::Rect {
+    let (x, width) = snapped_span(rect.left(), col, char_width);
+    let (y, height) = snapped_span(rect.top(), row, line_height);
+    egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(width, height))
+}
+
 pub struct TerminalRenderer {
     pub font_size: f32,
     pub char_width: f32,
@@ -74,7 +80,7 @@ impl TerminalRenderer {
         // Allocate the full available space
         let (rect, response) = ui.allocate_exact_size(
             Vec2::new(available_width, available_height),
-            egui::Sense::click_and_drag(),
+            egui::Sense::click_and_drag().union(egui::Sense::focusable_noninteractive()),
         );
 
         // eprintln!("[UI] Rect: {:?}", rect);
@@ -83,6 +89,14 @@ impl TerminalRenderer {
         painter.rect_filled(rect, egui::CornerRadius::ZERO, color::defaults::BACKGROUND);
 
         let cursor_pos = terminal.get_cursor_pos();
+        let ime_rect = cursor_rect(rect, cursor_pos.0, cursor_pos.1, char_width, line_height);
+
+        response.request_focus();
+
+        let ctx = ui.ctx();
+        ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(egui::IMEPurpose::Terminal));
+        ctx.send_viewport_cmd(egui::ViewportCommand::IMERect(ime_rect));
 
         // Handle mouse events for text selection
         // Track selection start on initial mouse down
@@ -246,12 +260,16 @@ impl TerminalRenderer {
         ctx: &egui::Context,
         input: &mut Vec<u8>,
         consumed_keys: &std::collections::HashSet<&str>,
+        suppress_text_events: bool,
     ) {
         let events = ctx.input(|i| i.events.clone());
 
         for event in events {
             match event {
                 egui::Event::Text(text) => {
+                    if suppress_text_events {
+                        continue;
+                    }
                     // 不处理特殊按键对应的文本事件
                     if !text.is_empty() && text.as_bytes()[0] < 32 {
                         continue;
