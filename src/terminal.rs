@@ -82,6 +82,9 @@ pub struct TerminalState {
     utf8_len: u8,
     utf8_expected: u8,
 
+    // Incomplete escape sequence buffer across PTY reads
+    pending_escape: Vec<u8>,
+
     // IME support
     pub ime_enabled: bool,
     pub preedit_text: String,
@@ -121,6 +124,7 @@ impl TerminalState {
             utf8_buf: [0; 4],
             utf8_len: 0,
             utf8_expected: 0,
+            pending_escape: Vec::new(),
             ime_enabled: false,
             preedit_text: String::new(),
             preedit_cursor: 0,
@@ -218,23 +222,30 @@ impl TerminalState {
     }
 
     pub fn process_input(&mut self, input: &[u8]) {
+        let mut data = Vec::with_capacity(self.pending_escape.len() + input.len());
+        if !self.pending_escape.is_empty() {
+            data.extend_from_slice(&self.pending_escape);
+            self.pending_escape.clear();
+        }
+        data.extend_from_slice(input);
+
         // Log first 100 bytes as hex for debugging
-        if input.len() > 0 {
-            let preview = input.iter()
+        if !data.is_empty() {
+            let preview = data.iter()
                 .take(100)
                 .map(|b| format!("{:02x}", b))
                 .collect::<Vec<_>>()
                 .join(" ");
             crate::debug_log!("[INPUT-HEX] len={} data=[{}{}]",
-                input.len(),
+                data.len(),
                 preview,
-                if input.len() > 100 { " ..." } else { "" });
+                if data.len() > 100 { " ..." } else { "" });
         }
 
         let mut i = 0;
 
-        while i < input.len() {
-            let byte = input[i];
+        while i < data.len() {
+            let byte = data[i];
 
             match byte {
                 b'\x08' => {
@@ -293,130 +304,134 @@ impl TerminalState {
                     }
                     i += 1;
                 }
-                b'\x1b' if i + 1 < input.len() && input[i + 1] == b']' => {
-                    // OSC (Operating System Command) sequence
-                    // Format: ESC ] ... BEL or ESC ] ... ESC \
-                    i += 2;  // Skip ESC ]
+                b'\x1b' => {
+                    let esc_start = i;
 
-                    // Read until BEL (0x07) or ESC \ (0x1b 0x5c)
-                    while i < input.len() {
-                        if input[i] == 0x07 {
-                            // BEL terminator
-                            i += 1;
-                            break;
-                        } else if i + 1 < input.len() && input[i] == 0x1b && input[i + 1] == 0x5c {
-                            // ESC \ terminator
+                    if i + 1 >= data.len() {
+                        self.pending_escape.extend_from_slice(&data[esc_start..]);
+                        break;
+                    }
+
+                    match data[i + 1] {
+                        b']' => {
                             i += 2;
-                            break;
-                        } else {
+
+                            let mut terminated = false;
+                            while i < data.len() {
+                                if data[i] == 0x07 {
+                                    i += 1;
+                                    terminated = true;
+                                    break;
+                                } else if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == 0x5c {
+                                    i += 2;
+                                    terminated = true;
+                                    break;
+                                } else {
+                                    i += 1;
+                                }
+                            }
+
+                            if !terminated {
+                                self.pending_escape.extend_from_slice(&data[esc_start..]);
+                                break;
+                            }
+                        }
+                        b'M' => {
+                            crate::debug_log!("[ANSI-RI] Reverse Index");
+                            i += 2;
+
+                            if self.cursor_row > self.scroll_region_top {
+                                self.cursor_row -= 1;
+                            } else {
+                                crate::debug_log!("[ANSI-RI] At top of region, scrolling down...");
+                                if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
+                                    let cols = self.grid[self.scroll_region_top].len();
+                                    let mut new_lines = vec![self.blank_line(cols)];
+
+                                    for row in self.scroll_region_top..self.scroll_region_bottom {
+                                        if row < self.grid.len() {
+                                            new_lines.push(self.grid[row].clone());
+                                        }
+                                    }
+
+                                    for (offset, line) in new_lines.iter().enumerate() {
+                                        if self.scroll_region_top + offset <= self.scroll_region_bottom {
+                                            self.grid[self.scroll_region_top + offset] = line.clone();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        b'D' => {
+                            crate::debug_log!("[ANSI-IND] Index");
+                            i += 2;
+
+                            if self.cursor_row < self.scroll_region_bottom {
+                                self.cursor_row += 1;
+                            } else {
+                                crate::debug_log!("[ANSI-IND] At bottom of region, scrolling up...");
+                                if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
+                                    let cols = self.grid[self.scroll_region_top].len();
+                                    let mut new_lines = Vec::new();
+
+                                    for row in (self.scroll_region_top + 1)..=self.scroll_region_bottom {
+                                        if row < self.grid.len() {
+                                            new_lines.push(self.grid[row].clone());
+                                        }
+                                    }
+
+                                    new_lines.push(self.blank_line(cols));
+
+                                    for (offset, line) in new_lines.iter().enumerate() {
+                                        self.grid[self.scroll_region_top + offset] = line.clone();
+                                    }
+                                }
+                            }
+                        }
+                        b'[' => {
+                            i += 2;
+
+                            let is_private_mode = i < data.len() && data[i] == b'?';
+                            if is_private_mode {
+                                i += 1;
+                            }
+
+                            let mut params = Vec::new();
+                            let mut param_str = String::new();
+
+                            while i < data.len() && (data[i].is_ascii_digit() || data[i] == b';') {
+                                if data[i] == b';' {
+                                    if let Ok(n) = param_str.parse::<u16>() {
+                                        params.push(n);
+                                    }
+                                    param_str.clear();
+                                } else {
+                                    param_str.push(data[i] as char);
+                                }
+                                i += 1;
+                            }
+
+                            if !param_str.is_empty() {
+                                if let Ok(n) = param_str.parse::<u16>() {
+                                    params.push(n);
+                                }
+                            }
+
+                            if i >= data.len() {
+                                self.pending_escape.extend_from_slice(&data[esc_start..]);
+                                break;
+                            }
+
+                            let cmd = data[i] as char;
+                            if is_private_mode {
+                                crate::debug_log!("[ANSI-RAW] CSI ? (private mode) cmd={}", cmd);
+                            }
+                            self.handle_escape_sequence(&params, cmd);
                             i += 1;
                         }
-                    }
-                }
-                b'\x1b' if i + 1 < input.len() && input[i + 1] == b'M' => {
-                    // RI (Reverse Index) - move cursor up or scroll down
-                    crate::debug_log!("[ANSI-RI] Reverse Index");
-                    i += 2;
-
-                    if self.cursor_row > self.scroll_region_top {
-                        // Cursor is not at top of scroll region, just move up
-                        self.cursor_row -= 1;
-                    } else {
-                        // Cursor is at top of scroll region, scroll down (reveal content above)
-                        crate::debug_log!("[ANSI-RI] At top of region, scrolling down...");
-                        if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
-                            let cols = self.grid[self.scroll_region_top].len();
-
-                            // Shift lines down within the region
-                            let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
-
-                            // Keep lines from top to bottom-1
-                            for i in self.scroll_region_top..self.scroll_region_bottom {
-                                if i < self.grid.len() {
-                                    new_lines.push(self.grid[i].clone());
-                                }
-                            }
-
-                            // Replace region lines
-                            for (j, line) in new_lines.iter().enumerate() {
-                                if self.scroll_region_top + j <= self.scroll_region_bottom {
-                                    self.grid[self.scroll_region_top + j] = line.clone();
-                                }
-                            }
+                        _ => {
+                            i += 1;
                         }
-                    }
-                }
-                b'\x1b' if i + 1 < input.len() && input[i + 1] == b'D' => {
-                    // IND (Index) - move cursor down or scroll up
-                    crate::debug_log!("[ANSI-IND] Index");
-                    i += 2;
-
-                    if self.cursor_row < self.scroll_region_bottom {
-                        // Cursor is not at bottom of scroll region, just move down
-                        self.cursor_row += 1;
-                    } else {
-                        // Cursor is at bottom of scroll region, scroll up
-                        crate::debug_log!("[ANSI-IND] At bottom of region, scrolling up...");
-                        if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
-                            let cols = self.grid[self.scroll_region_top].len();
-                            let mut new_lines = Vec::new();
-
-                            // Keep lines from top+1 to bottom
-                            for i in (self.scroll_region_top + 1)..=self.scroll_region_bottom {
-                                if i < self.grid.len() {
-                                    new_lines.push(self.grid[i].clone());
-                                }
-                            }
-
-                            // Add a blank line at the bottom
-                            new_lines.push(self.blank_line(cols));
-
-                            // Replace region lines
-                            for (j, line) in new_lines.iter().enumerate() {
-                                self.grid[self.scroll_region_top + j] = line.clone();
-                            }
-                        }
-                    }
-                }
-                b'\x1b' if i + 1 < input.len() && input[i + 1] == b'[' => {
-                    // CSI (Control Sequence Introducer) - normal escape sequence
-                    i += 2;
-
-                    // Skip private mode indicator (?)
-                    let is_private_mode = i < input.len() && input[i] == b'?';
-                    if is_private_mode {
-                        i += 1;
-                    }
-
-                    let mut params = Vec::new();
-                    let mut param_str = String::new();
-
-                    // Parse numeric parameters
-                    while i < input.len() && (input[i].is_ascii_digit() || input[i] == b';') {
-                        if input[i] == b';' {
-                            if let Ok(n) = param_str.parse::<u16>() {
-                                params.push(n);
-                            }
-                            param_str.clear();
-                        } else {
-                            param_str.push(input[i] as char);
-                        }
-                        i += 1;
-                    }
-
-                    if !param_str.is_empty() {
-                        if let Ok(n) = param_str.parse::<u16>() {
-                            params.push(n);
-                        }
-                    }
-
-                    if i < input.len() {
-                        let cmd = input[i] as char;
-                        if is_private_mode {
-                            crate::debug_log!("[ANSI-RAW] CSI ? (private mode) cmd={}", cmd);
-                        }
-                        self.handle_escape_sequence(&params, cmd);
-                        i += 1;
                     }
                 }
                 32..=126 => {
@@ -1319,5 +1334,29 @@ mod tests {
         assert!(!second.flags.inverse);
         assert_eq!(second.foreground, Color::Default);
         assert_eq!(second.background, Color::Default);
+    }
+
+    #[test]
+    fn split_truecolor_sequence_does_not_leak_text() {
+        let mut terminal = TerminalState::new(32, 2);
+
+        terminal.process_input(b"\x1b[38");
+        terminal.process_input(b";2;81;175;239msrc");
+
+        assert_eq!(terminal.grid[0][0].character, 's');
+        assert_eq!(terminal.grid[0][1].character, 'r');
+        assert_eq!(terminal.grid[0][2].character, 'c');
+        assert_eq!(terminal.grid[0][0].foreground, Color::Rgb(81, 175, 239));
+    }
+
+    #[test]
+    fn trailing_escape_is_buffered_until_next_chunk() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b");
+        terminal.process_input(b"[31mX");
+
+        assert_eq!(terminal.grid[0][0].character, 'X');
+        assert_eq!(terminal.grid[0][0].foreground, Color::Red);
     }
 }
