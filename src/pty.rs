@@ -88,6 +88,14 @@ mod unix_pty {
                         "/bin/bash".to_string()
                     };
 
+                    let term_name = CString::new("TERM").unwrap();
+                    let term_value = CString::new("xterm-256color").unwrap();
+                    libc::setenv(term_name.as_ptr(), term_value.as_ptr(), 1);
+
+                    let color_term_name = CString::new("COLORTERM").unwrap();
+                    let color_term_value = CString::new("truecolor").unwrap();
+                    libc::setenv(color_term_name.as_ptr(), color_term_value.as_ptr(), 1);
+
                     // 创建 C 字符串们
                     let shell_cstr = match CString::new(shell_path.clone()) {
                         Ok(s) => s,

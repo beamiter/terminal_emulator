@@ -190,6 +190,10 @@ impl TerminalState {
         }
     }
 
+    fn blank_line(&self, cols: usize) -> Vec<TerminalCell> {
+        vec![self.create_blank_cell(); cols]
+    }
+
     fn clear_cell(&mut self, row: usize, col: usize) {
         let cols = self.grid[row].len();
         let bg_color = self.current_bg;
@@ -261,7 +265,7 @@ impl TerminalState {
                             }
 
                             // Add a blank line at the bottom
-                            new_lines.push(vec![TerminalCell::default(); cols]);
+                            new_lines.push(self.blank_line(cols));
 
                             // Replace region lines
                             for (i, line) in new_lines.iter().enumerate() {
@@ -323,7 +327,7 @@ impl TerminalState {
                             let cols = self.grid[self.scroll_region_top].len();
 
                             // Shift lines down within the region
-                            let mut new_lines = vec![vec![TerminalCell::default(); cols]]; // New blank line at top
+                            let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
 
                             // Keep lines from top to bottom-1
                             for i in self.scroll_region_top..self.scroll_region_bottom {
@@ -364,7 +368,7 @@ impl TerminalState {
                             }
 
                             // Add a blank line at the bottom
-                            new_lines.push(vec![TerminalCell::default(); cols]);
+                            new_lines.push(self.blank_line(cols));
 
                             // Replace region lines
                             for (j, line) in new_lines.iter().enumerate() {
@@ -489,7 +493,7 @@ impl TerminalState {
                         eprintln!("[ANSI-A] At top of region, scrolling down...");
                         if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
                             let cols = self.grid[self.scroll_region_top].len();
-                            let mut new_lines = vec![vec![TerminalCell::default(); cols]]; // New blank line at top
+                            let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
 
                             // Keep lines from top to bottom-1
                             for i in self.scroll_region_top..self.scroll_region_bottom {
@@ -611,7 +615,7 @@ impl TerminalState {
                             self.grid.remove(self.scroll_region_bottom);
                         }
                         // Insert blank line at cursor position
-                        self.grid.insert(self.cursor_row, vec![TerminalCell::default(); cols]);
+                        self.grid.insert(self.cursor_row, self.blank_line(cols));
                     }
                 }
             }
@@ -628,7 +632,7 @@ impl TerminalState {
                             self.grid.remove(self.cursor_row);
                         }
                         // Insert blank line at bottom of region
-                        self.grid.insert(self.scroll_region_bottom, vec![TerminalCell::default(); cols]);
+                        self.grid.insert(self.scroll_region_bottom, self.blank_line(cols));
                     }
                 }
             }
@@ -665,7 +669,7 @@ impl TerminalState {
                         }
 
                         // Add a blank line at the bottom
-                        new_lines.push(vec![TerminalCell::default(); cols]);
+                        new_lines.push(self.blank_line(cols));
 
                         // Replace region lines
                         for (i, line) in new_lines.iter().enumerate() {
@@ -692,7 +696,7 @@ impl TerminalState {
                         let cols = self.grid[self.scroll_region_top].len();
 
                         // Shift lines down within the region by collecting from bottom to top
-                        let mut new_lines = vec![vec![TerminalCell::default(); cols]]; // New blank line at top
+                        let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
 
                         // Keep lines from top to bottom-1
                         for i in self.scroll_region_top..self.scroll_region_bottom {
@@ -763,6 +767,13 @@ impl TerminalState {
     }
 
     fn handle_sgr(&mut self, params: &[u16]) {
+        if params.is_empty() {
+            self.current_flags = StyleFlags::default();
+            self.current_fg = Color::Default;
+            self.current_bg = Color::Default;
+            return;
+        }
+
         let mut i = 0;
         while i < params.len() {
             let param = params[i];
@@ -777,10 +788,14 @@ impl TerminalState {
                 3 => self.current_flags.italic = true,
                 4 => self.current_flags.underline = true,
                 7 => self.current_flags.inverse = true,
-                22 => self.current_flags.bold = false,
+                22 => {
+                    self.current_flags.bold = false;
+                    self.current_flags.dim = false;
+                }
                 23 => self.current_flags.italic = false,
                 24 => self.current_flags.underline = false,
                 27 => self.current_flags.inverse = false,
+                39 => self.current_fg = Color::Default,
                 30..=37 => {
                     self.current_fg = match param {
                         30 => Color::Black,
@@ -794,6 +809,7 @@ impl TerminalState {
                         _ => Color::Default,
                     };
                 }
+                49 => self.current_bg = Color::Default,
                 40..=47 => {
                     self.current_bg = match param {
                         40 => Color::Black,
@@ -1228,5 +1244,53 @@ impl TerminalState {
         let result = self.preedit_text.clone();
         self.clear_preedit();
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Color, TerminalState};
+
+    #[test]
+    fn sgr_39_and_49_restore_default_colors() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[36;44mA\x1b[39;49mB");
+
+        let first = &terminal.grid[0][0];
+        let second = &terminal.grid[0][1];
+
+        assert_eq!(first.foreground, Color::Cyan);
+        assert_eq!(first.background, Color::Blue);
+        assert_eq!(second.foreground, Color::Default);
+        assert_eq!(second.background, Color::Default);
+    }
+
+    #[test]
+    fn cleared_cells_keep_active_background() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[44mAB\x1b[1;1H\x1b[K");
+
+        assert_eq!(terminal.grid[0][0].background, Color::Blue);
+        assert_eq!(terminal.grid[0][1].background, Color::Blue);
+    }
+
+    #[test]
+    fn empty_sgr_sequence_resets_attributes() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[7;36;44mA\x1b[mB");
+
+        let first = &terminal.grid[0][0];
+        let second = &terminal.grid[0][1];
+
+        assert!(first.flags.inverse);
+        assert_eq!(first.foreground, Color::Cyan);
+        assert_eq!(first.background, Color::Blue);
+
+        assert!(!second.flags.inverse);
+        assert_eq!(second.foreground, Color::Default);
+        assert_eq!(second.background, Color::Default);
     }
 }

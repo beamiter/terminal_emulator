@@ -2,6 +2,20 @@ use crate::color;
 use crate::terminal::TerminalState;
 use egui::{Color32, FontId, Response, Ui, Vec2};
 
+fn resolve_foreground_color(color_value: crate::terminal::Color) -> Color32 {
+    match color_value {
+        crate::terminal::Color::Default => color::defaults::FOREGROUND,
+        _ => color::to_egui_color32(color_value),
+    }
+}
+
+fn resolve_background_color(color_value: crate::terminal::Color) -> Color32 {
+    match color_value {
+        crate::terminal::Color::Default => color::defaults::BACKGROUND,
+        _ => color::to_egui_color32(color_value),
+    }
+}
+
 pub struct TerminalRenderer {
     pub font_size: f32,
     pub char_width: f32,
@@ -117,13 +131,9 @@ impl TerminalRenderer {
                 let bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
                     color::defaults::selection()
                 } else if cell.flags.inverse {
-                    color::to_egui_color32(cell.foreground)
+                    resolve_foreground_color(cell.foreground)
                 } else {
-                    // Handle default background color specially
-                    match cell.background {
-                        crate::terminal::Color::Default => color::defaults::BACKGROUND,
-                        _ => color::to_egui_color32(cell.background),
-                    }
+                    resolve_background_color(cell.background)
                 };
 
                 let cell_width = if cell.wide { char_width * 2.0 } else { char_width };
@@ -137,9 +147,9 @@ impl TerminalRenderer {
                 // Render character
                 if cell.character != ' ' && !cell.wide_continuation {
                     let fg_color = if cell.flags.inverse {
-                        color::to_egui_color32(cell.background)
+                        resolve_background_color(cell.background)
                     } else {
-                        color::to_egui_color32(cell.foreground)
+                        resolve_foreground_color(cell.foreground)
                     };
 
                     let text = cell.character.to_string();
