@@ -321,38 +321,44 @@ impl eframe::App for TerminalApp {
 
         // Handle Ctrl+Up/Down for scroll
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) && i.modifiers.ctrl) {
-            // Ctrl+Down: scroll down
             let mut terminal = self.terminal.lock();
-            terminal.scroll(-3);
+            if !terminal.is_alt_buffer_active() {
+                terminal.scroll(-3);
+            }
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) && i.modifiers.ctrl) {
-            // Ctrl+Up: scroll up
             let mut terminal = self.terminal.lock();
-            terminal.scroll(3);
+            if !terminal.is_alt_buffer_active() {
+                terminal.scroll(3);
+            }
         }
 
         // Handle PageUp/PageDown for scrolling through scrollback
         if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
-            // PageUp: scroll up by one page (roughly screen height)
             let mut terminal = self.terminal.lock();
-            let (_, rows) = terminal.get_dimensions();
-            terminal.scroll(rows as isize);
+            if !terminal.is_alt_buffer_active() {
+                let (_, rows) = terminal.get_dimensions();
+                terminal.scroll(rows as isize);
+            }
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
-            // PageDown: scroll down by one page
             let mut terminal = self.terminal.lock();
-            let (_, rows) = terminal.get_dimensions();
-            terminal.scroll(-(rows as isize));
+            if !terminal.is_alt_buffer_active() {
+                let (_, rows) = terminal.get_dimensions();
+                terminal.scroll(-(rows as isize));
+            }
         }
 
         // Handle mouse scroll wheel
         let scroll_delta = ctx.input(|i| i.smooth_scroll_delta.y);
         if scroll_delta != 0.0 {
             let mut terminal = self.terminal.lock();
-            let scroll_lines = if scroll_delta > 0.0 { 3 } else { -3 };
-            terminal.scroll(scroll_lines);
+            if !terminal.is_alt_buffer_active() {
+                let scroll_lines = if scroll_delta > 0.0 { 3 } else { -3 };
+                terminal.scroll(scroll_lines);
+            }
         }
 
         // Handle mouse clicks and movement for applications supporting mouse reporting

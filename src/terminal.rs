@@ -1163,6 +1163,10 @@ impl TerminalState {
         self.modes.contains(&1000) || self.modes.contains(&1002) || self.modes.contains(&1003)
     }
 
+    pub fn is_alt_buffer_active(&self) -> bool {
+        self.use_alt_buffer
+    }
+
     fn scroll_down(&mut self) {
         if self.grid.len() > 0 {
             crate::debug_log!("[SCROLL] scroll_down() in buffer (alt={})", self.use_alt_buffer);

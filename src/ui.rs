@@ -28,6 +28,42 @@ fn cursor_rect(rect: egui::Rect, row: usize, col: usize, char_width: f32, line_h
     egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(width, height))
 }
 
+fn key_to_terminal_sequence(key: egui::Key, modifiers: egui::Modifiers) -> Option<&'static str> {
+    if modifiers.ctrl || modifiers.alt || modifiers.mac_cmd || modifiers.command_only() {
+        return None;
+    }
+
+    match key {
+        egui::Key::Enter => Some("\r"),
+        egui::Key::Escape => Some("\x1b"),
+        egui::Key::Backspace => Some("\x08"),
+        egui::Key::Tab => Some("\t"),
+        egui::Key::ArrowUp => Some("\x1b[A"),
+        egui::Key::ArrowDown => Some("\x1b[B"),
+        egui::Key::ArrowRight => Some("\x1b[C"),
+        egui::Key::ArrowLeft => Some("\x1b[D"),
+        egui::Key::Home => Some("\x1b[H"),
+        egui::Key::End => Some("\x1b[F"),
+        egui::Key::Insert => Some("\x1b[2~"),
+        egui::Key::Delete => Some("\x1b[3~"),
+        egui::Key::PageUp => Some("\x1b[5~"),
+        egui::Key::PageDown => Some("\x1b[6~"),
+        egui::Key::F1 => Some("\x1bOP"),
+        egui::Key::F2 => Some("\x1bOQ"),
+        egui::Key::F3 => Some("\x1bOR"),
+        egui::Key::F4 => Some("\x1bOS"),
+        egui::Key::F5 => Some("\x1b[15~"),
+        egui::Key::F6 => Some("\x1b[17~"),
+        egui::Key::F7 => Some("\x1b[18~"),
+        egui::Key::F8 => Some("\x1b[19~"),
+        egui::Key::F9 => Some("\x1b[20~"),
+        egui::Key::F10 => Some("\x1b[21~"),
+        egui::Key::F11 => Some("\x1b[23~"),
+        egui::Key::F12 => Some("\x1b[24~"),
+        _ => None,
+    }
+}
+
 pub struct TerminalRenderer {
     pub font_size: f32,
     pub char_width: f32,
@@ -299,22 +335,7 @@ impl TerminalRenderer {
                     }
 
                     // Handle normal key sequences
-                    let seq = match key {
-                        egui::Key::Enter => Some("\r"),
-                        egui::Key::Escape => Some("\x1b"),
-                        egui::Key::Backspace => Some("\x08"),
-                        egui::Key::Tab => Some("\t"),
-                        egui::Key::ArrowUp => Some("\x1b[A"),
-                        egui::Key::ArrowDown => Some("\x1b[B"),
-                        egui::Key::ArrowRight => Some("\x1b[C"),
-                        egui::Key::ArrowLeft => Some("\x1b[D"),
-                        egui::Key::Home => Some("\x1b[H"),
-                        egui::Key::End => Some("\x1b[F"),
-                        egui::Key::Delete => Some("\x1b[3~"),
-                        egui::Key::PageUp => Some("\x1b[5~"),
-                        egui::Key::PageDown => Some("\x1b[6~"),
-                        _ => None,
-                    };
+                    let seq = key_to_terminal_sequence(key, modifiers);
 
                     if let Some(s) = seq {
                         input.extend(s.as_bytes());
