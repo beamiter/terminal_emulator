@@ -299,9 +299,17 @@ impl TerminalRenderer {
         suppress_text_events: bool,
     ) {
         let events = ctx.input(|i| i.events.clone());
+        let modifiers = ctx.input(|i| i.modifiers);
 
         for event in events {
             match event {
+                egui::Event::Paste(text) => {
+                    if modifiers.command && !modifiers.shift && !modifiers.alt {
+                        input.push(0x16);
+                    } else if !(modifiers.command && modifiers.shift) && !text.is_empty() {
+                        input.extend(text.replace("\r\n", "\n").as_bytes());
+                    }
+                }
                 egui::Event::Text(text) => {
                     if suppress_text_events {
                         continue;
