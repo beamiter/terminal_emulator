@@ -303,6 +303,12 @@ impl TerminalRenderer {
 
         for event in events {
             match event {
+                egui::Event::Copy => {
+                    input.push(0x03);
+                }
+                egui::Event::Cut => {
+                    input.push(0x18);
+                }
                 egui::Event::Paste(text) => {
                     if modifiers.command && !modifiers.shift && !modifiers.alt {
                         input.push(0x16);
