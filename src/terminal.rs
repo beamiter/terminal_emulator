@@ -49,6 +49,13 @@ pub struct Selection {
     pub end: (usize, usize),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Charset {
+    #[default]
+    Ascii,
+    DecSpecialGraphics,
+}
+
 pub struct TerminalState {
     pub grid: Vec<Vec<TerminalCell>>,
     alt_grid: Vec<Vec<TerminalCell>>,
@@ -84,6 +91,10 @@ pub struct TerminalState {
 
     // Incomplete escape sequence buffer across PTY reads
     pending_escape: Vec<u8>,
+
+    g0_charset: Charset,
+    g1_charset: Charset,
+    active_charset: Charset,
 
     // IME support
     pub ime_enabled: bool,
@@ -125,6 +136,9 @@ impl TerminalState {
             utf8_len: 0,
             utf8_expected: 0,
             pending_escape: Vec::new(),
+            g0_charset: Charset::Ascii,
+            g1_charset: Charset::Ascii,
+            active_charset: Charset::Ascii,
             ime_enabled: false,
             preedit_text: String::new(),
             preedit_cursor: 0,
@@ -135,6 +149,7 @@ impl TerminalState {
     }
 
     fn put_char(&mut self, ch: char) {
+        let ch = self.translate_char(ch);
         let width = UnicodeWidthChar::width(ch).unwrap_or(0);
         if width == 0 {
             return; // Skip zero-width characters for now
@@ -197,6 +212,47 @@ impl TerminalState {
 
     fn blank_line(&self, cols: usize) -> Vec<TerminalCell> {
         vec![self.create_blank_cell(); cols]
+    }
+
+    fn charset_from_designator(byte: u8) -> Charset {
+        match byte {
+            b'0' => Charset::DecSpecialGraphics,
+            _ => Charset::Ascii,
+        }
+    }
+
+    fn translate_char(&self, ch: char) -> char {
+        match self.active_charset {
+            Charset::Ascii => ch,
+            Charset::DecSpecialGraphics => match ch {
+                '`' => '◆',
+                'a' => '▒',
+                'f' => '°',
+                'g' => '±',
+                'j' => '┘',
+                'k' => '┐',
+                'l' => '┌',
+                'm' => '└',
+                'n' => '┼',
+                'o' => '⎺',
+                'p' => '⎻',
+                'q' => '─',
+                'r' => '⎼',
+                's' => '⎽',
+                't' => '├',
+                'u' => '┤',
+                'v' => '┴',
+                'w' => '┬',
+                'x' => '│',
+                'y' => '≤',
+                'z' => '≥',
+                '{' => 'π',
+                '|' => '≠',
+                '}' => '£',
+                '~' => '·',
+                _ => ch,
+            },
+        }
     }
 
     fn clear_cell(&mut self, row: usize, col: usize) {
@@ -292,6 +348,14 @@ impl TerminalState {
                     self.cursor_col = 0;
                     i += 1;
                 }
+                b'\x0e' => {
+                    self.active_charset = self.g1_charset;
+                    i += 1;
+                }
+                b'\x0f' => {
+                    self.active_charset = self.g0_charset;
+                    i += 1;
+                }
                 b'\x07' => {
                     // Bell - ignore
                     i += 1;
@@ -316,6 +380,8 @@ impl TerminalState {
                         b']' => {
                             i += 2;
 
+                            let payload_start = i;
+
                             let mut terminated = false;
                             while i < data.len() {
                                 if data[i] == 0x07 {
@@ -335,6 +401,41 @@ impl TerminalState {
                                 self.pending_escape.extend_from_slice(&data[esc_start..]);
                                 break;
                             }
+
+                            let payload_end = if data[i - 1] == 0x07 { i - 1 } else { i - 2 };
+                            if payload_end >= payload_start {
+                                if let Ok(payload) = std::str::from_utf8(&data[payload_start..payload_end]) {
+                                    if let Some((command, value)) = payload.split_once(';') {
+                                        if command == "0" || command == "2" {
+                                            self.window_title.clear();
+                                            self.window_title.push_str(value);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        b'(' | b')' => {
+                            if i + 2 >= data.len() {
+                                self.pending_escape.extend_from_slice(&data[esc_start..]);
+                                break;
+                            }
+
+                            let target = data[i + 1];
+                            let designator = data[i + 2];
+                            let charset = Self::charset_from_designator(designator);
+
+                            match target {
+                                b'(' => {
+                                    self.g0_charset = charset;
+                                    self.active_charset = self.g0_charset;
+                                }
+                                b')' => {
+                                    self.g1_charset = charset;
+                                }
+                                _ => {}
+                            }
+
+                            i += 3;
                         }
                         b'M' => {
                             crate::debug_log!("[ANSI-RI] Reverse Index");
@@ -1062,10 +1163,6 @@ impl TerminalState {
         self.modes.contains(&1000) || self.modes.contains(&1002) || self.modes.contains(&1003)
     }
 
-    pub fn is_mouse_motion_enabled(&self) -> bool {
-        self.modes.contains(&1002) || self.modes.contains(&1003)
-    }
-
     fn scroll_down(&mut self) {
         if self.grid.len() > 0 {
             crate::debug_log!("[SCROLL] scroll_down() in buffer (alt={})", self.use_alt_buffer);
@@ -1138,10 +1235,6 @@ impl TerminalState {
         self.selection = Some(Selection { start, end });
     }
 
-    pub fn clear_selection(&mut self) {
-        self.selection = None;
-    }
-
     pub fn copy_selection(&self) -> Option<String> {
         self.selection.map(|sel| {
             let mut result = String::new();
@@ -1197,11 +1290,6 @@ impl TerminalState {
         if self.scroll_offset == 0 {
             self.scroll_offset = 0;
         }
-    }
-
-    pub fn reset_scroll(&mut self) {
-        // Reset to showing live output (bottom of scrollback)
-        self.scroll_offset = 0;
     }
 
     pub fn on_resize(&mut self, cols: usize, rows: usize) {
@@ -1282,11 +1370,6 @@ impl TerminalState {
         self.preedit_cursor = 0;
     }
 
-    pub fn commit_preedit(&mut self) -> String {
-        let result = self.preedit_text.clone();
-        self.clear_preedit();
-        result
-    }
 }
 
 #[cfg(test)]
@@ -1358,5 +1441,16 @@ mod tests {
 
         assert_eq!(terminal.grid[0][0].character, 'X');
         assert_eq!(terminal.grid[0][0].foreground, Color::Red);
+    }
+
+    #[test]
+    fn dec_special_graphics_charset_maps_line_drawing() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b(0qx\x0fA");
+
+        assert_eq!(terminal.grid[0][0].character, '─');
+        assert_eq!(terminal.grid[0][1].character, '│');
+        assert_eq!(terminal.grid[0][2].character, 'A');
     }
 }

@@ -241,32 +241,6 @@ impl TerminalRenderer {
 
         response
     }
-
-    pub fn handle_mouse_input(
-        &self,
-        response: &Response,
-        terminal: &mut TerminalState,
-        rect: egui::Rect,
-    ) {
-        if response.clicked() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let col = ((pos.x - rect.left() - self.padding) / self.char_width) as usize;
-                let row = ((pos.y - rect.top() - self.padding) / self.line_height) as usize;
-
-                terminal.select_text((row, col), (row, col));
-            }
-        }
-
-        if response.dragged() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let col = ((pos.x - rect.left() - self.padding) / self.char_width) as usize;
-                let row = ((pos.y - rect.top() - self.padding) / self.line_height) as usize;
-
-                terminal.select_text((row, col), (row, col));
-            }
-        }
-    }
-
     pub fn handle_keyboard_input(
         &self,
         ctx: &egui::Context,

@@ -1,8 +1,6 @@
 use anyhow::{anyhow, Result};
-use std::os::unix::io::RawFd;
 use std::ffi::CString;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::os::unix::io::RawFd;
 
 // 声明全局环境变量指针
 extern "C" {
@@ -16,7 +14,6 @@ mod unix_pty {
     pub struct Pty {
         master: RawFd,
         child_pid: i32,
-        terminated: Arc<AtomicBool>,
     }
 
     impl Pty {
@@ -131,12 +128,9 @@ mod unix_pty {
                     // 关闭 slave
                     libc::close(slave);
 
-                    let terminated = Arc::new(AtomicBool::new(false));
-
                     Ok(Pty {
                         master,
                         child_pid: fork_result as i32,
-                        terminated,
                     })
                 }
             }
@@ -231,16 +225,6 @@ mod unix_pty {
                 }
             }
         }
-
-        pub fn send_signal(&mut self, signal: i32) -> Result<()> {
-            unsafe {
-                if libc::kill(self.child_pid, signal) == 0 {
-                    Ok(())
-                } else {
-                    Err(anyhow!("Failed to send signal {}", signal))
-                }
-            }
-        }
     }
 
     impl Drop for Pty {
@@ -287,10 +271,6 @@ mod windows_pty {
         }
 
         pub fn terminate(&mut self) -> Result<()> {
-            Err(anyhow!("PTY not available"))
-        }
-
-        pub fn send_signal(&mut self, _signal: i32) -> Result<()> {
             Err(anyhow!("PTY not available"))
         }
     }

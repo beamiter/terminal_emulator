@@ -131,6 +131,7 @@ impl TerminalApp {
         }
     }
 
+    #[allow(deprecated)]
     fn render_ui(&mut self, ctx: &egui::Context) {
         // 使用 CentralPanel，背景由终端自己渲染，不用 egui 主题覆盖
         let frame = egui::Frame::NONE
@@ -202,6 +203,14 @@ impl eframe::App for TerminalApp {
                     }
                 }
             }
+        }
+
+        let window_title = {
+            let terminal = self.terminal.lock();
+            terminal.window_title.clone()
+        };
+        if !window_title.is_empty() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(window_title));
         }
 
         // Step 2: 在 egui 层面先处理所有快捷键和粘贴事件
