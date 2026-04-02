@@ -70,6 +70,9 @@ pub struct TerminalState {
     current_flags: StyleFlags,
     pub window_title: String,
 
+    // Global background color set by vim (CSI ... m)
+    pub global_bg: Color,
+
     // Scrolling region (DECSTBM)
     scroll_region_top: usize,
     scroll_region_bottom: usize,
@@ -114,6 +117,7 @@ impl TerminalState {
             current_bg: Color::Default,
             current_flags: StyleFlags::default(),
             window_title: String::new(),
+            global_bg: Color::Default,
             utf8_buf: [0; 4],
             utf8_len: 0,
             utf8_expected: 0,
@@ -175,17 +179,37 @@ impl TerminalState {
         self.cursor_col += width;
     }
 
+    fn create_blank_cell(&self) -> TerminalCell {
+        TerminalCell {
+            character: ' ',
+            foreground: Color::Default,
+            background: self.current_bg,  // Preserve current background color
+            flags: StyleFlags::default(),
+            wide: false,
+            wide_continuation: false,
+        }
+    }
+
     fn clear_cell(&mut self, row: usize, col: usize) {
         let cols = self.grid[row].len();
+        let bg_color = self.current_bg;
+        let blank_cell = TerminalCell {
+            character: ' ',
+            foreground: Color::Default,
+            background: bg_color,
+            flags: StyleFlags::default(),
+            wide: false,
+            wide_continuation: false,
+        };
         // If clearing a continuation cell, also clear the wide character body
         if self.grid[row][col].wide_continuation && col > 0 {
-            self.grid[row][col - 1] = TerminalCell::default();
+            self.grid[row][col - 1] = blank_cell.clone();
         }
         // If clearing a wide character body, also clear the continuation cell
         if self.grid[row][col].wide && col + 1 < cols {
-            self.grid[row][col + 1] = TerminalCell::default();
+            self.grid[row][col + 1] = blank_cell.clone();
         }
-        self.grid[row][col] = TerminalCell::default();
+        self.grid[row][col] = blank_cell;
     }
 
     pub fn process_input(&mut self, input: &[u8]) {
@@ -782,6 +806,8 @@ impl TerminalState {
                         47 => Color::White,
                         _ => Color::Default,
                     };
+                    self.global_bg = self.current_bg;  // Update global background
+                    eprintln!("[CSI] Background color set to: {:?}", self.current_bg);
                 }
                 90..=97 => {
                     self.current_fg = match param {
@@ -808,6 +834,7 @@ impl TerminalState {
                         107 => Color::BrightWhite,
                         _ => Color::Default,
                     };
+                    self.global_bg = self.current_bg;  // Update global background
                 }
                 // Extended color support: 38;5;n (256 color) and 38;2;r;g;b (RGB)
                 38 => {
@@ -839,6 +866,8 @@ impl TerminalState {
                             5 => {
                                 // 256 color mode for background
                                 self.current_bg = Color::Indexed(params[i + 2] as u8);
+                                self.global_bg = self.current_bg;  // Update global background
+                                eprintln!("[CSI] Background color (256-color) set to: index {}", params[i + 2]);
                                 i += 2;
                             }
                             2 => {
@@ -849,6 +878,8 @@ impl TerminalState {
                                         params[i + 3] as u8,
                                         params[i + 4] as u8,
                                     );
+                                    self.global_bg = self.current_bg;  // Update global background
+                                    eprintln!("[CSI] Background color (RGB) set to: ({}, {}, {})", params[i + 2], params[i + 3], params[i + 4]);
                                     i += 4;
                                 }
                             }
@@ -863,9 +894,17 @@ impl TerminalState {
     }
 
     fn clear_screen(&mut self) {
+        let bg_color = self.current_bg;
         for row in &mut self.grid {
             for cell in row {
-                *cell = TerminalCell::default();
+                *cell = TerminalCell {
+                    character: ' ',
+                    foreground: Color::Default,
+                    background: bg_color,
+                    flags: StyleFlags::default(),
+                    wide: false,
+                    wide_continuation: false,
+                };
             }
         }
         self.cursor_row = 0;
@@ -999,9 +1038,18 @@ impl TerminalState {
         if self.grid.len() > 0 {
             eprintln!("[SCROLL] scroll_down() in buffer (alt={})", self.use_alt_buffer);
             let cols = self.grid[0].len();
-            let old_line = std::mem::replace(&mut self.grid[0], vec![TerminalCell::default(); cols]);
+            let bg_color = self.current_bg;
+            let blank_cell = TerminalCell {
+                character: ' ',
+                foreground: Color::Default,
+                background: bg_color,
+                flags: StyleFlags::default(),
+                wide: false,
+                wide_continuation: false,
+            };
+            let old_line = std::mem::replace(&mut self.grid[0], vec![blank_cell.clone(); cols]);
             self.grid.remove(0);
-            self.grid.push(vec![TerminalCell::default(); cols]);
+            self.grid.push(vec![blank_cell; cols]);
 
             if self.scrollback.len() >= self.max_scrollback {
                 self.scrollback.pop_front();

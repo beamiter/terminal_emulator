@@ -137,9 +137,8 @@ impl TerminalApp {
         self.cols = width;
         self.rows = height;
 
-        // 使用 CentralPanel 来填充整个窗口，使用深色背景
+        // 使用 CentralPanel，背景由终端自己渲染，不用 egui 主题覆盖
         let frame = egui::Frame::NONE
-            .fill(egui::Color32::from_rgb(29, 29, 29))
             .inner_margin(0.0);
 
         egui::CentralPanel::default()

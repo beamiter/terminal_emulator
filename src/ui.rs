@@ -53,13 +53,6 @@ impl TerminalRenderer {
 
         let painter = ui.painter_at(rect);
 
-        // Paint background for entire rect
-        painter.rect_filled(
-            rect,
-            egui::CornerRadius::ZERO,
-            color::defaults::BACKGROUND,
-        );
-
         let cursor_pos = terminal.get_cursor_pos();
 
         // Handle mouse events for text selection
