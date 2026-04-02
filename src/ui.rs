@@ -25,8 +25,8 @@ pub struct TerminalRenderer {
 
 impl TerminalRenderer {
     pub fn new(font_size: f32, padding: f32) -> Self {
-        let char_width = font_size * 0.6;
-        let line_height = font_size * 1.2;
+        let char_width = font_size * 0.62;
+        let line_height = font_size * 1.35;
 
         TerminalRenderer {
             font_size,
@@ -34,6 +34,16 @@ impl TerminalRenderer {
             line_height,
             padding,
         }
+    }
+
+    pub fn grid_dimensions(&self, available: Vec2) -> (usize, usize) {
+        let usable_width = (available.x - self.padding * 2.0).max(self.char_width);
+        let usable_height = (available.y - self.padding * 2.0).max(self.line_height);
+
+        let cols = (usable_width / self.char_width).floor().max(1.0) as usize;
+        let rows = (usable_height / self.line_height).floor().max(1.0) as usize;
+
+        (cols, rows)
     }
 
     pub fn render(&self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool) -> Response {
@@ -50,10 +60,8 @@ impl TerminalRenderer {
         // eprintln!("[UI] Available: {:.0} x {:.0}", available_width, available_height);
         // eprintln!("[UI] Grid: {} x {}", cols, rows);
 
-        // Calculate character width/height
-        let line_height = (available_height / rows as f32).max(8.0);
-        // For monospace fonts, use tighter spacing (0.45 for more compact display)
-        let char_width = line_height * 0.45;
+        let line_height = self.line_height;
+        let char_width = self.char_width;
 
         // eprintln!("[UI] Char size: {:.1} x {:.1}", char_width, line_height);
 
@@ -66,6 +74,7 @@ impl TerminalRenderer {
         // eprintln!("[UI] Rect: {:?}", rect);
 
         let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, egui::CornerRadius::ZERO, color::defaults::BACKGROUND);
 
         let cursor_pos = terminal.get_cursor_pos();
 
@@ -153,11 +162,7 @@ impl TerminalRenderer {
                     };
 
                     let text = cell.character.to_string();
-                    // Font size should fit within cell width, not just line height
-                    // For wide characters, max width is char_width * 2
-                    let max_font_size = (char_width * 0.9).max(8.0);
-                    let font_size = (line_height * 0.7).min(max_font_size);
-                    let mut font_id = FontId::monospace(font_size);
+                    let mut font_id = FontId::monospace(self.font_size);
 
                     if cell.flags.bold {
                         font_id.size *= 1.1;
@@ -169,8 +174,7 @@ impl TerminalRenderer {
                         fg_color,
                     );
 
-                    // Left-align text in cell
-                    let text_x = x + 1.0;
+                    let text_x = x + (cell_width - galley.size().x).max(0.0) / 2.0;
                     let text_y = y + (line_height - galley.size().y) / 2.0;
 
                     painter.galley(egui::pos2(text_x, text_y), galley, fg_color);
@@ -211,8 +215,7 @@ impl TerminalRenderer {
 
             // 确保不超出屏幕范围
             if preedit_y + line_height <= rect.bottom() {
-                let font_size_preedit = (line_height * 0.7).min(char_width * 0.9).max(8.0);
-                let font_id = FontId::monospace(font_size_preedit);
+                let font_id = FontId::monospace(self.font_size);
                 let galley = ui.painter().layout_no_wrap(
                     preedit_display,
                     font_id,
@@ -286,7 +289,7 @@ impl TerminalRenderer {
 
                     // 如果已被消费，跳过处理
                     if !key_combo.is_empty() && consumed_keys.contains(key_combo) {
-                        eprintln!("[handle_keyboard_input] Skipping {} (already consumed)", key_combo);
+                        crate::debug_log!("[handle_keyboard_input] Skipping {} (already consumed)", key_combo);
                         continue;
                     }
 

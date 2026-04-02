@@ -136,9 +136,10 @@ impl TerminalState {
             return; // Skip zero-width characters for now
         }
 
-        eprintln!("[PUT_CHAR] '{}' at ({},{}) width={}", ch, self.cursor_row, self.cursor_col, width);
+        crate::debug_log!("[PUT_CHAR] '{}' at ({},{}) width={}", ch, self.cursor_row, self.cursor_col, width);
 
         let cols = self.grid[self.cursor_row].len();
+        let blank_cell = self.create_blank_cell();
 
         // If wide character doesn't fit at end of line, wrap to next line
         if self.cursor_col + width > cols {
@@ -152,12 +153,12 @@ impl TerminalState {
 
         // If current position has a continuation cell to its left, clear the wide character
         if self.cursor_col > 0 && self.grid[self.cursor_row][self.cursor_col].wide_continuation {
-            self.grid[self.cursor_row][self.cursor_col - 1] = TerminalCell::default();
+            self.grid[self.cursor_row][self.cursor_col - 1] = blank_cell.clone();
         }
 
         // If current position has a wide character, clear its continuation cell
         if self.grid[self.cursor_row][self.cursor_col].wide && self.cursor_col + 1 < cols {
-            self.grid[self.cursor_row][self.cursor_col + 1] = TerminalCell::default();
+            self.grid[self.cursor_row][self.cursor_col + 1] = blank_cell.clone();
         }
 
         // Write character
@@ -172,7 +173,7 @@ impl TerminalState {
         // Set up wide character continuation cell if needed
         if width == 2 && self.cursor_col + 1 < cols {
             let cont_cell = &mut self.grid[self.cursor_row][self.cursor_col + 1];
-            *cont_cell = TerminalCell::default();
+            *cont_cell = blank_cell;
             cont_cell.wide_continuation = true;
         }
 
@@ -224,7 +225,7 @@ impl TerminalState {
                 .map(|b| format!("{:02x}", b))
                 .collect::<Vec<_>>()
                 .join(" ");
-            eprintln!("[INPUT-HEX] len={} data=[{}{}]",
+            crate::debug_log!("[INPUT-HEX] len={} data=[{}{}]",
                 input.len(),
                 preview,
                 if input.len() > 100 { " ..." } else { "" });
@@ -244,14 +245,14 @@ impl TerminalState {
                 }
                 b'\n' => {
                     // Linefeed - move cursor down or scroll
-                    eprintln!("[LF] Linefeed at row {}, region {}-{}", self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
+                    crate::debug_log!("[LF] Linefeed at row {}, region {}-{}", self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
 
                     if self.cursor_row < self.scroll_region_bottom {
                         // Cursor is not at bottom of scroll region, just move down
                         self.cursor_row += 1;
                     } else {
                         // Cursor is at bottom of scroll region, scroll the region
-                        eprintln!("[LF] At bottom of region, scrolling...");
+                        crate::debug_log!("[LF] At bottom of region, scrolling...");
                         // Scroll up within the scroll region
                         if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
                             let cols = self.grid[self.scroll_region_top].len();
@@ -314,7 +315,7 @@ impl TerminalState {
                 }
                 b'\x1b' if i + 1 < input.len() && input[i + 1] == b'M' => {
                     // RI (Reverse Index) - move cursor up or scroll down
-                    eprintln!("[ANSI-RI] Reverse Index");
+                    crate::debug_log!("[ANSI-RI] Reverse Index");
                     i += 2;
 
                     if self.cursor_row > self.scroll_region_top {
@@ -322,7 +323,7 @@ impl TerminalState {
                         self.cursor_row -= 1;
                     } else {
                         // Cursor is at top of scroll region, scroll down (reveal content above)
-                        eprintln!("[ANSI-RI] At top of region, scrolling down...");
+                        crate::debug_log!("[ANSI-RI] At top of region, scrolling down...");
                         if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
                             let cols = self.grid[self.scroll_region_top].len();
 
@@ -347,7 +348,7 @@ impl TerminalState {
                 }
                 b'\x1b' if i + 1 < input.len() && input[i + 1] == b'D' => {
                     // IND (Index) - move cursor down or scroll up
-                    eprintln!("[ANSI-IND] Index");
+                    crate::debug_log!("[ANSI-IND] Index");
                     i += 2;
 
                     if self.cursor_row < self.scroll_region_bottom {
@@ -355,7 +356,7 @@ impl TerminalState {
                         self.cursor_row += 1;
                     } else {
                         // Cursor is at bottom of scroll region, scroll up
-                        eprintln!("[ANSI-IND] At bottom of region, scrolling up...");
+                        crate::debug_log!("[ANSI-IND] At bottom of region, scrolling up...");
                         if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
                             let cols = self.grid[self.scroll_region_top].len();
                             let mut new_lines = Vec::new();
@@ -412,7 +413,7 @@ impl TerminalState {
                     if i < input.len() {
                         let cmd = input[i] as char;
                         if is_private_mode {
-                            eprintln!("[ANSI-RAW] CSI ? (private mode) cmd={}", cmd);
+                            crate::debug_log!("[ANSI-RAW] CSI ? (private mode) cmd={}", cmd);
                         }
                         self.handle_escape_sequence(&params, cmd);
                         i += 1;
@@ -472,7 +473,7 @@ impl TerminalState {
     fn handle_escape_sequence(&mut self, params: &[u16], cmd: char) {
         // Debug logging for vim commands
         let params_str = params.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(";");
-        eprintln!("[ANSI] CSI {}{}{}  (cursor: {},{}, use_alt: {})",
+        crate::debug_log!("[ANSI] CSI {}{}{}  (cursor: {},{}, use_alt: {})",
             if params_str.is_empty() { "(default)".to_string() } else { params_str.clone() },
             if !params.is_empty() { ":" } else { "" },
             cmd,
@@ -482,7 +483,7 @@ impl TerminalState {
             'A' => {
                 // Cursor up - should scroll region down if at top
                 let n = params.first().copied().unwrap_or(1) as usize;
-                eprintln!("[ANSI-A] Cursor up {} from row {} (scroll region: {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
+                crate::debug_log!("[ANSI-A] Cursor up {} from row {} (scroll region: {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
 
                 for _ in 0..n {
                     if self.cursor_row > self.scroll_region_top {
@@ -490,7 +491,7 @@ impl TerminalState {
                         self.cursor_row -= 1;
                     } else {
                         // Cursor is at top of scroll region, scroll the region down
-                        eprintln!("[ANSI-A] At top of region, scrolling down...");
+                        crate::debug_log!("[ANSI-A] At top of region, scrolling down...");
                         if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
                             let cols = self.grid[self.scroll_region_top].len();
                             let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
@@ -605,7 +606,7 @@ impl TerminalState {
             'L' => {
                 // Insert line(s) at cursor position (push lines down)
                 let n = params.first().copied().unwrap_or(1) as usize;
-                eprintln!("[ANSI-L] Insert {} line(s) at row {} (region {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
+                crate::debug_log!("[ANSI-L] Insert {} line(s) at row {} (region {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
 
                 for _ in 0..n {
                     if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
@@ -622,7 +623,7 @@ impl TerminalState {
             'M' => {
                 // Delete line(s) at cursor position (pull lines up)
                 let n = params.first().copied().unwrap_or(1) as usize;
-                eprintln!("[ANSI-M] Delete {} line(s) at row {} (region {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
+                crate::debug_log!("[ANSI-M] Delete {} line(s) at row {} (region {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
 
                 for _ in 0..n {
                     if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
@@ -651,7 +652,7 @@ impl TerminalState {
             'S' => {
                 // Scroll up (Scroll Up, SU) - content moves up, new lines appear at bottom
                 let n = params.first().copied().unwrap_or(1) as usize;
-                eprintln!("[ANSI-S] Scroll up {} lines in region {}-{}", n, self.scroll_region_top, self.scroll_region_bottom);
+                crate::debug_log!("[ANSI-S] Scroll up {} lines in region {}-{}", n, self.scroll_region_top, self.scroll_region_bottom);
 
                 // Scroll within the scroll region by moving lines
                 for _ in 0..n {
@@ -688,7 +689,7 @@ impl TerminalState {
             'T' => {
                 // Scroll down (Scroll Down, SD) - content moves down, new lines appear at top
                 let n = params.first().copied().unwrap_or(1) as usize;
-                eprintln!("[ANSI-T] Scroll down {} lines in region {}-{}", n, self.scroll_region_top, self.scroll_region_bottom);
+                crate::debug_log!("[ANSI-T] Scroll down {} lines in region {}-{}", n, self.scroll_region_top, self.scroll_region_bottom);
 
                 // Scroll within the scroll region by moving lines
                 for _ in 0..n {
@@ -725,7 +726,7 @@ impl TerminalState {
 
                     // Store response for the application to read
                     // For now, we'll print it to debug
-                    eprintln!("[CPR] Cursor at {}; {}", row, col);
+                    crate::debug_log!("[CPR] Cursor at {}; {}", row, col);
                     // TODO: Send response back to application via PTY
                 }
             }
@@ -756,7 +757,7 @@ impl TerminalState {
                     self.scroll_region_bottom = self.grid.len().saturating_sub(1);
                 }
 
-                eprintln!("[ANSI-r] Set scroll region: {} to {}", self.scroll_region_top, self.scroll_region_bottom);
+                crate::debug_log!("[ANSI-r] Set scroll region: {} to {}", self.scroll_region_top, self.scroll_region_bottom);
 
                 // Move cursor to home position when setting scroll region
                 self.cursor_row = 0;
@@ -823,7 +824,7 @@ impl TerminalState {
                         _ => Color::Default,
                     };
                     self.global_bg = self.current_bg;  // Update global background
-                    eprintln!("[CSI] Background color set to: {:?}", self.current_bg);
+                    crate::debug_log!("[CSI] Background color set to: {:?}", self.current_bg);
                 }
                 90..=97 => {
                     self.current_fg = match param {
@@ -883,7 +884,7 @@ impl TerminalState {
                                 // 256 color mode for background
                                 self.current_bg = Color::Indexed(params[i + 2] as u8);
                                 self.global_bg = self.current_bg;  // Update global background
-                                eprintln!("[CSI] Background color (256-color) set to: index {}", params[i + 2]);
+                                crate::debug_log!("[CSI] Background color (256-color) set to: index {}", params[i + 2]);
                                 i += 2;
                             }
                             2 => {
@@ -895,7 +896,7 @@ impl TerminalState {
                                         params[i + 4] as u8,
                                     );
                                     self.global_bg = self.current_bg;  // Update global background
-                                    eprintln!("[CSI] Background color (RGB) set to: ({}, {}, {})", params[i + 2], params[i + 3], params[i + 4]);
+                                    crate::debug_log!("[CSI] Background color (RGB) set to: ({}, {}, {})", params[i + 2], params[i + 3], params[i + 4]);
                                     i += 4;
                                 }
                             }
@@ -1052,7 +1053,7 @@ impl TerminalState {
 
     fn scroll_down(&mut self) {
         if self.grid.len() > 0 {
-            eprintln!("[SCROLL] scroll_down() in buffer (alt={})", self.use_alt_buffer);
+            crate::debug_log!("[SCROLL] scroll_down() in buffer (alt={})", self.use_alt_buffer);
             let cols = self.grid[0].len();
             let bg_color = self.current_bg;
             let blank_cell = TerminalCell {
@@ -1107,7 +1108,7 @@ impl TerminalState {
 
         // Pad with empty rows if needed
         while result.len() < rows {
-            result.push(vec![TerminalCell::default(); cols]);
+            result.push(self.blank_line(cols));
         }
 
         result
@@ -1189,10 +1190,36 @@ impl TerminalState {
     }
 
     pub fn on_resize(&mut self, cols: usize, rows: usize) {
-        self.grid = vec![vec![TerminalCell::default(); cols]; rows];
+        if cols == 0 || rows == 0 {
+            return;
+        }
+
+        let blank_cell = self.create_blank_cell();
+
+        for row in &mut self.grid {
+            row.resize(cols, blank_cell.clone());
+        }
+        self.grid.resize_with(rows, || vec![blank_cell.clone(); cols]);
+
+        for row in &mut self.alt_grid {
+            row.resize(cols, blank_cell.clone());
+        }
+        self.alt_grid.resize_with(rows, || vec![blank_cell.clone(); cols]);
+
         self.scroll_offset = 0;
-        self.cursor_row = 0;
-        self.cursor_col = 0;
+        self.cursor_row = self.cursor_row.min(rows.saturating_sub(1));
+        self.cursor_col = self.cursor_col.min(cols.saturating_sub(1));
+        self.saved_cursor_row = self.saved_cursor_row.min(rows.saturating_sub(1));
+        self.saved_cursor_col = self.saved_cursor_col.min(cols.saturating_sub(1));
+        self.alt_cursor_row = self.alt_cursor_row.min(rows.saturating_sub(1));
+        self.alt_cursor_col = self.alt_cursor_col.min(cols.saturating_sub(1));
+        self.scroll_region_top = self.scroll_region_top.min(rows.saturating_sub(1));
+        self.scroll_region_bottom = self.scroll_region_bottom.min(rows.saturating_sub(1));
+
+        if self.scroll_region_top > self.scroll_region_bottom {
+            self.scroll_region_top = 0;
+            self.scroll_region_bottom = rows.saturating_sub(1);
+        }
     }
 
     pub fn get_dimensions(&self) -> (usize, usize) {

@@ -1,4 +1,5 @@
 mod color;
+mod debug;
 mod terminal;
 mod ui;
 mod clipboard;
@@ -131,12 +132,6 @@ impl TerminalApp {
     }
 
     fn render_ui(&mut self, ctx: &egui::Context) {
-        let terminal_guard = self.terminal.lock();
-        let (width, height) = terminal_guard.get_dimensions();
-        drop(terminal_guard);
-        self.cols = width;
-        self.rows = height;
-
         // 使用 CentralPanel，背景由终端自己渲染，不用 egui 主题覆盖
         let frame = egui::Frame::NONE
             .inner_margin(0.0);
@@ -144,6 +139,19 @@ impl TerminalApp {
         egui::CentralPanel::default()
             .frame(frame)
             .show(ctx, |ui| {
+                let (cols, rows) = self.renderer.grid_dimensions(ui.available_size());
+
+                if cols != self.cols || rows != self.rows {
+                    if let Some(shell) = &self.shell {
+                        let _ = shell.resize(cols, rows);
+                    }
+
+                    let mut terminal = self.terminal.lock();
+                    terminal.on_resize(cols, rows);
+                    self.cols = cols;
+                    self.rows = rows;
+                }
+
                 let mut terminal_guard = self.terminal.lock();
                 self.renderer.render(ui, &mut terminal_guard, self.cursor_visible);
             });
@@ -163,15 +171,15 @@ impl eframe::App for TerminalApp {
                 let mut terminal = self.terminal.lock();
                 match ime_event {
                     egui::ImeEvent::Enabled => {
-                        eprintln!("[IME] Enabled");
+                        crate::debug_log!("[IME] Enabled");
                         terminal.ime_enabled = true;
                     }
                     egui::ImeEvent::Preedit(text) => {
-                        eprintln!("[IME] Preedit: {:?}", text);
+                        crate::debug_log!("[IME] Preedit: {:?}", text);
                         terminal.set_preedit(text.clone(), text.len());
                     }
                     egui::ImeEvent::Commit(text) => {
-                        eprintln!("[IME] Commit: {:?}", text);
+                        crate::debug_log!("[IME] Commit: {:?}", text);
                         terminal.clear_preedit();
                         // 将提交的文本发送给 shell
                         if !text.is_empty() {
@@ -187,7 +195,7 @@ impl eframe::App for TerminalApp {
                         self.ime_buffer.clear();
                     }
                     egui::ImeEvent::Disabled => {
-                        eprintln!("[IME] Disabled");
+                        crate::debug_log!("[IME] Disabled");
                         terminal.ime_enabled = false;
                         terminal.clear_preedit();
                         self.ime_buffer.clear();
@@ -354,8 +362,8 @@ impl eframe::App for TerminalApp {
                 if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
                     // Get screen rect (same as in render_ui)
                     let screen_rect = ctx.viewport_rect();
-                    let char_width = (screen_rect.width() / self.cols as f32).max(4.0);
-                    let line_height = (screen_rect.height() / self.rows as f32).max(8.0);
+                    let char_width = self.renderer.char_width;
+                    let line_height = self.renderer.line_height;
 
                     // Calculate grid coordinates
                     let clamped_x = (pos.x - screen_rect.left()).max(0.0);
