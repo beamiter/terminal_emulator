@@ -219,37 +219,36 @@ impl eframe::App for TerminalApp {
         // Ctrl+V: 由输入法处理或正常键盘输入
         // Ctrl+X: 不再做剪切
 
+        let mut saw_ctrl_shift_v = false;
+        let mut saw_copy_event = false;
+
         // 仅保留 Ctrl+Shift+C/V 用于终端的复制粘贴（不影响 shell）
         for evt in &all_events {
-            if let egui::Event::Key { key, pressed, modifiers, .. } = evt {
-                // Ctrl+Shift+C: 终端复制选中文本
-                if *key == egui::Key::C && modifiers.ctrl && modifiers.shift && !*pressed {
-                    if let Some(clipboard) = &self.clipboard {
-                        let terminal = self.terminal.lock();
-                        if let Some(text) = terminal.copy_selection() {
-                            let _ = clipboard.copy(&text);
-                        }
+            match evt {
+                egui::Event::Key { key, modifiers, .. } => {
+                    if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
+                        saw_ctrl_shift_v = true;
                     }
+                }
+                egui::Event::Copy => {
+                    saw_copy_event = true;
+                }
+                _ => {}
+            }
+        }
+
+        if saw_copy_event {
+            if let Some(clipboard) = &self.clipboard {
+                let terminal = self.terminal.lock();
+                if let Some(text) = terminal.copy_selection() {
+                    let _ = clipboard.copy(&text);
                     consumed_keys.insert("Ctrl+Shift+C");
                 }
-
-                // Ctrl+Shift+V: 终端粘贴
-                if *key == egui::Key::V && modifiers.ctrl && modifiers.shift && !*pressed {
-                    if let Some(clipboard) = &self.clipboard {
-                        if let Ok(text) = clipboard.paste() {
-                            if !text.is_empty() {
-                                if let Some(shell) = &self.shell {
-                                    let _ = shell.write(text.as_bytes());
-                                } else {
-                                    let mut input_guard = self.input_queue.lock();
-                                    input_guard.extend(text.as_bytes());
-                                }
-                            }
-                        }
-                    }
-                    consumed_keys.insert("Ctrl+Shift+V");
-                }
             }
+        }
+
+        if saw_ctrl_shift_v {
+            consumed_keys.insert("Ctrl+Shift+V");
         }
 
         // Step 2: 处理普通键盘输入，传给 handle_keyboard_input

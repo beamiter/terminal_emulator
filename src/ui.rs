@@ -299,20 +299,40 @@ impl TerminalRenderer {
         suppress_text_events: bool,
     ) {
         let events = ctx.input(|i| i.events.clone());
-        let modifiers = ctx.input(|i| i.modifiers);
+        let mut saw_ctrl_shift_v = consumed_keys.contains("Ctrl+Shift+V");
+        let mut saw_ctrl_v = false;
+
+        for event in &events {
+            if let egui::Event::Key { key, modifiers, .. } = event {
+                if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
+                    saw_ctrl_shift_v = true;
+                }
+
+                if *key == egui::Key::V && modifiers.ctrl && !modifiers.shift && !modifiers.alt {
+                    saw_ctrl_v = true;
+                }
+            }
+        }
 
         for event in events {
             match event {
                 egui::Event::Copy => {
+                    if consumed_keys.contains("Ctrl+Shift+C") {
+                        continue;
+                    }
                     input.push(0x03);
                 }
                 egui::Event::Cut => {
                     input.push(0x18);
                 }
                 egui::Event::Paste(text) => {
-                    if modifiers.command && !modifiers.shift && !modifiers.alt {
+                    if saw_ctrl_shift_v {
+                        if !text.is_empty() {
+                            input.extend(text.replace("\r\n", "\n").as_bytes());
+                        }
+                    } else if saw_ctrl_v {
                         input.push(0x16);
-                    } else if !(modifiers.command && modifiers.shift) && !text.is_empty() {
+                    } else if !text.is_empty() {
                         input.extend(text.replace("\r\n", "\n").as_bytes());
                     }
                 }
