@@ -317,6 +317,39 @@ impl TerminalRenderer {
             }
         }
 
+        // 绘制滚动条
+        let scrollback_len = terminal.scrollback.len();
+        let scroll_offset = terminal.scroll_offset;
+        if scrollback_len > 0 {
+            let scrollbar_width = 12.0;
+            let scrollbar_x = rect.right() - scrollbar_width;
+            let scrollbar_rect = egui::Rect::from_min_max(
+                egui::pos2(scrollbar_x, rect.top()),
+                egui::pos2(rect.right(), rect.bottom()),
+            );
+
+            // 绘制滚动条背景
+            painter.rect_filled(scrollbar_rect, 0.0, Color32::from_rgb(40, 40, 40));
+
+            // 计算滑块的位置和大小
+            let total_lines = scrollback_len + rows;
+            let visible_lines = rows;
+
+            if total_lines > visible_lines {
+                let scrollbar_height = scrollbar_rect.height();
+                let thumb_height = (visible_lines as f32 / total_lines as f32) * scrollbar_height;
+                let thumb_y = (scroll_offset as f32 / scrollback_len as f32) * (scrollbar_height - thumb_height);
+
+                let thumb_rect = egui::Rect::from_min_size(
+                    egui::pos2(scrollbar_x, rect.top() + thumb_y),
+                    egui::vec2(scrollbar_width, thumb_height),
+                );
+
+                // 绘制滑块
+                painter.rect_filled(thumb_rect, 2.0, Color32::from_rgb(100, 100, 110));
+            }
+        }
+
         response
     }
     pub fn handle_keyboard_input(
