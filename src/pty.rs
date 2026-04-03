@@ -10,6 +10,40 @@ extern "C" {
 #[cfg(unix)]
 mod unix_pty {
     use super::*;
+    use std::path::Path;
+
+    fn is_executable(path: &Path) -> bool {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|m| m.is_file() && (m.permissions().mode() & 0o111 != 0))
+            .unwrap_or(false)
+    }
+
+    fn find_executable_in_path(exe_name: &str) -> Option<String> {
+        let path_var = std::env::var_os("PATH")?;
+        std::env::split_paths(&path_var)
+            .map(|dir| dir.join(exe_name))
+            .find(|candidate| is_executable(candidate))
+            .map(|p| p.to_string_lossy().to_string())
+    }
+
+    fn choose_shell() -> String {
+        // Prefer rsh
+        if let Some(rsh_path) = find_executable_in_path("rsh") {
+            eprintln!("[PTY] Using rsh: {}", rsh_path);
+            return rsh_path;
+        }
+
+        // Fallback: bash
+        if let Some(bash_path) = find_executable_in_path("bash") {
+            eprintln!("[PTY] Using bash: {}", bash_path);
+            return bash_path;
+        }
+
+        // Last resort: sh
+        eprintln!("[PTY] Using sh");
+        "sh".to_string()
+    }
 
     pub struct Pty {
         master: RawFd,
@@ -78,12 +112,8 @@ mod unix_pty {
                         libc::close(slave);
                     }
 
-                    // 获取 shell 路径 - 在 fork 之前可能更安全，但这里应该也可以
-                    let shell_path = if let Ok(shell) = std::env::var("SHELL") {
-                        shell
-                    } else {
-                        "/bin/bash".to_string()
-                    };
+                    // 选择 shell：优先 rsh，fallback bash，最后 sh
+                    let shell_path = choose_shell();
 
                     let term_name = CString::new("TERM").unwrap();
                     let term_value = CString::new("xterm-256color").unwrap();
@@ -93,7 +123,7 @@ mod unix_pty {
                     let color_term_value = CString::new("truecolor").unwrap();
                     libc::setenv(color_term_name.as_ptr(), color_term_value.as_ptr(), 1);
 
-                    // 创建 C 字符串们
+                    // 创建 C 字符串
                     let shell_cstr = match CString::new(shell_path.clone()) {
                         Ok(s) => s,
                         Err(_) => {
@@ -102,8 +132,14 @@ mod unix_pty {
                         }
                     };
 
-                    // 使用简单的 "-bash" 作为 argv[0]
-                    let dash_bash = match CString::new("-bash") {
+                    // 根据 shell 名称确定 argv[0]（带前缀 "-" 表示登录 shell）
+                    let shell_name = std::path::Path::new(&shell_path)
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("sh");
+
+                    let dash_shell = format!("-{}", shell_name);
+                    let dash_shell_cstr = match CString::new(dash_shell.clone()) {
                         Ok(s) => s,
                         Err(_) => {
                             libc::perror(b"Invalid shell name\0".as_ptr() as *const i8);
@@ -111,11 +147,27 @@ mod unix_pty {
                         }
                     };
 
+                    // 如果是 bash，添加 -l 参数；rsh 不需要
+                    let login_arg = if shell_name == "bash" {
+                        Some(CString::new("-l").unwrap())
+                    } else {
+                        None
+                    };
+
                     // 构造 argv
-                    let argv = [
-                        dash_bash.as_ptr(),
-                        std::ptr::null(),
-                    ];
+                    let argv = if let Some(arg) = &login_arg {
+                        [
+                            dash_shell_cstr.as_ptr(),
+                            arg.as_ptr(),
+                            std::ptr::null(),
+                        ]
+                    } else {
+                        [
+                            dash_shell_cstr.as_ptr(),
+                            std::ptr::null(),
+                            std::ptr::null(),
+                        ]
+                    };
 
                     // 执行 shell，继承当前环境
                     libc::execve(shell_cstr.as_ptr(), argv.as_ptr(), environ);
