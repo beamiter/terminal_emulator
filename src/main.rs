@@ -362,6 +362,7 @@ impl TerminalApp {
                 ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
 
                 // 终端显示区域
+                self.renderer.sync_font_metrics(ctx);
                 let (cols, rows) = self.renderer.grid_dimensions(ui.available_size());
 
                 if cols != self.cols || rows != self.rows {

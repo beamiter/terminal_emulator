@@ -97,6 +97,23 @@ impl TerminalRenderer {
         }
     }
 
+    pub fn sync_font_metrics(&mut self, ctx: &egui::Context) {
+        let font_id = FontId::monospace(self.font_size);
+        let (char_width, line_height) = ctx.fonts_mut(|fonts| {
+            let glyph_width = fonts.glyph_width(&font_id, 'W');
+            let row_height = fonts.row_height(&font_id);
+            (glyph_width, row_height)
+        });
+
+        if char_width.is_finite() && char_width > 0.0 {
+            self.char_width = char_width;
+        }
+
+        if line_height.is_finite() && line_height > 0.0 {
+            self.line_height = line_height;
+        }
+    }
+
     fn content_size(&self, available: Vec2) -> Vec2 {
         let outer_width = (available.x - self.padding * 2.0).max(self.char_width);
         let outer_height = (available.y - self.padding * 2.0).max(self.line_height);

@@ -131,6 +131,7 @@ impl TerminalState {
 
         let mut modes = std::collections::HashSet::new();
         modes.insert(25); // Cursor visible by default
+        modes.insert(7);  // Autowrap mode enabled by default (DECAWM)
 
         TerminalState {
             grid,
@@ -181,13 +182,19 @@ impl TerminalState {
         let cols = self.grid[self.cursor_row].len();
         let blank_cell = self.create_blank_cell();
 
-        // If wide character doesn't fit at end of line, wrap to next line
+        // If character doesn't fit at end of line, handle based on autowrap mode
         if self.cursor_col + width > cols {
-            self.cursor_col = 0;
-            self.cursor_row += 1;
-            if self.cursor_row >= self.grid.len() {
-                self.cursor_row = self.grid.len() - 1;
-                self.scroll_down();
+            // Only wrap to next line if autowrap mode (mode 7) is enabled
+            if self.modes.contains(&7) {
+                self.cursor_col = 0;
+                self.cursor_row += 1;
+                if self.cursor_row >= self.grid.len() {
+                    self.cursor_row = self.grid.len() - 1;
+                    self.scroll_down();
+                }
+            } else {
+                // Autowrap disabled: clamp cursor to last column instead of wrapping
+                self.cursor_col = cols.saturating_sub(width);
             }
         }
 
