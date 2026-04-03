@@ -162,6 +162,14 @@ impl eframe::App for TerminalApp {
         // UI handled in update()
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // Filter out Copy/Cut/Paste events to prevent egui's default copy/paste behavior
+        // This allows us to handle these with custom keybindings (Ctrl+Shift+C/V)
+        raw_input.events.retain(|event| {
+            !matches!(event, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))
+        });
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Step 1: 处理 IME 事件（在快捷键处理之前）
         let all_events = ctx.input(|i| i.events.clone());
@@ -214,30 +222,26 @@ impl eframe::App for TerminalApp {
         let all_events = ctx.input(|i| i.events.clone());
         let mut consumed_keys = std::collections::HashSet::new();
 
-        // 不再拦截快捷键，完全释放给 shell
-        // Ctrl+C: shell 会收到 SIGINT（中断）
-        // Ctrl+V: 由输入法处理或正常键盘输入
-        // Ctrl+X: 不再做剪切
-
+        // Handle Ctrl+Shift+C/V for terminal copy/paste (not passed to shell)
+        // raw_input_hook has already filtered out Copy/Paste/Cut events
+        let mut saw_ctrl_shift_c = false;
         let mut saw_ctrl_shift_v = false;
-        let mut saw_copy_event = false;
 
-        // 仅保留 Ctrl+Shift+C/V 用于终端的复制粘贴（不影响 shell）
         for evt in &all_events {
-            match evt {
-                egui::Event::Key { key, modifiers, .. } => {
+            if let egui::Event::Key { key, modifiers, pressed, .. } = evt {
+                if *pressed {
+                    if *key == egui::Key::C && modifiers.ctrl && modifiers.shift {
+                        saw_ctrl_shift_c = true;
+                    }
                     if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
                         saw_ctrl_shift_v = true;
                     }
                 }
-                egui::Event::Copy => {
-                    saw_copy_event = true;
-                }
-                _ => {}
             }
         }
 
-        if saw_copy_event {
+        // Handle copy
+        if saw_ctrl_shift_c {
             if let Some(clipboard) = &self.clipboard {
                 let terminal = self.terminal.lock();
                 if let Some(text) = terminal.copy_selection() {
@@ -247,8 +251,19 @@ impl eframe::App for TerminalApp {
             }
         }
 
+        // Handle paste
         if saw_ctrl_shift_v {
-            consumed_keys.insert("Ctrl+Shift+V");
+            if let Some(clipboard) = &self.clipboard {
+                if let Ok(text) = clipboard.paste() {
+                    if let Some(shell) = &self.shell {
+                        let _ = shell.write(text.replace("\r\n", "\n").as_bytes());
+                    } else {
+                        let mut input_guard = self.input_queue.lock();
+                        input_guard.extend(text.replace("\r\n", "\n").as_bytes());
+                    }
+                    consumed_keys.insert("Ctrl+Shift+V");
+                }
+            }
         }
 
         // Step 2: 处理普通键盘输入，传给 handle_keyboard_input

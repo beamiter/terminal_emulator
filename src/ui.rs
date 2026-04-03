@@ -295,40 +295,13 @@ impl TerminalRenderer {
         &self,
         ctx: &egui::Context,
         input: &mut Vec<u8>,
-        consumed_keys: &std::collections::HashSet<&str>,
+        _consumed_keys: &std::collections::HashSet<&str>,
         suppress_text_events: bool,
     ) {
         let events = ctx.input(|i| i.events.clone());
-        let mut saw_ctrl_shift_v = consumed_keys.contains("Ctrl+Shift+V");
-
-        for event in &events {
-            if let egui::Event::Key { key, modifiers, .. } = event {
-                if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
-                    saw_ctrl_shift_v = true;
-                }
-            }
-        }
 
         for event in events {
             match event {
-                egui::Event::Copy => {
-                    if consumed_keys.contains("Ctrl+Shift+C") {
-                        continue;
-                    }
-                    input.push(0x03);
-                }
-                egui::Event::Cut => {
-                    input.push(0x18);
-                }
-                egui::Event::Paste(text) => {
-                    // Only handle Ctrl+Shift+V for pasting
-                    // Ctrl+V alone should be sent to the application (e.g., vim's visual block mode)
-                    if saw_ctrl_shift_v {
-                        if !text.is_empty() {
-                            input.extend(text.replace("\r\n", "\n").as_bytes());
-                        }
-                    }
-                }
                 egui::Event::Text(text) => {
                     if suppress_text_events {
                         continue;
@@ -345,20 +318,14 @@ impl TerminalRenderer {
                     modifiers,
                     ..
                 } => {
-                    // 检查该按键是否已被上层处理
-                    let key_combo = match key {
-                        egui::Key::C if modifiers.ctrl && !modifiers.shift => "Ctrl+C",
-                        egui::Key::C if modifiers.ctrl && modifiers.shift => "Ctrl+Shift+C",
-                        egui::Key::X if modifiers.ctrl && !modifiers.shift => "Ctrl+X",
-                        egui::Key::V if modifiers.ctrl && !modifiers.shift => "Ctrl+V",
-                        egui::Key::V if modifiers.ctrl && modifiers.shift => "Ctrl+Shift+V",
-                        _ => "",
-                    };
-
-                    // 如果已被消费，跳过处理
-                    if !key_combo.is_empty() && consumed_keys.contains(key_combo) {
-                        crate::debug_log!("[handle_keyboard_input] Skipping {} (already consumed)", key_combo);
-                        continue;
+                    // Skip Ctrl+Shift+C/V/X - these will be handled in main.rs for copy/paste
+                    if modifiers.ctrl && modifiers.shift && !modifiers.alt {
+                        match key {
+                            egui::Key::C | egui::Key::V | egui::Key::X => {
+                                continue;
+                            }
+                            _ => {}
+                        }
                     }
 
                     // Handle normal key sequences
@@ -392,7 +359,7 @@ impl TerminalRenderer {
                             egui::Key::S => input.push(0x13), // Ctrl+S
                             egui::Key::T => input.push(0x14), // Ctrl+T
                             egui::Key::U => input.push(0x15), // Ctrl+U (delete line in vim)
-                            egui::Key::V => input.push(0x16), // Ctrl+V (paste/literal)
+                            egui::Key::V => input.push(0x16), // Ctrl+V (visual block in vim)
                             egui::Key::W => input.push(0x17), // Ctrl+W
                             egui::Key::X => input.push(0x18), // Ctrl+X
                             egui::Key::Y => input.push(0x19), // Ctrl+Y
