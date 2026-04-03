@@ -235,6 +235,36 @@ impl TerminalState {
         vec![self.create_blank_cell(); cols]
     }
 
+    fn push_scrollback_line(&mut self, line: Vec<TerminalCell>) {
+        if self.use_alt_buffer {
+            return;
+        }
+
+        if self.scrollback.len() >= self.max_scrollback {
+            self.scrollback.pop_front();
+        }
+        self.scrollback.push_back(line);
+    }
+
+    fn scroll_region_up(&mut self, top: usize, bottom: usize) {
+        if top >= self.grid.len() || bottom >= self.grid.len() || top > bottom {
+            return;
+        }
+
+        let cols = self.grid[top].len();
+        let removed_line = self.grid[top].clone();
+
+        for row in top..bottom {
+            self.grid[row] = self.grid[row + 1].clone();
+        }
+        self.grid[bottom] = self.blank_line(cols);
+
+        let is_full_screen_region = top == 0 && bottom + 1 == self.grid.len();
+        if is_full_screen_region {
+            self.push_scrollback_line(removed_line);
+        }
+    }
+
     fn charset_from_designator(byte: u8) -> Charset {
         match byte {
             b'0' => Charset::DecSpecialGraphics,
@@ -343,26 +373,7 @@ impl TerminalState {
                     } else {
                         // Cursor is at bottom of scroll region, scroll the region
                         crate::debug_log!("[LF] At bottom of region, scrolling...");
-                        // Scroll up within the scroll region
-                        if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
-                            let cols = self.grid[self.scroll_region_top].len();
-                            let mut new_lines = Vec::new();
-
-                            // Keep lines from top+1 to bottom
-                            for i in (self.scroll_region_top + 1)..=self.scroll_region_bottom {
-                                if i < self.grid.len() {
-                                    new_lines.push(self.grid[i].clone());
-                                }
-                            }
-
-                            // Add a blank line at the bottom
-                            new_lines.push(self.blank_line(cols));
-
-                            // Replace region lines
-                            for (i, line) in new_lines.iter().enumerate() {
-                                self.grid[self.scroll_region_top + i] = line.clone();
-                            }
-                        }
+                        self.scroll_region_up(self.scroll_region_top, self.scroll_region_bottom);
                         // Cursor stays at bottom row of the scroll region
                     }
                     i += 1;
@@ -494,22 +505,7 @@ impl TerminalState {
                                 self.cursor_row += 1;
                             } else {
                                 crate::debug_log!("[ANSI-IND] At bottom of region, scrolling up...");
-                                if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
-                                    let cols = self.grid[self.scroll_region_top].len();
-                                    let mut new_lines = Vec::new();
-
-                                    for row in (self.scroll_region_top + 1)..=self.scroll_region_bottom {
-                                        if row < self.grid.len() {
-                                            new_lines.push(self.grid[row].clone());
-                                        }
-                                    }
-
-                                    new_lines.push(self.blank_line(cols));
-
-                                    for (offset, line) in new_lines.iter().enumerate() {
-                                        self.grid[self.scroll_region_top + offset] = line.clone();
-                                    }
-                                }
+                                self.scroll_region_up(self.scroll_region_top, self.scroll_region_bottom);
                             }
                         }
                         b'[' => {
@@ -804,34 +800,7 @@ impl TerminalState {
 
                 // Scroll within the scroll region by moving lines
                 for _ in 0..n {
-                    if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
-                        let cols = self.grid[self.scroll_region_top].len();
-
-                        // Shift lines up within the region
-                        let mut new_lines = Vec::new();
-
-                        // Keep lines from top+1 to bottom
-                        for i in (self.scroll_region_top + 1)..=self.scroll_region_bottom {
-                            if i < self.grid.len() {
-                                new_lines.push(self.grid[i].clone());
-                            }
-                        }
-
-                        // Add a blank line at the bottom
-                        new_lines.push(self.blank_line(cols));
-
-                        // Replace region lines
-                        for (i, line) in new_lines.iter().enumerate() {
-                            self.grid[self.scroll_region_top + i] = line.clone();
-                        }
-
-                        // Save scrolled-out line to scrollback only if it was the top line of the full screen
-                        if self.scroll_region_top == 0 {
-                            if self.scrollback.len() >= self.max_scrollback {
-                                self.scrollback.pop_front();
-                            }
-                        }
-                    }
+                    self.scroll_region_up(self.scroll_region_top, self.scroll_region_bottom);
                 }
             }
             'T' => {
@@ -1273,11 +1242,7 @@ impl TerminalState {
             let old_line = std::mem::replace(&mut self.grid[0], vec![blank_cell.clone(); cols]);
             self.grid.remove(0);
             self.grid.push(vec![blank_cell; cols]);
-
-            if self.scrollback.len() >= self.max_scrollback {
-                self.scrollback.pop_front();
-            }
-            self.scrollback.push_back(old_line);
+            self.push_scrollback_line(old_line);
         }
     }
 
@@ -1395,6 +1360,10 @@ impl TerminalState {
             return;
         }
 
+        let old_rows = self.grid.len();
+        let had_full_screen_region = old_rows == 0
+            || (self.scroll_region_top == 0 && self.scroll_region_bottom + 1 >= old_rows);
+
         let blank_cell = self.create_blank_cell();
 
         for row in &mut self.grid {
@@ -1414,12 +1383,17 @@ impl TerminalState {
         self.saved_cursor_col = self.saved_cursor_col.min(cols.saturating_sub(1));
         self.alt_cursor_row = self.alt_cursor_row.min(rows.saturating_sub(1));
         self.alt_cursor_col = self.alt_cursor_col.min(cols.saturating_sub(1));
-        self.scroll_region_top = self.scroll_region_top.min(rows.saturating_sub(1));
-        self.scroll_region_bottom = self.scroll_region_bottom.min(rows.saturating_sub(1));
-
-        if self.scroll_region_top > self.scroll_region_bottom {
+        if had_full_screen_region {
             self.scroll_region_top = 0;
             self.scroll_region_bottom = rows.saturating_sub(1);
+        } else {
+            self.scroll_region_top = self.scroll_region_top.min(rows.saturating_sub(1));
+            self.scroll_region_bottom = self.scroll_region_bottom.min(rows.saturating_sub(1));
+
+            if self.scroll_region_top > self.scroll_region_bottom {
+                self.scroll_region_top = 0;
+                self.scroll_region_bottom = rows.saturating_sub(1);
+            }
         }
     }
 
@@ -1457,6 +1431,7 @@ impl TerminalState {
         }
     }
 
+
     // IME support methods
     pub fn set_preedit(&mut self, text: String, cursor: usize) {
         self.preedit_text = text;
@@ -1473,6 +1448,32 @@ impl TerminalState {
 #[cfg(test)]
 mod tests {
     use super::{Color, TerminalState};
+
+    #[test]
+    fn resize_preserves_full_screen_scroll_region() {
+        let mut terminal = TerminalState::new(4, 3);
+
+        terminal.on_resize(4, 6);
+
+        assert_eq!(terminal.scroll_region_top, 0);
+        assert_eq!(terminal.scroll_region_bottom, 5);
+    }
+
+    #[test]
+    fn linefeed_at_bottom_pushes_to_scrollback_for_full_screen_region() {
+        let mut terminal = TerminalState::new(4, 2);
+        terminal.grid[0][0].character = 'A';
+        terminal.grid[1][0].character = 'B';
+        terminal.cursor_row = 1;
+        terminal.cursor_col = 0;
+
+        terminal.process_input(b"\n");
+
+        assert_eq!(terminal.scrollback.len(), 1);
+        assert_eq!(terminal.scrollback[0][0].character, 'A');
+        assert_eq!(terminal.grid[0][0].character, 'B');
+        assert_eq!(terminal.grid[1][0].character, ' ');
+    }
 
     #[test]
     fn sgr_39_and_49_restore_default_colors() {
