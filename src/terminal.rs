@@ -411,6 +411,20 @@ impl TerminalState {
                     }
 
                     match data[i + 1] {
+                        b'7' => {
+                            // DECSC - Save Cursor Position
+                            crate::debug_log!("[ANSI-DECSC] Save cursor position: ({},{})", self.cursor_row, self.cursor_col);
+                            self.saved_cursor_row = self.cursor_row;
+                            self.saved_cursor_col = self.cursor_col;
+                            i += 2;
+                        }
+                        b'8' => {
+                            // DECRC - Restore Cursor Position
+                            crate::debug_log!("[ANSI-DECRC] Restore cursor position from ({},{})", self.saved_cursor_row, self.saved_cursor_col);
+                            self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
+                            self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
+                            i += 2;
+                        }
                         b']' => {
                             i += 2;
 
