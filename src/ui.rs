@@ -300,16 +300,11 @@ impl TerminalRenderer {
     ) {
         let events = ctx.input(|i| i.events.clone());
         let mut saw_ctrl_shift_v = consumed_keys.contains("Ctrl+Shift+V");
-        let mut saw_ctrl_v = false;
 
         for event in &events {
             if let egui::Event::Key { key, modifiers, .. } = event {
                 if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
                     saw_ctrl_shift_v = true;
-                }
-
-                if *key == egui::Key::V && modifiers.ctrl && !modifiers.shift && !modifiers.alt {
-                    saw_ctrl_v = true;
                 }
             }
         }
@@ -326,14 +321,12 @@ impl TerminalRenderer {
                     input.push(0x18);
                 }
                 egui::Event::Paste(text) => {
+                    // Only handle Ctrl+Shift+V for pasting
+                    // Ctrl+V alone should be sent to the application (e.g., vim's visual block mode)
                     if saw_ctrl_shift_v {
                         if !text.is_empty() {
                             input.extend(text.replace("\r\n", "\n").as_bytes());
                         }
-                    } else if saw_ctrl_v {
-                        input.push(0x16);
-                    } else if !text.is_empty() {
-                        input.extend(text.replace("\r\n", "\n").as_bytes());
                     }
                 }
                 egui::Event::Text(text) => {
