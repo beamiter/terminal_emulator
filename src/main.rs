@@ -6,6 +6,8 @@ mod clipboard;
 mod pty;
 mod shell;
 mod config;
+mod session;
+mod session_manager;
 
 use eframe::egui;
 use std::sync::Arc;
@@ -15,7 +17,8 @@ use ui::TerminalRenderer;
 use clipboard::ClipboardManager;
 use parking_lot::Mutex as ParkingMutex;
 use shell::{ShellSession, ShellEvent};
-use crossbeam::channel::Receiver;
+use session_manager::SessionManager;
+use session::Session;
 
 fn main() -> Result<(), eframe::Error> {
     // Load configuration
@@ -78,12 +81,10 @@ fn main() -> Result<(), eframe::Error> {
 }
 
 struct TerminalApp {
-    terminal: Arc<ParkingMutex<TerminalState>>,
+    session_manager: SessionManager,
     renderer: TerminalRenderer,
     input_queue: Arc<ParkingMutex<Vec<u8>>>,
     clipboard: Option<ClipboardManager>,
-    shell: Option<ShellSession>,
-    shell_rx: Option<Receiver<ShellEvent>>,
     cols: usize,
     rows: usize,
     last_cursor_blink: std::time::Instant,
@@ -140,14 +141,14 @@ impl TerminalApp {
         let cols = cfg.cols;
         let rows = cfg.rows;
 
+        // 创建首个会话
         let terminal = TerminalState::new(cols, rows);
 
         // 尝试启动 shell
-        let (shell, shell_rx) = match ShellSession::new(cols, rows) {
+        let (shell, _) = match ShellSession::new(cols, rows) {
             Ok(session) => {
-                let rx = session.events().clone();
                 eprintln!("✓ Shell session started successfully");
-                (Some(session), Some(rx))
+                (Some(session), Some(()))
             }
             Err(e) => {
                 eprintln!("✗ Failed to start shell: {}", e);
@@ -155,19 +156,26 @@ impl TerminalApp {
             }
         };
 
-        // 初始化终端显示
-        let term = terminal;
+        let session = if let Some(shell) = shell {
+            Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), shell)
+        } else {
+            // 创建一个没有 shell 的 dummy session（应该很少见）
+            let dummy_shell = ShellSession::new(cols, rows).unwrap_or_else(|e| {
+                panic!("Cannot create even a dummy shell session: {}", e)
+            });
+            Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), dummy_shell)
+        };
+
+        let session_manager = SessionManager::new(session);
 
         let renderer = TerminalRenderer::new(cfg.font_size, cfg.padding);
         let clipboard = ClipboardManager::new().ok();
 
         TerminalApp {
-            terminal: Arc::new(ParkingMutex::new(term)),
+            session_manager,
             input_queue: Arc::new(ParkingMutex::new(Vec::new())),
             renderer,
             clipboard,
-            shell,
-            shell_rx,
             cols,
             rows,
             last_cursor_blink: std::time::Instant::now(),
@@ -178,27 +186,192 @@ impl TerminalApp {
 
     #[allow(deprecated)]
     fn render_ui(&mut self, ctx: &egui::Context) {
-        // 使用 CentralPanel，背景由终端自己渲染，不用 egui 主题覆盖
         let frame = egui::Frame::NONE
             .inner_margin(0.0);
 
         egui::CentralPanel::default()
             .frame(frame)
             .show(ctx, |ui| {
+                // 渲染会话标签栏
+                let tab_height = 30.0;
+                let available_height = ui.available_height();
+
+                // Tab 栏 - 绘制标签和按钮
+                {
+                    let tab_rect = egui::Rect::from_min_size(
+                        ui.cursor().left_top(),
+                        egui::vec2(ui.available_width(), tab_height),
+                    );
+
+                    let painter = ui.painter();
+
+                    // 背景
+                    painter.rect_filled(tab_rect, 0.0, egui::Color32::from_rgb(40, 40, 40));
+                    painter.hline(
+                        tab_rect.left()..=tab_rect.right(),
+                        tab_rect.bottom(),
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 100, 100)),
+                    );
+
+                    let mut x_offset = tab_rect.left() + 5.0;
+                    let active_idx = self.session_manager.active_index();
+
+                    // 预先收集会话信息，避免借用冲突
+                    let sessions_info: Vec<_> = self.session_manager.sessions()
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, session)| (idx, session.metadata.name.clone()))
+                        .collect();
+
+                    // 绘制每个标签
+                    for (idx, tab_text) in &sessions_info {
+                        let galley = painter.layout_no_wrap(
+                            tab_text.clone(),
+                            egui::FontId::monospace(12.0),
+                            egui::Color32::WHITE,
+                        );
+
+                        let tab_width = galley.rect.width() + 20.0;
+                        let tab_rect_item = egui::Rect::from_min_size(
+                            egui::pos2(x_offset, tab_rect.top() + 5.0),
+                            egui::vec2(tab_width, tab_height - 10.0),
+                        );
+
+                        let is_active = *idx == active_idx;
+                        let bg_color = if is_active {
+                            egui::Color32::from_rgb(70, 70, 80)
+                        } else {
+                            egui::Color32::from_rgb(50, 50, 60)
+                        };
+
+                        painter.rect_filled(tab_rect_item, 1.0, bg_color);
+                        // 绘制边框线
+                        painter.hline(
+                            tab_rect_item.left()..=tab_rect_item.right(),
+                            tab_rect_item.top(),
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                        );
+                        painter.hline(
+                            tab_rect_item.left()..=tab_rect_item.right(),
+                            tab_rect_item.bottom(),
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                        );
+                        painter.vline(
+                            tab_rect_item.left(),
+                            tab_rect_item.top()..=tab_rect_item.bottom(),
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                        );
+                        painter.vline(
+                            tab_rect_item.right(),
+                            tab_rect_item.top()..=tab_rect_item.bottom(),
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                        );
+
+                        painter.text(
+                            tab_rect_item.center(),
+                            egui::Align2::CENTER_CENTER,
+                            tab_text,
+                            egui::FontId::monospace(12.0),
+                            if is_active {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::from_rgb(180, 180, 190)
+                            },
+                        );
+
+                        // 检测点击
+                        if ctx.input(|i| i.pointer.any_click()) {
+                            if let Some(click_pos) = ctx.input(|i| i.pointer.press_origin()) {
+                                if tab_rect_item.contains(click_pos) {
+                                    self.session_manager.switch_session(*idx);
+                                }
+                            }
+                        }
+
+                        x_offset += tab_width + 2.0;
+
+                        // 防止超出屏幕
+                        if x_offset > tab_rect.right() - 50.0 {
+                            break;
+                        }
+                    }
+
+                    // "+" 按钮 - 新建会话
+                    let plus_btn_rect = egui::Rect::from_min_size(
+                        egui::pos2(tab_rect.right() - 30.0, tab_rect.top() + 5.0),
+                        egui::vec2(25.0, tab_height - 10.0),
+                    );
+
+                    painter.rect_filled(plus_btn_rect, 1.0, egui::Color32::from_rgb(50, 50, 60));
+                    // 绘制边框
+                    painter.hline(
+                        plus_btn_rect.left()..=plus_btn_rect.right(),
+                        plus_btn_rect.top(),
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                    );
+                    painter.hline(
+                        plus_btn_rect.left()..=plus_btn_rect.right(),
+                        plus_btn_rect.bottom(),
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                    );
+                    painter.vline(
+                        plus_btn_rect.left(),
+                        plus_btn_rect.top()..=plus_btn_rect.bottom(),
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                    );
+                    painter.vline(
+                        plus_btn_rect.right(),
+                        plus_btn_rect.top()..=plus_btn_rect.bottom(),
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                    );
+
+                    painter.text(
+                        plus_btn_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "+",
+                        egui::FontId::monospace(14.0),
+                        egui::Color32::from_rgb(180, 180, 190),
+                    );
+
+                    // 检测 "+" 按钮点击
+                    if ctx.input(|i| i.pointer.any_click()) {
+                        if let Some(click_pos) = ctx.input(|i| i.pointer.press_origin()) {
+                            if plus_btn_rect.contains(click_pos) {
+                                self.session_manager.new_session(None, None);
+                            }
+                        }
+                    }
+
+                    // 向下移动光标
+                    ui.allocate_exact_size(egui::vec2(ui.available_width(), tab_height), egui::Sense::hover());
+                }
+
+                // 分隔线
+                let separator_rect = egui::Rect::from_min_size(
+                    ui.cursor().left_top(),
+                    egui::vec2(ui.available_width(), 1.0),
+                );
+                ui.painter().hline(
+                    separator_rect.left()..=separator_rect.right(),
+                    separator_rect.top(),
+                    egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 90)),
+                );
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+
+                // 终端显示区域
                 let (cols, rows) = self.renderer.grid_dimensions(ui.available_size());
 
                 if cols != self.cols || rows != self.rows {
-                    if let Some(shell) = &self.shell {
-                        let _ = shell.resize(cols, rows);
-                    }
-
-                    let mut terminal = self.terminal.lock();
+                    let session = self.session_manager.get_active_session_mut();
+                    let _ = session.shell.resize(cols, rows);
+                    let mut terminal = session.terminal.lock();
                     terminal.on_resize(cols, rows);
                     self.cols = cols;
                     self.rows = rows;
                 }
 
-                let mut terminal_guard = self.terminal.lock();
+                let session = self.session_manager.get_active_session_mut();
+                let mut terminal_guard = session.terminal.lock();
                 self.renderer.render(ui, &mut terminal_guard, self.cursor_visible);
             });
     }
@@ -218,13 +391,16 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Step 1: 处理 IME 事件（在快捷键处理之前）
+        let active_session_idx = self.session_manager.active_index();
+        let session = self.session_manager.get_active_session_mut();
+
+        // Step 1: 处理 IME 事件
         let all_events = ctx.input(|i| i.events.clone());
         let mut saw_ime_event = false;
         for evt in &all_events {
             if let egui::Event::Ime(ime_event) = evt {
                 saw_ime_event = true;
-                let mut terminal = self.terminal.lock();
+                let mut terminal = session.terminal.lock();
                 match ime_event {
                     egui::ImeEvent::Enabled => {
                         crate::debug_log!("[IME] Enabled");
@@ -237,14 +413,8 @@ impl eframe::App for TerminalApp {
                     egui::ImeEvent::Commit(text) => {
                         crate::debug_log!("[IME] Commit: {:?}", text);
                         terminal.clear_preedit();
-                        // 将提交的文本发送给 shell
                         if !text.is_empty() {
-                            if let Some(shell) = &self.shell {
-                                let _ = shell.write(text.as_bytes());
-                            } else {
-                                let mut input_guard = self.input_queue.lock();
-                                input_guard.extend(text.as_bytes());
-                            }
+                            let _ = session.shell.write(text.as_bytes());
                         }
                         terminal.ime_enabled = false;
                     }
@@ -258,19 +428,59 @@ impl eframe::App for TerminalApp {
         }
 
         let window_title = {
-            let terminal = self.terminal.lock();
+            let terminal = session.terminal.lock();
             terminal.window_title.clone()
         };
         if !window_title.is_empty() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(window_title));
         }
 
-        // Step 2: 在 egui 层面先处理所有快捷键和粘贴事件
+        // Step 2: 处理快捷键 - 会话管理
+        if ctx.input(|i| i.key_pressed(egui::Key::T) && i.modifiers.ctrl && !i.modifiers.shift) {
+            // Ctrl+T: 创建新会话
+            self.session_manager.new_session(None, None);
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::W) && i.modifiers.ctrl && !i.modifiers.shift) {
+            // Ctrl+W: 关闭当前会话
+            self.session_manager.close_session(active_session_idx);
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && !i.modifiers.shift) {
+            // Ctrl+Tab: 下一个会话
+            self.session_manager.switch_to_next_session();
+        }
+
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift) {
+            // Ctrl+Shift+Tab: 前一个会话
+            self.session_manager.switch_to_prev_session();
+        }
+
+        // 数字快捷键：Ctrl+1..9 切换到对应会话
+        for num in 1..=9 {
+            let key = match num {
+                1 => egui::Key::Num1,
+                2 => egui::Key::Num2,
+                3 => egui::Key::Num3,
+                4 => egui::Key::Num4,
+                5 => egui::Key::Num5,
+                6 => egui::Key::Num6,
+                7 => egui::Key::Num7,
+                8 => egui::Key::Num8,
+                9 => egui::Key::Num9,
+                _ => continue,
+            };
+            if ctx.input(|i| i.key_pressed(key) && i.modifiers.ctrl) {
+                self.session_manager.switch_session(num - 1);
+            }
+        }
+
+        let session = self.session_manager.get_active_session_mut();
+
+        // Step 3: 处理 Ctrl+Shift+C/V 复制粘贴
         let all_events = ctx.input(|i| i.events.clone());
         let mut consumed_keys = std::collections::HashSet::new();
 
-        // Handle Ctrl+Shift+C/V for terminal copy/paste (not passed to shell)
-        // raw_input_hook has already filtered out Copy/Paste/Cut events
         let mut saw_ctrl_shift_c = false;
         let mut saw_ctrl_shift_v = false;
 
@@ -287,96 +497,78 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        // Handle copy
         if saw_ctrl_shift_c {
             if let Some(clipboard) = &self.clipboard {
-                let terminal = self.terminal.lock();
+                let terminal = session.terminal.lock();
                 if let Some(text) = terminal.copy_selection() {
                     let _ = clipboard.copy(&text);
-                    consumed_keys.insert("Ctrl+Shift+C");
+                    consumed_keys.insert("Ctrl+Shift+C".to_string());
                 }
             }
         }
 
-        // Handle paste
         if saw_ctrl_shift_v {
             if let Some(clipboard) = &self.clipboard {
                 if let Ok(text) = clipboard.paste() {
-                    if let Some(shell) = &self.shell {
-                        let _ = shell.write(text.replace("\r\n", "\n").as_bytes());
-                    } else {
-                        let mut input_guard = self.input_queue.lock();
-                        input_guard.extend(text.replace("\r\n", "\n").as_bytes());
-                    }
-                    consumed_keys.insert("Ctrl+Shift+V");
+                    let _ = session.shell.write(text.replace("\r\n", "\n").as_bytes());
+                    consumed_keys.insert("Ctrl+Shift+V".to_string());
                 }
             }
         }
 
-        // Step 2: 处理普通键盘输入，传给 handle_keyboard_input
-        // 但排除已经被消费的按键
+        // Step 4: 处理普通键盘输入
         let mut keyboard_input = Vec::new();
+        // 转换 consumed_keys 为需要的格式（HashSet<&str>）
+        let consumed_keys_refs: std::collections::HashSet<&str> = consumed_keys
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
         self.renderer
-            .handle_keyboard_input(ctx, &mut keyboard_input, &consumed_keys, saw_ime_event);
+            .handle_keyboard_input(ctx, &mut keyboard_input, &consumed_keys_refs, saw_ime_event);
 
         if !keyboard_input.is_empty() {
             let mut input_guard = self.input_queue.lock();
             input_guard.extend(keyboard_input);
         }
 
-        // Process queued input - send to shell instead of local terminal
+        // Step 5: 发送输入到 shell
         {
             let mut input_guard = self.input_queue.lock();
             if !input_guard.is_empty() {
-                if let Some(shell) = &self.shell {
-                    // 发送输入到 shell
-                    let _ = shell.write(&input_guard);
-                } else {
-                    // 如果没有 shell，本地处理输入
-                    let mut terminal = self.terminal.lock();
-                    terminal.process_input(&input_guard);
-                }
+                let _ = session.shell.write(&input_guard);
                 input_guard.clear();
             }
         }
 
-        // 处理 shell 事件
-        if let Some(rx) = &self.shell_rx {
-            while let Ok(event) = rx.try_recv() {
-                match event {
-                    ShellEvent::Output(data) => {
-                        let mut terminal = self.terminal.lock();
-                        terminal.process_input(&data);
-                        self.status_message.clear();
-                    }
-                    ShellEvent::Exit(code) => {
-                        self.status_message = format!("Shell exited with code: {}", code);
-                        if let Some(mut shell) = self.shell.take() {
-                            shell.mark_exited();
-                        }
-                    }
-                    ShellEvent::Error(e) => {
-                        self.status_message = format!("Error: {}", e);
-                    }
+        // Step 6: 处理 shell 事件
+        while let Ok(event) = session.shell.events().try_recv() {
+            match event {
+                ShellEvent::Output(data) => {
+                    let mut terminal = session.terminal.lock();
+                    terminal.process_input(&data);
+                    self.status_message.clear();
+                }
+                ShellEvent::Exit(code) => {
+                    self.status_message = format!("Shell exited with code: {}", code);
+                }
+                ShellEvent::Error(e) => {
+                    self.status_message = format!("Error: {}", e);
                 }
             }
         }
 
-        // Send any terminal output (e.g., DSR responses) back to shell
+        // Step 7: 发送终端输出回 shell（DSR 响应等）
         {
-            let mut terminal = self.terminal.lock();
+            let mut terminal = session.terminal.lock();
             let output = terminal.get_output();
             if !output.is_empty() {
-                if let Some(shell) = &self.shell {
-                    let _ = shell.write(&output);
-                }
+                let _ = session.shell.write(&output);
             }
         }
 
-        // Handle cursor blinking (500ms on, 500ms off)
-        // Only blink if the application hasn't hidden the cursor
+        // Step 8: 光标闪烁
         {
-            let terminal = self.terminal.lock();
+            let terminal = session.terminal.lock();
             let app_wants_cursor_visible = terminal.is_cursor_visible();
             drop(terminal);
 
@@ -386,35 +578,33 @@ impl eframe::App for TerminalApp {
                     self.last_cursor_blink = std::time::Instant::now();
                 }
             } else {
-                // Application has hidden cursor via \x1b[?25l
                 self.cursor_visible = false;
             }
         }
 
-        // Handle Ctrl+D to exit the application
+        // Step 9: 处理退出
         if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && !i.modifiers.shift) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
 
-        // Handle Ctrl+Up/Down for scroll
+        // Step 10: 滚动处理
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) && i.modifiers.ctrl) {
-            let mut terminal = self.terminal.lock();
+            let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
                 terminal.scroll(-3);
             }
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) && i.modifiers.ctrl) {
-            let mut terminal = self.terminal.lock();
+            let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
                 terminal.scroll(3);
             }
         }
 
-        // Handle PageUp/PageDown for scrolling through scrollback
         if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
-            let mut terminal = self.terminal.lock();
+            let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
                 let (_, rows) = terminal.get_dimensions();
                 terminal.scroll(rows as isize);
@@ -422,40 +612,36 @@ impl eframe::App for TerminalApp {
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
-            let mut terminal = self.terminal.lock();
+            let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
                 let (_, rows) = terminal.get_dimensions();
                 terminal.scroll(-(rows as isize));
             }
         }
 
-        // Handle mouse scroll wheel
         let scroll_delta = ctx.input(|i| i.smooth_scroll_delta.y);
         if scroll_delta != 0.0 {
-            let mut terminal = self.terminal.lock();
+            let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
                 let scroll_lines = if scroll_delta > 0.0 { 3 } else { -3 };
                 terminal.scroll(scroll_lines);
             }
         }
 
-        // Handle mouse clicks and movement for applications supporting mouse reporting
+        // Step 11: 鼠标处理
         let mouse_reports: Vec<String> = {
-            let terminal = self.terminal.lock();
+            let terminal = session.terminal.lock();
             if !terminal.is_mouse_enabled() {
                 drop(terminal);
                 Vec::new()
             } else {
                 let mut reports = Vec::new();
 
-                // Get current mouse position from context
                 if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
-                    // Get screen rect (same as in render_ui)
                     let screen_rect = ctx.viewport_rect();
                     let char_width = self.renderer.char_width;
                     let line_height = self.renderer.line_height;
 
-                    // Calculate grid coordinates
                     let clamped_x = (pos.x - screen_rect.left()).max(0.0);
                     let clamped_y = (pos.y - screen_rect.top()).max(0.0);
 
@@ -470,17 +656,16 @@ impl eframe::App for TerminalApp {
                         0
                     };
 
-                    // Check for button presses
                     let button_pressed = ctx.input(|i| {
                         let mut btns = Vec::new();
                         if i.pointer.button_pressed(egui::PointerButton::Primary) {
-                            btns.push(0); // Left button
+                            btns.push(0);
                         }
                         if i.pointer.button_pressed(egui::PointerButton::Secondary) {
-                            btns.push(2); // Right button
+                            btns.push(2);
                         }
                         if i.pointer.button_pressed(egui::PointerButton::Middle) {
-                            btns.push(1); // Middle button
+                            btns.push(1);
                         }
                         btns
                     });
@@ -497,22 +682,16 @@ impl eframe::App for TerminalApp {
             }
         };
 
-        // Send mouse reports to shell
         if !mouse_reports.is_empty() {
             for report in mouse_reports {
-                if let Some(shell) = &self.shell {
-                    let _ = shell.write(report.as_bytes());
-                } else {
-                    let mut input_guard = self.input_queue.lock();
-                    input_guard.extend(report.as_bytes());
-                }
+                let _ = session.shell.write(report.as_bytes());
             }
         }
 
-        // 渲染 UI - 使用 Area 实现真正的全屏填充
+        // 渲染 UI
         self.render_ui(ctx);
 
-        // Request repaint for cursor blinking
+        // 请求重绘（用于光标闪烁）
         ctx.request_repaint();
 
         std::thread::sleep(Duration::from_millis(16));

@@ -1,0 +1,103 @@
+use crate::terminal::TerminalState;
+use crate::shell::ShellSession;
+use std::sync::Arc;
+use std::time::Instant;
+use parking_lot::Mutex as ParkingMutex;
+use uuid::Uuid;
+
+/// Session metadata - 会话元数据
+#[derive(Debug, Clone)]
+pub struct SessionMetadata {
+    pub id: Uuid,
+    pub name: String,
+    pub tags: Vec<String>,
+    pub created_at: Instant,
+    pub last_active: Instant,
+}
+
+impl SessionMetadata {
+    pub fn new(name: String, tags: Vec<String>) -> Self {
+        let now = Instant::now();
+        SessionMetadata {
+            id: Uuid::new_v4(),
+            name,
+            tags,
+            created_at: now,
+            last_active: now,
+        }
+    }
+
+    pub fn default_name(index: usize) -> String {
+        format!("Session {}", index + 1)
+    }
+
+    pub fn update_last_active(&mut self) {
+        self.last_active = Instant::now();
+    }
+}
+
+/// Session - 完整的会话，包含终端状态和 Shell 会话
+pub struct Session {
+    pub metadata: SessionMetadata,
+    pub terminal: Arc<ParkingMutex<TerminalState>>,
+    pub shell: ShellSession,
+}
+
+impl Session {
+    pub fn new(
+        name: String,
+        tags: Vec<String>,
+        terminal: Arc<ParkingMutex<TerminalState>>,
+        shell: ShellSession,
+    ) -> Self {
+        Session {
+            metadata: SessionMetadata::new(name, tags),
+            terminal,
+            shell,
+        }
+    }
+
+    pub fn with_default_name(
+        index: usize,
+        terminal: Arc<ParkingMutex<TerminalState>>,
+        shell: ShellSession,
+    ) -> Self {
+        let name = SessionMetadata::default_name(index);
+        Session::new(name, Vec::new(), terminal, shell)
+    }
+
+    pub fn add_tag(&mut self, tag: String) {
+        if !self.metadata.tags.contains(&tag) {
+            self.metadata.tags.push(tag);
+        }
+        self.metadata.update_last_active();
+    }
+
+    pub fn remove_tag(&mut self, tag: &str) {
+        self.metadata.tags.retain(|t| t != tag);
+        self.metadata.update_last_active();
+    }
+
+    pub fn has_tag(&self, tag: &str) -> bool {
+        self.metadata.tags.contains(&tag.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_session_metadata() {
+        let metadata = SessionMetadata::new("Test".to_string(), vec!["tag1".to_string()]);
+        assert_eq!(metadata.name, "Test");
+        assert_eq!(metadata.tags.len(), 1);
+        assert_eq!(metadata.tags[0], "tag1");
+    }
+
+    #[test]
+    fn test_default_name() {
+        assert_eq!(SessionMetadata::default_name(0), "Session 1");
+        assert_eq!(SessionMetadata::default_name(5), "Session 6");
+    }
+}
