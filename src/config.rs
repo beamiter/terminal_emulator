@@ -1,6 +1,19 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ScrollbarVisibility {
+    Auto,
+    Always,
+}
+
+impl Default for ScrollbarVisibility {
+    fn default() -> Self {
+        Self::Always
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default = "default_font_size")]
@@ -8,6 +21,9 @@ pub struct Config {
 
     #[serde(default = "default_padding")]
     pub padding: f32,
+
+    #[serde(default)]
+    pub scrollbar_visibility: ScrollbarVisibility,
 
     #[serde(default = "default_scrollback_lines")]
     pub scrollback_lines: usize,
@@ -30,7 +46,7 @@ fn default_font_size() -> f32 {
 }
 
 fn default_padding() -> f32 {
-    0.0
+    12.0
 }
 
 fn default_scrollback_lines() -> usize {
@@ -58,6 +74,7 @@ impl Default for Config {
         Config {
             font_size: default_font_size(),
             padding: default_padding(),
+            scrollbar_visibility: ScrollbarVisibility::default(),
             scrollback_lines: default_scrollback_lines(),
             initial_width: default_initial_width(),
             initial_height: default_initial_height(),

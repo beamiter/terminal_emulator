@@ -168,7 +168,11 @@ impl TerminalApp {
 
         let session_manager = SessionManager::new(session);
 
-        let renderer = TerminalRenderer::new(cfg.font_size, cfg.padding);
+        let renderer = TerminalRenderer::new(
+            cfg.font_size,
+            cfg.padding,
+            cfg.scrollbar_visibility.clone(),
+        );
         let clipboard = ClipboardManager::new().ok();
 
         TerminalApp {
