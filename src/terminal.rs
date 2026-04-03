@@ -11,6 +11,19 @@ pub enum Color {
     Default,
 }
 
+#[derive(Clone, Debug)]
+pub enum CursorShape {
+    Block,      // 0 or 1 - block cursor (default)
+    Underline,  // 2 - underline cursor
+    Beam,       // 3 - beam/vertical line cursor
+}
+
+impl Default for CursorShape {
+    fn default() -> Self {
+        CursorShape::Block
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StyleFlags {
     pub bold: bool,
@@ -18,6 +31,8 @@ pub struct StyleFlags {
     pub underline: bool,
     pub inverse: bool,
     pub dim: bool,
+    pub blink: bool,
+    pub strikethrough: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -71,6 +86,7 @@ pub struct TerminalState {
     saved_cursor_col: usize,
     alt_cursor_row: usize,
     alt_cursor_col: usize,
+    pub cursor_shape: CursorShape,
 
     current_fg: Color,
     current_bg: Color,
@@ -130,6 +146,7 @@ impl TerminalState {
             saved_cursor_col: 0,
             alt_cursor_row: 0,
             alt_cursor_col: 0,
+            cursor_shape: CursorShape::default(),
             current_fg: Color::Default,
             current_bg: Color::Default,
             current_flags: StyleFlags::default(),
@@ -525,6 +542,15 @@ impl TerminalState {
                             if i >= data.len() {
                                 self.pending_escape.extend_from_slice(&data[esc_start..]);
                                 break;
+                            }
+
+                            // Handle intermediate bytes (like space in DECSCUSR)
+                            if data[i] == b' ' {
+                                i += 1;
+                                if i >= data.len() {
+                                    self.pending_escape.extend_from_slice(&data[esc_start..]);
+                                    break;
+                                }
                             }
 
                             let cmd = data[i] as char;
@@ -927,6 +953,16 @@ impl TerminalState {
                     }
                 }
             }
+            'q' => {
+                // DECSCUSR - Set cursor style
+                let shape = params.first().copied().unwrap_or(0) as u8;
+                self.cursor_shape = match shape {
+                    0 | 1 => CursorShape::Block,
+                    2 => CursorShape::Underline,
+                    3 => CursorShape::Beam,
+                    _ => CursorShape::Block,
+                };
+            }
             _ => {}
         }
     }
@@ -952,14 +988,18 @@ impl TerminalState {
                 2 => self.current_flags.dim = true,
                 3 => self.current_flags.italic = true,
                 4 => self.current_flags.underline = true,
+                5 => self.current_flags.blink = true,
                 7 => self.current_flags.inverse = true,
+                9 => self.current_flags.strikethrough = true,
                 22 => {
                     self.current_flags.bold = false;
                     self.current_flags.dim = false;
                 }
                 23 => self.current_flags.italic = false,
                 24 => self.current_flags.underline = false,
+                25 => self.current_flags.blink = false,
                 27 => self.current_flags.inverse = false,
+                29 => self.current_flags.strikethrough = false,
                 39 => self.current_fg = Color::Default,
                 30..=37 => {
                     self.current_fg = match param {

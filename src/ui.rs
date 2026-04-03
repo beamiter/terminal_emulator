@@ -249,21 +249,49 @@ impl TerminalRenderer {
                             egui::Stroke::new(1.0, fg_color),
                         );
                     }
+
+                    if cell.flags.strikethrough {
+                        let strikethrough_y = y + line_height / 2.0;
+                        painter.line_segment(
+                            [egui::pos2(x, strikethrough_y), egui::pos2(x + cell_width, strikethrough_y)],
+                            egui::Stroke::new(1.0, fg_color),
+                        );
+                    }
                 }
 
                 // Render cursor
                 if (row_idx, col_idx) == cursor_pos && cursor_visible {
-                    painter.rect_filled(
-                        cell_rect,
-                        egui::CornerRadius::ZERO,
-                        Color32::from_rgba_unmultiplied(80, 80, 80, 100),
-                    );
-                    painter.rect_stroke(
-                        cell_rect,
-                        egui::CornerRadius::ZERO,
-                        egui::Stroke::new(1.5, color::defaults::CURSOR),
-                        egui::StrokeKind::Middle,
-                    );
+                    match &terminal.cursor_shape {
+                        crate::terminal::CursorShape::Block => {
+                            // Block cursor - filled rectangle
+                            painter.rect_filled(
+                                cell_rect,
+                                egui::CornerRadius::ZERO,
+                                Color32::from_rgba_unmultiplied(80, 80, 80, 100),
+                            );
+                            painter.rect_stroke(
+                                cell_rect,
+                                egui::CornerRadius::ZERO,
+                                egui::Stroke::new(1.5, color::defaults::CURSOR),
+                                egui::StrokeKind::Middle,
+                            );
+                        }
+                        crate::terminal::CursorShape::Underline => {
+                            // Underline cursor
+                            let underline_y = y + line_height - 2.0;
+                            painter.line_segment(
+                                [egui::pos2(x, underline_y), egui::pos2(x + cell_width, underline_y)],
+                                egui::Stroke::new(2.0, color::defaults::CURSOR),
+                            );
+                        }
+                        crate::terminal::CursorShape::Beam => {
+                            // Beam/vertical line cursor
+                            painter.line_segment(
+                                [egui::pos2(x + 1.0, y), egui::pos2(x + 1.0, y + line_height)],
+                                egui::Stroke::new(1.5, color::defaults::CURSOR),
+                            );
+                        }
+                    }
                 }
             }
         }
