@@ -326,8 +326,10 @@ impl TerminalState {
 
             match byte {
                 b'\x08' => {
+                    // Backspace - move cursor left and delete the character
                     if self.cursor_col > 0 {
                         self.cursor_col -= 1;
+                        self.clear_cell(self.cursor_row, self.cursor_col);
                     }
                     i += 1;
                 }
