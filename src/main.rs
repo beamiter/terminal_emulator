@@ -643,10 +643,26 @@ impl eframe::App for TerminalApp {
         }
 
         let scroll_delta = ctx.input(|i| i.smooth_scroll_delta.y);
+        let shift_pressed = ctx.input(|i| i.modifiers.shift);
+
         if scroll_delta != 0.0 {
             let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
-                let scroll_lines = if scroll_delta > 0.0 { 3 } else { -3 };
+                // 根据是否按住 Shift 键来决定滚动速度
+                let scroll_multiplier = if shift_pressed { 5.0 } else { 2.0 };
+
+                // 根据滚轮滚动方向和速度计算滚动行数
+                // scroll_delta > 0: 向上滚（显示更早的内容）
+                // scroll_delta < 0: 向下滚（显示更新的内容）
+                let scroll_lines = if scroll_delta > 0.0 {
+                    // 向上滚轮，显示历史
+                    let lines = (scroll_delta * scroll_multiplier).ceil() as isize;
+                    lines.max(1)
+                } else {
+                    // 向下滚轮，显示最新
+                    let lines = (scroll_delta.abs() * scroll_multiplier).ceil() as isize;
+                    -(lines.max(1))
+                };
                 terminal.scroll(scroll_lines);
             }
         }
