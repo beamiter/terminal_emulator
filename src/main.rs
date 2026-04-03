@@ -493,6 +493,16 @@ impl eframe::App for TerminalApp {
             }
         }
 
+        // Ctrl+PageUp: 前一个会话
+        if ctx.input(|i| i.key_pressed(egui::Key::PageUp) && i.modifiers.ctrl) {
+            self.session_manager.switch_to_prev_session();
+        }
+
+        // Ctrl+PageDown: 下一个会话
+        if ctx.input(|i| i.key_pressed(egui::Key::PageDown) && i.modifiers.ctrl) {
+            self.session_manager.switch_to_next_session();
+        }
+
         // 获取当前活跃会话（在所有快捷键处理完后）
         let session = self.session_manager.get_active_session_mut();
 
@@ -616,7 +626,7 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        if ctx.input(|i| i.key_pressed(egui::Key::PageUp)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::PageUp) && !i.modifiers.ctrl) {
             let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
                 let (_, rows) = terminal.get_dimensions();
@@ -624,7 +634,7 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        if ctx.input(|i| i.key_pressed(egui::Key::PageDown)) {
+        if ctx.input(|i| i.key_pressed(egui::Key::PageDown) && !i.modifiers.ctrl) {
             let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
                 let (_, rows) = terminal.get_dimensions();
