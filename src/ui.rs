@@ -341,7 +341,7 @@ impl TerminalRenderer {
                             egui::Key::A => input.push(0x01), // Ctrl+A
                             egui::Key::B => input.push(0x02), // Ctrl+B (backward page in vim)
                             egui::Key::C => input.push(0x03), // Ctrl+C (SIGINT)
-                            egui::Key::D => input.push(0x04), // Ctrl+D (EOF)
+                            egui::Key::D => {}, // Ctrl+D (handled in main.rs to exit app)
                             egui::Key::E => input.push(0x05), // Ctrl+E
                             egui::Key::F => input.push(0x06), // Ctrl+F (forward page in vim)
                             egui::Key::G => input.push(0x07), // Ctrl+G

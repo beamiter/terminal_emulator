@@ -149,11 +149,7 @@ impl TerminalApp {
         };
 
         // 初始化终端显示
-        let mut term = terminal;
-
-        // 写入初始提示
-        let init_msg = b"Terminal Emulator v0.4.0\r\nEnter your commands:\r\n$ ";
-        term.process_input(init_msg);
+        let term = terminal;
 
         let renderer = TerminalRenderer::new(14.0, 0.0);  // padding 改为 0
         let clipboard = ClipboardManager::new().ok();
@@ -375,6 +371,12 @@ impl eframe::App for TerminalApp {
                 // Application has hidden cursor via \x1b[?25l
                 self.cursor_visible = false;
             }
+        }
+
+        // Handle Ctrl+D to exit the application
+        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && !i.modifiers.shift) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;
         }
 
         // Handle Ctrl+Up/Down for scroll
