@@ -5,6 +5,7 @@ mod ui;
 mod clipboard;
 mod pty;
 mod shell;
+mod config;
 
 use eframe::egui;
 use std::sync::Arc;
@@ -17,16 +18,22 @@ use shell::{ShellSession, ShellEvent};
 use crossbeam::channel::Receiver;
 
 fn main() -> Result<(), eframe::Error> {
+    // Load configuration
+    let cfg = config::Config::load();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1200.0, 600.0]),
+            .with_inner_size([cfg.initial_width, cfg.initial_height]),
         ..Default::default()
     };
 
+    let cfg = std::sync::Arc::new(cfg);
+
     eframe::run_native(
-        "Terminal Emulator - ANSI Color Support",
+        "Terminal Emulator",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
+            let cfg_clone = cfg.clone();
             let mut fonts = egui::FontDefinitions::default();
 
             // Try to load system CJK fonts
@@ -65,7 +72,7 @@ fn main() -> Result<(), eframe::Error> {
             visuals.extreme_bg_color = egui::Color32::from_rgb(20, 20, 20);
             cc.egui_ctx.set_visuals(visuals);
 
-            Ok(Box::new(TerminalApp::new()))
+            Ok(Box::new(TerminalApp::new(&cfg_clone)))
         }),
     )
 }
@@ -129,9 +136,9 @@ fn normalize_terminal_shortcut_events(
 }
 
 impl TerminalApp {
-    fn new() -> Self {
-        let cols = 100;
-        let rows = 30;
+    fn new(cfg: &config::Config) -> Self {
+        let cols = cfg.cols;
+        let rows = cfg.rows;
 
         let terminal = TerminalState::new(cols, rows);
 
@@ -151,7 +158,7 @@ impl TerminalApp {
         // 初始化终端显示
         let term = terminal;
 
-        let renderer = TerminalRenderer::new(14.0, 0.0);  // padding 改为 0
+        let renderer = TerminalRenderer::new(cfg.font_size, cfg.padding);
         let clipboard = ClipboardManager::new().ok();
 
         TerminalApp {
