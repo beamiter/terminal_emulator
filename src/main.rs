@@ -436,14 +436,21 @@ impl eframe::App for TerminalApp {
         }
 
         // Step 2: 处理快捷键 - 会话管理
-        if ctx.input(|i| i.key_pressed(egui::Key::T) && i.modifiers.ctrl && !i.modifiers.shift) {
-            // Ctrl+T: 创建新会话
-            self.session_manager.new_session(None, None);
+        if ctx.input(|i| i.key_pressed(egui::Key::T) && i.modifiers.ctrl && i.modifiers.shift) {
+            // Ctrl+Shift+T: 创建新会话并自动切换到它
+            let new_idx = self.session_manager.new_session(None, None);
+            self.session_manager.switch_session(new_idx);
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::W) && i.modifiers.ctrl && !i.modifiers.shift) {
-            // Ctrl+W: 关闭当前会话
-            self.session_manager.close_session(active_session_idx);
+            // Ctrl+W: 关闭当前会话，如果是最后一个则关闭窗口
+            if self.session_manager.len() > 1 {
+                self.session_manager.close_session(active_session_idx);
+            } else {
+                // 关闭整个应用窗口
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && !i.modifiers.shift) {
@@ -454,6 +461,17 @@ impl eframe::App for TerminalApp {
         if ctx.input(|i| i.key_pressed(egui::Key::Tab) && i.modifiers.ctrl && i.modifiers.shift) {
             // Ctrl+Shift+Tab: 前一个会话
             self.session_manager.switch_to_prev_session();
+        }
+
+        // Ctrl+D 同 Ctrl+W 功能：关闭会话或窗口
+        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && !i.modifiers.shift) {
+            if self.session_manager.len() > 1 {
+                self.session_manager.close_session(active_session_idx);
+            } else {
+                // 关闭整个应用窗口
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
         }
 
         // 数字快捷键：Ctrl+1..9 切换到对应会话
@@ -475,6 +493,7 @@ impl eframe::App for TerminalApp {
             }
         }
 
+        // 获取当前活跃会话（在所有快捷键处理完后）
         let session = self.session_manager.get_active_session_mut();
 
         // Step 3: 处理 Ctrl+Shift+C/V 复制粘贴
@@ -582,13 +601,7 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        // Step 9: 处理退出
-        if ctx.input(|i| i.key_pressed(egui::Key::D) && i.modifiers.ctrl && !i.modifiers.shift) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            return;
-        }
-
-        // Step 10: 滚动处理
+        // Step 9: 滚动处理
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) && i.modifiers.ctrl) {
             let mut terminal = session.terminal.lock();
             if !terminal.is_alt_buffer_active() {
