@@ -198,7 +198,6 @@ impl TerminalApp {
             .show(ctx, |ui| {
                 // 渲染会话标签栏
                 let tab_height = 30.0;
-                let available_height = ui.available_height();
 
                 // Tab 栏 - 绘制标签和按钮
                 {

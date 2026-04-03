@@ -201,8 +201,6 @@ impl SessionManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // 注意: 完整的单元测试需要创建真实的 TerminalState 和 ShellSession
     // 这里只测试基本逻辑
 }
