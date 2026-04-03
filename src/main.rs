@@ -355,6 +355,17 @@ impl eframe::App for TerminalApp {
             }
         }
 
+        // Send any terminal output (e.g., DSR responses) back to shell
+        {
+            let mut terminal = self.terminal.lock();
+            let output = terminal.get_output();
+            if !output.is_empty() {
+                if let Some(shell) = &self.shell {
+                    let _ = shell.write(&output);
+                }
+            }
+        }
+
         // Handle cursor blinking (500ms on, 500ms off)
         // Only blink if the application hasn't hidden the cursor
         {

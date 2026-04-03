@@ -103,6 +103,9 @@ pub struct TerminalState {
 
     // DECSET modes
     modes: std::collections::HashSet<u16>,
+
+    // Output buffer for DSR/CPR responses to be sent back to PTY
+    pub output_buffer: Vec<u8>,
 }
 
 impl TerminalState {
@@ -145,6 +148,7 @@ impl TerminalState {
             scroll_region_top: 0,
             scroll_region_bottom: rows.saturating_sub(1),
             modes,
+            output_buffer: Vec::new(),
         }
     }
 
@@ -840,10 +844,9 @@ impl TerminalState {
                     let row = (self.cursor_row + 1) as u16;
                     let col = (self.cursor_col + 1) as u16;
 
-                    // Store response for the application to read
-                    // For now, we'll print it to debug
-                    crate::debug_log!("[CPR] Cursor at {}; {}", row, col);
-                    // TODO: Send response back to application via PTY
+                    // Send cursor position response back to PTY
+                    let response = format!("\x1b[{};{}R", row, col);
+                    self.output_buffer.extend(response.as_bytes());
                 }
             }
             'h' => {
@@ -878,6 +881,51 @@ impl TerminalState {
                 // Move cursor to home position when setting scroll region
                 self.cursor_row = 0;
                 self.cursor_col = 0;
+            }
+            '@' => {
+                // ICH - Insert Character(s)
+                let n = params.first().copied().unwrap_or(1) as usize;
+                let cols = self.grid[0].len();
+                let blank_cell = self.create_blank_cell();
+                if self.cursor_col < cols {
+                    // Insert n blank cells at cursor position, shifting content right
+                    for _ in 0..n {
+                        if self.cursor_col < cols {
+                            self.grid[self.cursor_row].insert(self.cursor_col, blank_cell.clone());
+                            // Remove the cell at the end of the line to keep width constant
+                            if self.grid[self.cursor_row].len() > cols {
+                                self.grid[self.cursor_row].pop();
+                            }
+                        }
+                    }
+                }
+            }
+            'P' => {
+                // DCH - Delete Character(s)
+                let n = params.first().copied().unwrap_or(1) as usize;
+                let cols = self.grid[0].len();
+                let blank_cell = self.create_blank_cell();
+                for _ in 0..n {
+                    if self.cursor_col < self.grid[self.cursor_row].len() {
+                        self.grid[self.cursor_row].remove(self.cursor_col);
+                        // Add blank cell at the end to keep width constant
+                        if self.grid[self.cursor_row].len() < cols {
+                            self.grid[self.cursor_row].push(blank_cell.clone());
+                        }
+                    }
+                }
+            }
+            'X' => {
+                // ECH - Erase Character(s)
+                let n = params.first().copied().unwrap_or(1) as usize;
+                for i in 0..n {
+                    let col = self.cursor_col + i;
+                    if col < self.grid[self.cursor_row].len() {
+                        self.clear_cell(self.cursor_row, col);
+                    } else {
+                        break;
+                    }
+                }
             }
             _ => {}
         }
@@ -1232,6 +1280,10 @@ impl TerminalState {
 
     pub fn get_cursor_pos(&self) -> (usize, usize) {
         (self.cursor_row, self.cursor_col)
+    }
+
+    pub fn get_output(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.output_buffer)
     }
 
     pub fn select_text(&mut self, start: (usize, usize), end: (usize, usize)) {
