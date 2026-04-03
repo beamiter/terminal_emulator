@@ -325,11 +325,11 @@ impl TerminalState {
             let byte = data[i];
 
             match byte {
-                b'\x08' => {
-                    // Backspace - move cursor left and delete the character
+                b'\x08' | b'\x7f' => {
+                    // Backspace (0x08) and Delete (0x7f) - just move cursor left
+                    // Shell handles actual deletion and sends back updated display
                     if self.cursor_col > 0 {
                         self.cursor_col -= 1;
-                        self.clear_cell(self.cursor_row, self.cursor_col);
                     }
                     i += 1;
                 }

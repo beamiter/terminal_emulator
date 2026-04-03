@@ -36,7 +36,7 @@ fn key_to_terminal_sequence(key: egui::Key, modifiers: egui::Modifiers) -> Optio
     match key {
         egui::Key::Enter => Some("\r"),
         egui::Key::Escape => Some("\x1b"),
-        egui::Key::Backspace => Some("\x08"),
+        egui::Key::Backspace => Some("\x7f"),  // Send DEL (0x7f)
         egui::Key::Tab => Some("\t"),
         egui::Key::ArrowUp => Some("\x1b[A"),
         egui::Key::ArrowDown => Some("\x1b[B"),
