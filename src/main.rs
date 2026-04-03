@@ -84,6 +84,50 @@ struct TerminalApp {
     status_message: String,
 }
 
+fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
+    !ctx.text_edit_focused() && modifiers.command && !modifiers.alt
+}
+
+fn shortcut_event_to_key_event(event: egui::Event, modifiers: egui::Modifiers) -> Option<egui::Event> {
+    let key = match event {
+        egui::Event::Copy => egui::Key::C,
+        egui::Event::Cut => egui::Key::X,
+        egui::Event::Paste(_) => egui::Key::V,
+        _ => return None,
+    };
+
+    Some(egui::Event::Key {
+        key,
+        physical_key: Some(key),
+        pressed: true,
+        repeat: false,
+        modifiers,
+    })
+}
+
+fn normalize_terminal_shortcut_events(
+    events: &mut Vec<egui::Event>,
+    modifiers: egui::Modifiers,
+    restore_shortcuts: bool,
+) {
+    let mut normalized_events = Vec::with_capacity(events.len());
+
+    for event in events.drain(..) {
+        if restore_shortcuts {
+            if let Some(key_event) = shortcut_event_to_key_event(event.clone(), modifiers) {
+                normalized_events.push(key_event);
+                continue;
+            }
+        }
+
+        if !matches!(event, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)) {
+            normalized_events.push(event);
+        }
+    }
+
+    *events = normalized_events;
+}
+
 impl TerminalApp {
     fn new() -> Self {
         let cols = 100;
@@ -162,12 +206,12 @@ impl eframe::App for TerminalApp {
         // UI handled in update()
     }
 
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        // Filter out Copy/Cut/Paste events to prevent egui's default copy/paste behavior
-        // This allows us to handle these with custom keybindings (Ctrl+Shift+C/V)
-        raw_input.events.retain(|event| {
-            !matches!(event, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_))
-        });
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        // egui-winit turns Ctrl/Cmd+C/X/V into semantic clipboard events and skips the
+        // corresponding Key press. Restore those as Key events so the terminal can receive
+        // control bytes, while still preventing egui's default text-edit shortcut behavior.
+        let restore_shortcuts = should_restore_terminal_shortcut_event(ctx, raw_input.modifiers);
+        normalize_terminal_shortcut_events(&mut raw_input.events, raw_input.modifiers, restore_shortcuts);
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -452,5 +496,72 @@ impl eframe::App for TerminalApp {
         ctx.request_repaint();
 
         std::thread::sleep(Duration::from_millis(16));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_terminal_shortcut_events, shortcut_event_to_key_event};
+    use eframe::egui;
+
+    #[test]
+    fn copy_event_becomes_ctrl_c_key_event() {
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+
+        let event = shortcut_event_to_key_event(egui::Event::Copy, modifiers)
+            .expect("copy event should map to a key event");
+
+        assert_eq!(
+            event,
+            egui::Event::Key {
+                key: egui::Key::C,
+                physical_key: Some(egui::Key::C),
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }
+        );
+    }
+
+    #[test]
+    fn paste_event_becomes_ctrl_shift_v_key_event_when_restored() {
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            shift: true,
+            command: true,
+            ..Default::default()
+        };
+        let mut events = vec![egui::Event::Paste("ignored clipboard payload".to_owned())];
+
+        normalize_terminal_shortcut_events(&mut events, modifiers, true);
+
+        assert_eq!(
+            events,
+            vec![egui::Event::Key {
+                key: egui::Key::V,
+                physical_key: Some(egui::Key::V),
+                pressed: true,
+                repeat: false,
+                modifiers,
+            }]
+        );
+    }
+
+    #[test]
+    fn semantic_clipboard_events_are_dropped_when_not_restored() {
+        let modifiers = egui::Modifiers::default();
+        let mut events = vec![
+            egui::Event::Copy,
+            egui::Event::Paste("ignored".to_owned()),
+            egui::Event::Text("a".to_owned()),
+        ];
+
+        normalize_terminal_shortcut_events(&mut events, modifiers, false);
+
+        assert_eq!(events, vec![egui::Event::Text("a".to_owned())]);
     }
 }
