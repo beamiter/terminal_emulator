@@ -4,18 +4,12 @@ use crate::shell::ShellSession;
 use std::sync::Arc;
 use parking_lot::Mutex as ParkingMutex;
 
-/// 获取当前工作目录
-fn get_current_working_dir() -> Option<String> {
-    // 尝试读取当前进程的 cwd
-    std::fs::read_link("/proc/self/cwd")
+/// 获取指定进程的工作目录
+fn get_process_cwd(pid: i32) -> Option<String> {
+    // 从 /proc/[pid]/cwd 获取指定进程的工作目录
+    std::fs::read_link(format!("/proc/{}/cwd", pid))
         .ok()
         .and_then(|path| path.to_str().map(|s| s.to_string()))
-        .or_else(|| {
-            // fallback: 使用标准库的 current_dir
-            std::env::current_dir()
-                .ok()
-                .and_then(|path| path.to_str().map(|s| s.to_string()))
-        })
 }
 
 /// SessionManager - 管理所有终端会话
@@ -39,9 +33,11 @@ impl SessionManager {
         let name = name.unwrap_or_else(|| format!("Session {}", index + 1));
         let tags = tags.unwrap_or_default();
 
-        // 获取当前活跃会话的工作目录（如果存在）
+        // 从当前活跃会话的 shell 进程获取工作目录
         let cwd = if !self.sessions.is_empty() {
-            get_current_working_dir()
+            let active_session = &self.sessions[self.active_index];
+            let pid = active_session.get_shell_pid();
+            get_process_cwd(pid)
         } else {
             None
         };

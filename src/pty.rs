@@ -207,6 +207,10 @@ mod unix_pty {
             }
         }
 
+        pub fn get_child_pid(&self) -> i32 {
+            self.child_pid
+        }
+
         pub fn write(&mut self, data: &[u8]) -> Result<usize> {
             unsafe {
                 let n = libc::write(self.master, data.as_ptr() as *const _, data.len());

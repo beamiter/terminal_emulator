@@ -21,6 +21,7 @@ pub struct ShellSession {
     input_tx: Sender<ShellCommand>,
     event_rx: Receiver<ShellEvent>,
     pub is_running: bool,
+    child_pid: i32,  // 存储 shell 子进程的 PID
 }
 
 impl ShellSession {
@@ -33,6 +34,9 @@ impl ShellSession {
     pub fn new_with_cwd(cols: usize, rows: usize, cwd: Option<&str>) -> std::result::Result<Self, String> {
         match Pty::new_with_cwd(cols, rows, cwd) {
             Ok(pty) => {
+                // 在把 pty 放入 Arc<Mutex> 前获取 child_pid
+                let child_pid = pty.get_child_pid();
+
                 let (input_tx, input_rx) = unbounded::<ShellCommand>();
                 let (event_tx, event_rx) = unbounded::<ShellEvent>();
 
@@ -49,6 +53,7 @@ impl ShellSession {
                     input_tx,
                     event_rx,
                     is_running: true,
+                    child_pid,
                 })
             }
             Err(e) => Err(format!("Failed to create shell session: {}", e)),
@@ -200,5 +205,10 @@ impl ShellSession {
 
     pub fn mark_exited(&mut self) {
         self.is_running = false;
+    }
+
+    /// 获取 shell 子进程的 PID
+    pub fn get_child_pid(&self) -> i32 {
+        self.child_pid
     }
 }

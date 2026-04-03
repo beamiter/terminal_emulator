@@ -81,6 +81,11 @@ impl Session {
     pub fn has_tag(&self, tag: &str) -> bool {
         self.metadata.tags.contains(&tag.to_string())
     }
+
+    /// 获取 shell 子进程的 PID
+    pub fn get_shell_pid(&self) -> i32 {
+        self.shell.get_child_pid()
+    }
 }
 
 #[cfg(test)]
