@@ -26,7 +26,12 @@ pub struct ShellSession {
 impl ShellSession {
     /// 启动新的 shell session
     pub fn new(cols: usize, rows: usize) -> std::result::Result<Self, String> {
-        match Pty::new(cols, rows) {
+        Self::new_with_cwd(cols, rows, None)
+    }
+
+    /// 启动新的 shell session，指定初始工作目录
+    pub fn new_with_cwd(cols: usize, rows: usize, cwd: Option<&str>) -> std::result::Result<Self, String> {
+        match Pty::new_with_cwd(cols, rows, cwd) {
             Ok(pty) => {
                 let (input_tx, input_rx) = unbounded::<ShellCommand>();
                 let (event_tx, event_rx) = unbounded::<ShellEvent>();

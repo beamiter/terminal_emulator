@@ -52,6 +52,10 @@ mod unix_pty {
 
     impl Pty {
         pub fn new(cols: usize, rows: usize) -> Result<Self> {
+            Self::new_with_cwd(cols, rows, None)
+        }
+
+        pub fn new_with_cwd(cols: usize, rows: usize, cwd: Option<&str>) -> Result<Self> {
             unsafe {
                 // 1. 创建 PTY
                 let mut master = 0;
@@ -96,6 +100,21 @@ mod unix_pty {
 
                     // 创建新的会话和进程组（将此进程设为会话leader）
                     libc::setsid();
+
+                    // 如果指定了工作目录，在执行 shell 前改变目录
+                    if let Some(dir) = cwd {
+                        let dir_cstr = match CString::new(dir) {
+                            Ok(s) => s,
+                            Err(_) => {
+                                libc::perror(b"Invalid working directory\0".as_ptr() as *const i8);
+                                libc::exit(127);
+                            }
+                        };
+                        if libc::chdir(dir_cstr.as_ptr()) != 0 {
+                            libc::perror(b"chdir failed\0".as_ptr() as *const i8);
+                            libc::exit(127);
+                        }
+                    }
 
                     // 设置 slave 为控制终端
                     if libc::ioctl(slave, libc::TIOCSCTTY, 0) != 0 {

@@ -4,6 +4,20 @@ use crate::shell::ShellSession;
 use std::sync::Arc;
 use parking_lot::Mutex as ParkingMutex;
 
+/// 获取当前工作目录
+fn get_current_working_dir() -> Option<String> {
+    // 尝试读取当前进程的 cwd
+    std::fs::read_link("/proc/self/cwd")
+        .ok()
+        .and_then(|path| path.to_str().map(|s| s.to_string()))
+        .or_else(|| {
+            // fallback: 使用标准库的 current_dir
+            std::env::current_dir()
+                .ok()
+                .and_then(|path| path.to_str().map(|s| s.to_string()))
+        })
+}
+
 /// SessionManager - 管理所有终端会话
 pub struct SessionManager {
     sessions: Vec<Session>,
@@ -19,13 +33,22 @@ impl SessionManager {
         }
     }
 
-    /// 创建新会话并添加到管理器
+    /// 创建新会话并添加到管理器，继承当前工作目录
     pub fn new_session(&mut self, name: Option<String>, tags: Option<Vec<String>>) -> usize {
         let index = self.sessions.len();
         let name = name.unwrap_or_else(|| format!("Session {}", index + 1));
         let tags = tags.unwrap_or_default();
 
-        match ShellSession::new(80, 24) {
+        // 获取当前活跃会话的工作目录（如果存在）
+        let cwd = if !self.sessions.is_empty() {
+            get_current_working_dir()
+        } else {
+            None
+        };
+
+        // 创建新会话，继承工作目录
+        let cwd_ref = cwd.as_deref();
+        match ShellSession::new_with_cwd(80, 24, cwd_ref) {
             Ok(shell) => {
                 let terminal = Arc::new(ParkingMutex::new(TerminalState::new(80, 24)));
                 let session = Session::new(name, tags, terminal, shell);
