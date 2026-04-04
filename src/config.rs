@@ -46,7 +46,7 @@ fn default_font_size() -> f32 {
 }
 
 fn default_padding() -> f32 {
-    12.0
+    4.0
 }
 
 fn default_scrollback_lines() -> usize {
