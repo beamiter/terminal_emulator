@@ -75,7 +75,7 @@ pub struct TerminalRenderer {
 
 impl TerminalRenderer {
     const SCROLLBAR_WIDTH: f32 = 8.0;
-    const SCROLLBAR_GAP: f32 = 10.0;
+    const SCROLLBAR_GAP: f32 = 2.0;
     const MIN_THUMB_HEIGHT: f32 = 24.0;
     const SCROLLBAR_HIT_EXPAND: f32 = 8.0;
 
