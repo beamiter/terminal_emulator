@@ -559,7 +559,8 @@ impl eframe::App for TerminalApp {
         self.renderer
             .handle_keyboard_input(ctx, &mut keyboard_input, &consumed_keys_refs, saw_ime_event);
 
-        if !keyboard_input.is_empty() {
+        let has_keyboard_input = !keyboard_input.is_empty();
+        if has_keyboard_input {
             let mut input_guard = self.input_queue.lock();
             input_guard.extend(keyboard_input);
         }
@@ -574,18 +575,22 @@ impl eframe::App for TerminalApp {
         }
 
         // Step 6: 处理 shell 事件
+        let mut has_new_output = false;
         while let Ok(event) = session.shell.events().try_recv() {
             match event {
                 ShellEvent::Output(data) => {
                     let mut terminal = session.terminal.lock();
                     terminal.process_input(&data);
                     self.status_message.clear();
+                    has_new_output = true;
                 }
                 ShellEvent::Exit(code) => {
                     self.status_message = format!("Shell exited with code: {}", code);
+                    has_new_output = true;
                 }
                 ShellEvent::Error(e) => {
                     self.status_message = format!("Error: {}", e);
+                    has_new_output = true;
                 }
             }
         }
@@ -600,6 +605,7 @@ impl eframe::App for TerminalApp {
         }
 
         // Step 8: 光标闪烁
+        let mut cursor_state_changed = false;
         {
             let terminal = session.terminal.lock();
             let app_wants_cursor_visible = terminal.is_cursor_visible();
@@ -609,9 +615,13 @@ impl eframe::App for TerminalApp {
                 if self.last_cursor_blink.elapsed() > Duration::from_millis(500) {
                     self.cursor_visible = !self.cursor_visible;
                     self.last_cursor_blink = std::time::Instant::now();
+                    cursor_state_changed = true;
                 }
             } else {
-                self.cursor_visible = false;
+                if self.cursor_visible {
+                    self.cursor_visible = false;
+                    cursor_state_changed = true;
+                }
             }
         }
 
@@ -749,7 +759,8 @@ impl eframe::App for TerminalApp {
             }
         };
 
-        if !mouse_reports.is_empty() {
+        let has_mouse_input = !mouse_reports.is_empty();
+        if has_mouse_input {
             for report in mouse_reports {
                 let _ = session.shell.write(report.as_bytes());
             }
@@ -758,8 +769,19 @@ impl eframe::App for TerminalApp {
         // 渲染 UI
         self.render_ui(ctx);
 
-        // 请求重绘（用于光标闪烁）
-        ctx.request_repaint();
+        // 只在需要时请求重绘：有新输出、光标状态改变、或有未处理的输入
+        let should_repaint = has_new_output
+            || cursor_state_changed
+            || has_keyboard_input
+            || has_mouse_input;
+
+        if should_repaint {
+            ctx.request_repaint();
+        } else {
+            // 没有新事件时，仅用于光标闪烁更新的周期重绘（500ms 一次）
+            // 为了避免 CPU 持续高占用，设置更长的睡眠时间
+            ctx.request_repaint_after(Duration::from_millis(100));
+        }
 
         std::thread::sleep(Duration::from_millis(16));
     }
