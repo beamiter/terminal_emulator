@@ -211,6 +211,27 @@ mod unix_pty {
             self.child_pid
         }
 
+        pub fn master_fd(&self) -> RawFd {
+            self.master
+        }
+
+        pub fn wait_fd_readable(fd: RawFd, timeout_ms: i32) -> Result<bool> {
+            let mut poll_fd = libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
+
+            let ready = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
+            if ready < 0 {
+                Err(anyhow!("Failed to poll PTY: {}", std::io::Error::last_os_error()))
+            } else if ready == 0 {
+                Ok(false)
+            } else {
+                Ok((poll_fd.revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR)) != 0)
+            }
+        }
+
         pub fn write(&mut self, data: &[u8]) -> Result<usize> {
             unsafe {
                 let n = libc::write(self.master, data.as_ptr() as *const _, data.len());

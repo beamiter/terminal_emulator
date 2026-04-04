@@ -71,6 +71,9 @@ pub struct TerminalRenderer {
     pub padding: f32,
     pub dragging_scrollbar: bool,
     pub scrollbar_visibility: crate::config::ScrollbarVisibility,
+    requested_initial_focus: bool,
+    ime_enabled: bool,
+    last_ime_rect: Option<egui::Rect>,
 }
 
 impl TerminalRenderer {
@@ -94,6 +97,9 @@ impl TerminalRenderer {
             padding,
             dragging_scrollbar: false,
             scrollbar_visibility,
+            requested_initial_focus: false,
+            ime_enabled: false,
+            last_ime_rect: None,
         }
     }
 
@@ -194,12 +200,34 @@ impl TerminalRenderer {
         let cursor_pos = terminal.get_cursor_pos();
         let ime_rect = cursor_rect(content_rect, cursor_pos.0, cursor_pos.1, char_width, line_height);
 
-        response.request_focus();
-
         let ctx = ui.ctx();
-        ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(true));
-        ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(egui::IMEPurpose::Terminal));
-        ctx.send_viewport_cmd(egui::ViewportCommand::IMERect(ime_rect));
+        if response.clicked() || (!self.requested_initial_focus && !ctx.memory(|mem| mem.has_focus(response.id))) {
+            response.request_focus();
+            self.requested_initial_focus = true;
+        }
+
+        let has_focus = ctx.memory(|mem| mem.has_focus(response.id));
+        if has_focus != self.ime_enabled {
+            ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(has_focus));
+            if has_focus {
+                ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(egui::IMEPurpose::Terminal));
+            }
+            self.ime_enabled = has_focus;
+            if !has_focus {
+                self.last_ime_rect = None;
+            }
+        }
+
+        if has_focus {
+            let ime_rect_changed = self
+                .last_ime_rect
+                .map(|prev| prev != ime_rect)
+                .unwrap_or(true);
+            if ime_rect_changed {
+                ctx.send_viewport_cmd(egui::ViewportCommand::IMERect(ime_rect));
+                self.last_ime_rect = Some(ime_rect);
+            }
+        }
 
         // Pre-compute scrollbar geometry for hit-testing
         let scrollbar_width = scrollbar_rect.width();

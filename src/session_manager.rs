@@ -1,6 +1,7 @@
 use crate::session::Session;
 use crate::terminal::TerminalState;
 use crate::shell::ShellSession;
+use eframe::egui;
 use std::sync::Arc;
 use parking_lot::Mutex as ParkingMutex;
 
@@ -16,14 +17,16 @@ fn get_process_cwd(pid: i32) -> Option<String> {
 pub struct SessionManager {
     sessions: Vec<Session>,
     active_index: usize,
+    repaint_ctx: egui::Context,
 }
 
 impl SessionManager {
     /// 创建新的会话管理器，初始化一个默认会话
-    pub fn new(first_session: Session) -> Self {
+    pub fn new(first_session: Session, repaint_ctx: egui::Context) -> Self {
         SessionManager {
             sessions: vec![first_session],
             active_index: 0,
+            repaint_ctx,
         }
     }
 
@@ -44,7 +47,7 @@ impl SessionManager {
 
         // 创建新会话，继承工作目录
         let cwd_ref = cwd.as_deref();
-        match ShellSession::new_with_cwd(80, 24, cwd_ref) {
+        match ShellSession::new_with_cwd(80, 24, cwd_ref, self.repaint_ctx.clone()) {
             Ok(shell) => {
                 let terminal = Arc::new(ParkingMutex::new(TerminalState::new(80, 24)));
                 let session = Session::new(name, tags, terminal, shell);

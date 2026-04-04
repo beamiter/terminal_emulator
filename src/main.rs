@@ -75,7 +75,7 @@ fn main() -> Result<(), eframe::Error> {
             visuals.extreme_bg_color = egui::Color32::from_rgb(20, 20, 20);
             cc.egui_ctx.set_visuals(visuals);
 
-            Ok(Box::new(TerminalApp::new(&cfg_clone)))
+            Ok(Box::new(TerminalApp::new(&cfg_clone, cc.egui_ctx.clone())))
         }),
     )
 }
@@ -90,6 +90,7 @@ struct TerminalApp {
     last_cursor_blink: std::time::Instant,
     cursor_visible: bool,
     status_message: String,
+    last_window_title: String,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -137,7 +138,7 @@ fn normalize_terminal_shortcut_events(
 }
 
 impl TerminalApp {
-    fn new(cfg: &config::Config) -> Self {
+    fn new(cfg: &config::Config, repaint_ctx: egui::Context) -> Self {
         let cols = cfg.cols;
         let rows = cfg.rows;
 
@@ -145,7 +146,7 @@ impl TerminalApp {
         let terminal = TerminalState::new(cols, rows);
 
         // 尝试启动 shell
-        let (shell, _) = match ShellSession::new(cols, rows) {
+        let (shell, _) = match ShellSession::new(cols, rows, repaint_ctx.clone()) {
             Ok(session) => {
                 eprintln!("✓ Shell session started successfully");
                 (Some(session), Some(()))
@@ -160,13 +161,13 @@ impl TerminalApp {
             Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), shell)
         } else {
             // 创建一个没有 shell 的 dummy session（应该很少见）
-            let dummy_shell = ShellSession::new(cols, rows).unwrap_or_else(|e| {
+            let dummy_shell = ShellSession::new(cols, rows, repaint_ctx.clone()).unwrap_or_else(|e| {
                 panic!("Cannot create even a dummy shell session: {}", e)
             });
             Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), dummy_shell)
         };
 
-        let session_manager = SessionManager::new(session);
+        let session_manager = SessionManager::new(session, repaint_ctx);
 
         let renderer = TerminalRenderer::new(
             cfg.font_size,
@@ -185,6 +186,7 @@ impl TerminalApp {
             last_cursor_blink: std::time::Instant::now(),
             cursor_visible: true,
             status_message: String::new(),
+            last_window_title: String::new(),
         }
     }
 
@@ -435,8 +437,12 @@ impl eframe::App for TerminalApp {
             let terminal = session.terminal.lock();
             terminal.window_title.clone()
         };
-        if !window_title.is_empty() {
+        if !window_title.is_empty() && window_title != self.last_window_title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(window_title));
+            self.last_window_title = {
+                let terminal = session.terminal.lock();
+                terminal.window_title.clone()
+            };
         }
 
         // Step 2: 处理快捷键 - 会话管理
@@ -606,12 +612,14 @@ impl eframe::App for TerminalApp {
 
         // Step 8: 光标闪烁
         let mut cursor_state_changed = false;
+        let mut cursor_blink_active = false;
         {
             let terminal = session.terminal.lock();
             let app_wants_cursor_visible = terminal.is_cursor_visible();
             drop(terminal);
 
             if app_wants_cursor_visible {
+                cursor_blink_active = true;
                 if self.last_cursor_blink.elapsed() > Duration::from_millis(500) {
                     self.cursor_visible = !self.cursor_visible;
                     self.last_cursor_blink = std::time::Instant::now();
@@ -777,13 +785,11 @@ impl eframe::App for TerminalApp {
 
         if should_repaint {
             ctx.request_repaint();
-        } else {
-            // 没有新事件时，仅用于光标闪烁更新的周期重绘（500ms 一次）
-            // 为了避免 CPU 持续高占用，设置更长的睡眠时间
-            ctx.request_repaint_after(Duration::from_millis(100));
+        } else if cursor_blink_active {
+            let blink_interval = Duration::from_millis(500);
+            let next_blink_in = blink_interval.saturating_sub(self.last_cursor_blink.elapsed());
+            ctx.request_repaint_after(next_blink_in);
         }
-
-        std::thread::sleep(Duration::from_millis(16));
     }
 }
 
