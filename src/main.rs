@@ -222,11 +222,6 @@ impl TerminalApp {
 
                     // 背景
                     painter.rect_filled(tab_rect, 0.0, egui::Color32::from_rgb(40, 40, 40));
-                    painter.hline(
-                        tab_rect.left()..=tab_rect.right(),
-                        tab_rect.bottom(),
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 100, 100)),
-                    );
 
                     // 检测悬停位置（在绘制之前）
                     let hover_pos = ctx.input(|i| i.pointer.hover_pos());
@@ -692,18 +687,6 @@ impl TerminalApp {
                     // 向下移动光标
                     ui.allocate_exact_size(egui::vec2(ui.available_width(), tab_height), egui::Sense::hover());
                 }
-
-                // 分隔线
-                let separator_rect = egui::Rect::from_min_size(
-                    ui.cursor().left_top(),
-                    egui::vec2(ui.available_width(), 1.0),
-                );
-                ui.painter().hline(
-                    separator_rect.left()..=separator_rect.right(),
-                    separator_rect.top(),
-                    egui::Stroke::new(1.0, egui::Color32::from_rgb(80, 80, 90)),
-                );
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
 
                 // 终端显示区域
                 self.renderer.sync_font_metrics(ctx);
