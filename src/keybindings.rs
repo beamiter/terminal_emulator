@@ -287,16 +287,21 @@ impl KeyBindings {
         conflicts
     }
 
-    /// 加载配置文件
+    /// 加载配置文件，与默认配置合并
     pub fn load() -> Result<Self, Box<dyn std::error::Error>> {
+        let mut bindings = Self::default_bindings();
+
         let path = Self::config_path()?;
         if path.exists() {
             let content = std::fs::read_to_string(&path)?;
-            let bindings: KeyBindings = toml::from_str(&content)?;
-            Ok(bindings)
-        } else {
-            Ok(Self::default_bindings())
+            let user_bindings: KeyBindings = toml::from_str(&content)?;
+            // 合并用户配置到默认配置，用户配置会覆盖默认值
+            for (key, value) in user_bindings.bindings {
+                bindings.bindings.insert(key, value);
+            }
         }
+
+        Ok(bindings)
     }
 
     /// 保存配置文件
