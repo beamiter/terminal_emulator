@@ -109,6 +109,8 @@ struct TerminalApp {
     keybindings: keybindings::KeyBindings,
     // Command palette
     command_palette: command_palette::CommandPalette,
+    // Force resize flag for new sessions
+    force_resize_session: bool,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -310,6 +312,7 @@ impl TerminalApp {
             hovered_link: None,
             keybindings,
             command_palette: command_palette::CommandPalette::new(),
+            force_resize_session: false,
         }
     }
 
@@ -793,7 +796,9 @@ impl TerminalApp {
                     if mouse_released {
                         if let Some(click_pos) = ctx.input(|i| i.pointer.latest_pos()) {
                             if plus_btn_rect.contains(click_pos) {
-                                self.session_manager.new_session(None, None);
+                                let new_idx = self.session_manager.new_session(None, None);
+                                self.session_manager.switch_session(new_idx);
+                                self.force_resize_session = true;
                             }
                         }
                     }
@@ -806,13 +811,14 @@ impl TerminalApp {
                 self.renderer.sync_font_metrics(ctx);
                 let (cols, rows) = self.renderer.grid_dimensions(ui.available_size());
 
-                if cols != self.cols || rows != self.rows {
+                if cols != self.cols || rows != self.rows || self.force_resize_session {
                     let session = self.session_manager.get_active_session_mut();
                     let _ = session.shell.resize(cols, rows);
                     let mut terminal = session.terminal.lock();
                     terminal.on_resize(cols, rows);
                     self.cols = cols;
                     self.rows = rows;
+                    self.force_resize_session = false;
                 }
 
                 let session = self.session_manager.get_active_session_mut();
@@ -1126,6 +1132,7 @@ impl eframe::App for TerminalApp {
                                         keybindings::Command::SessionNew => {
                                             let new_idx = self.session_manager.new_session(None, None);
                                             self.session_manager.switch_session(new_idx);
+                                            self.force_resize_session = true;
                                         }
                                         keybindings::Command::SessionClose | keybindings::Command::TerminalSendEof => {
                                             if self.session_manager.len() > 1 {
@@ -1212,6 +1219,7 @@ impl eframe::App for TerminalApp {
                         keybindings::Command::SessionNew => {
                             let new_idx = self.session_manager.new_session(None, None);
                             self.session_manager.switch_session(new_idx);
+                            self.force_resize_session = true;
                         }
                         keybindings::Command::SessionClose | keybindings::Command::TerminalSendEof => {
                             if self.session_manager.len() > 1 {
