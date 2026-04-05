@@ -91,6 +91,10 @@ struct TerminalApp {
     cursor_visible: bool,
     status_message: String,
     last_window_title: String,
+    // Tab UI state
+    hovered_tab_index: Option<usize>,
+    dragging_tab: Option<usize>,
+    drag_start_pos: Option<f32>,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -187,6 +191,9 @@ impl TerminalApp {
             cursor_visible: true,
             status_message: String::new(),
             last_window_title: String::new(),
+            hovered_tab_index: None,
+            dragging_tab: None,
+            drag_start_pos: None,
         }
     }
 
@@ -200,6 +207,7 @@ impl TerminalApp {
             .show(ctx, |ui| {
                 // 渲染会话标签栏
                 let tab_height = 30.0;
+                let close_btn_size = 14.0;
 
                 // Tab 栏 - 绘制标签和按钮
                 {
@@ -217,6 +225,53 @@ impl TerminalApp {
                         tab_rect.bottom(),
                         egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 100, 100)),
                     );
+
+                    // 检测悬停位置（在绘制之前）
+                    let hover_pos = ctx.input(|i| i.pointer.hover_pos());
+                    self.hovered_tab_index = None;
+
+                    // 处理拖拽结束
+                    if self.dragging_tab.is_some() && ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+                        if let Some(from_idx) = self.dragging_tab {
+                            // 计算drop目标
+                            if let Some(hover_pos) = hover_pos {
+                                if tab_rect.contains(hover_pos) {
+                                    let relative_x = hover_pos.x - tab_rect.left();
+                                    // 找到target tab
+                                    let mut x_offset = 5.0;
+                                    let sessions_count = self.session_manager.sessions().len();
+                                    let mut target_idx = from_idx;
+
+                                    for idx in 0..sessions_count {
+                                        let session = &self.session_manager.sessions()[idx];
+                                        let galley = painter.layout_no_wrap(
+                                            session.metadata.name.clone(),
+                                            egui::FontId::monospace(12.0),
+                                            egui::Color32::WHITE,
+                                        );
+                                        let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
+
+                                        if relative_x >= x_offset && relative_x < x_offset + tab_width {
+                                            target_idx = idx;
+                                            break;
+                                        }
+
+                                        x_offset += tab_width + 2.0;
+                                        if x_offset > tab_rect.right() - tab_rect.left() - 50.0 {
+                                            break;
+                                        }
+                                    }
+
+                                    // 执行重排
+                                    if target_idx != from_idx {
+                                        self.session_manager.reorder_sessions(from_idx, target_idx);
+                                    }
+                                }
+                            }
+                        }
+                        self.dragging_tab = None;
+                        self.drag_start_pos = None;
+                    }
 
                     let mut x_offset = tab_rect.left() + 5.0;
                     let active_idx = self.session_manager.active_index();
@@ -236,45 +291,100 @@ impl TerminalApp {
                             egui::Color32::WHITE,
                         );
 
-                        let tab_width = galley.rect.width() + 20.0;
+                        let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
                         let tab_rect_item = egui::Rect::from_min_size(
                             egui::pos2(x_offset, tab_rect.top() + 5.0),
                             egui::vec2(tab_width, tab_height - 10.0),
                         );
 
                         let is_active = *idx == active_idx;
-                        let bg_color = if is_active {
+                        let is_dragging = self.dragging_tab == Some(*idx);
+
+                        // 检测悬停
+                        let is_hovered = if let Some(hover_pos) = hover_pos {
+                            tab_rect_item.contains(hover_pos)
+                        } else {
+                            false
+                        };
+
+                        if is_hovered {
+                            self.hovered_tab_index = Some(*idx);
+                        }
+
+                        // 背景色：激活、拖拽中或悬停时改变
+                        let mut bg_color = if is_active {
                             egui::Color32::from_rgb(70, 70, 80)
                         } else {
                             egui::Color32::from_rgb(50, 50, 60)
                         };
 
-                        painter.rect_filled(tab_rect_item, 1.0, bg_color);
-                        // 绘制边框线
-                        painter.hline(
-                            tab_rect_item.left()..=tab_rect_item.right(),
-                            tab_rect_item.top(),
-                            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                        );
-                        painter.hline(
-                            tab_rect_item.left()..=tab_rect_item.right(),
-                            tab_rect_item.bottom(),
-                            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                        );
-                        painter.vline(
-                            tab_rect_item.left(),
-                            tab_rect_item.top()..=tab_rect_item.bottom(),
-                            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                        );
-                        painter.vline(
-                            tab_rect_item.right(),
-                            tab_rect_item.top()..=tab_rect_item.bottom(),
-                            egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                        );
+                        if is_hovered || is_dragging {
+                            // 增亮
+                            bg_color = egui::Color32::from_rgb(
+                                (bg_color.r() + 25).min(255),
+                                (bg_color.g() + 25).min(255),
+                                (bg_color.b() + 25).min(255),
+                            );
+                        }
 
+                        if is_dragging {
+                            // 拖拽中的Tab降低不透明度
+                            painter.rect_filled(tab_rect_item, 1.0, egui::Color32::from_rgba_premultiplied(
+                                bg_color.r(), bg_color.g(), bg_color.b(), 180
+                            ));
+                            // 虚线边框表示拖拽中
+                            painter.hline(
+                                tab_rect_item.left()..=tab_rect_item.right(),
+                                tab_rect_item.top(),
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
+                            );
+                            painter.hline(
+                                tab_rect_item.left()..=tab_rect_item.right(),
+                                tab_rect_item.bottom(),
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
+                            );
+                            painter.vline(
+                                tab_rect_item.left(),
+                                tab_rect_item.top()..=tab_rect_item.bottom(),
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
+                            );
+                            painter.vline(
+                                tab_rect_item.right(),
+                                tab_rect_item.top()..=tab_rect_item.bottom(),
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
+                            );
+                        } else {
+                            painter.rect_filled(tab_rect_item, 1.0, bg_color);
+                            // 绘制边框线
+                            painter.hline(
+                                tab_rect_item.left()..=tab_rect_item.right(),
+                                tab_rect_item.top(),
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                            );
+                            painter.hline(
+                                tab_rect_item.left()..=tab_rect_item.right(),
+                                tab_rect_item.bottom(),
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                            );
+                            painter.vline(
+                                tab_rect_item.left(),
+                                tab_rect_item.top()..=tab_rect_item.bottom(),
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                            );
+                            painter.vline(
+                                tab_rect_item.right(),
+                                tab_rect_item.top()..=tab_rect_item.bottom(),
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
+                            );
+                        }
+
+                        // 绘制文本
                         painter.text(
-                            tab_rect_item.center(),
-                            egui::Align2::CENTER_CENTER,
+                            egui::pos2(
+                                tab_rect_item.left() + 10.0,
+                                tab_rect_item.center().y,
+                            ),
+                            egui::Align2::LEFT_CENTER,
                             tab_text,
                             egui::FontId::monospace(12.0),
                             if is_active {
@@ -284,11 +394,68 @@ impl TerminalApp {
                             },
                         );
 
+                        // 绘制关闭按钮
+                        let close_btn_rect = egui::Rect::from_min_size(
+                            egui::pos2(
+                                tab_rect_item.right() - close_btn_size - 3.0,
+                                tab_rect_item.center().y - close_btn_size / 2.0,
+                            ),
+                            egui::vec2(close_btn_size, close_btn_size),
+                        );
+
+                        let close_btn_hovered = if let Some(hover_pos) = hover_pos {
+                            close_btn_rect.contains(hover_pos)
+                        } else {
+                            false
+                        };
+
+                        // 绘制关闭按钮背景（悬停时显示）
+                        if close_btn_hovered {
+                            painter.circle_filled(close_btn_rect.center(), close_btn_size / 2.0 + 2.0, egui::Color32::from_rgb(100, 50, 50));
+                        }
+
+                        // 绘制X符号
+                        let close_x_color = if close_btn_hovered {
+                            egui::Color32::from_rgb(255, 150, 150)
+                        } else {
+                            egui::Color32::from_rgb(150, 150, 150)
+                        };
+
+                        let cross_offset = close_btn_size / 3.0;
+                        painter.line_segment(
+                            [
+                                egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y - cross_offset),
+                                egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y + cross_offset),
+                            ],
+                            egui::Stroke::new(1.5, close_x_color),
+                        );
+                        painter.line_segment(
+                            [
+                                egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y - cross_offset),
+                                egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y + cross_offset),
+                            ],
+                            egui::Stroke::new(1.5, close_x_color),
+                        );
+
                         // 检测点击
                         if ctx.input(|i| i.pointer.any_click()) {
                             if let Some(click_pos) = ctx.input(|i| i.pointer.press_origin()) {
-                                if tab_rect_item.contains(click_pos) {
+                                // 检测关闭按钮点击
+                                if close_btn_rect.contains(click_pos) && self.session_manager.len() > 1 {
+                                    self.session_manager.close_session(*idx);
+                                } else if tab_rect_item.contains(click_pos) && self.dragging_tab.is_none() {
+                                    // Tab本身的点击，切换会话
                                     self.session_manager.switch_session(*idx);
+                                }
+                            }
+                        }
+
+                        // 检测拖拽开始
+                        if ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
+                            if let Some(click_pos) = ctx.input(|i| i.pointer.press_origin()) {
+                                if tab_rect_item.contains(click_pos) && !close_btn_rect.contains(click_pos) {
+                                    self.dragging_tab = Some(*idx);
+                                    self.drag_start_pos = Some(click_pos.x);
                                 }
                             }
                         }
@@ -307,7 +474,20 @@ impl TerminalApp {
                         egui::vec2(25.0, tab_height - 10.0),
                     );
 
-                    painter.rect_filled(plus_btn_rect, 1.0, egui::Color32::from_rgb(50, 50, 60));
+                    // 检测"+"按钮悬停
+                    let plus_btn_hovered = if let Some(hover_pos) = hover_pos {
+                        plus_btn_rect.contains(hover_pos)
+                    } else {
+                        false
+                    };
+
+                    let plus_btn_color = if plus_btn_hovered {
+                        egui::Color32::from_rgb(75, 75, 85)
+                    } else {
+                        egui::Color32::from_rgb(50, 50, 60)
+                    };
+
+                    painter.rect_filled(plus_btn_rect, 1.0, plus_btn_color);
                     // 绘制边框
                     painter.hline(
                         plus_btn_rect.left()..=plus_btn_rect.right(),
@@ -330,12 +510,18 @@ impl TerminalApp {
                         egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
                     );
 
+                    let plus_text_color = if plus_btn_hovered {
+                        egui::Color32::from_rgb(220, 220, 220)
+                    } else {
+                        egui::Color32::from_rgb(180, 180, 190)
+                    };
+
                     painter.text(
                         plus_btn_rect.center(),
                         egui::Align2::CENTER_CENTER,
                         "+",
                         egui::FontId::monospace(14.0),
-                        egui::Color32::from_rgb(180, 180, 190),
+                        plus_text_color,
                     );
 
                     // 检测 "+" 按钮点击

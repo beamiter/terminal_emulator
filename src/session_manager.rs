@@ -200,6 +200,25 @@ impl SessionManager {
             session.metadata.update_last_active();
         }
     }
+
+    /// 重排会话顺序（拖拽）
+    pub fn reorder_sessions(&mut self, from_idx: usize, to_idx: usize) {
+        if from_idx < self.sessions.len() && to_idx < self.sessions.len() && from_idx != to_idx {
+            let session = self.sessions.remove(from_idx);
+            self.sessions.insert(to_idx, session);
+
+            // 如果移动的是活跃会话，更新active_index
+            if self.active_index == from_idx {
+                self.active_index = to_idx;
+            } else if from_idx < self.active_index && to_idx >= self.active_index {
+                // 从左边移到右边，active_index向左移动
+                self.active_index -= 1;
+            } else if from_idx > self.active_index && to_idx <= self.active_index {
+                // 从右边移到左边，active_index向右移动
+                self.active_index += 1;
+            }
+        }
+    }
 }
 
 #[cfg(test)]
