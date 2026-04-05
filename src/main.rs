@@ -835,6 +835,13 @@ impl TerminalApp {
                         // 搜索输入框
                         ui.label("Search:");
                         let search_response = ui.text_edit_singleline(&mut self.search_state.query);
+
+                        // 自动focus搜索框
+                        if self.search_state.search_focused {
+                            ui.memory_mut(|mem| mem.request_focus(search_response.id));
+                            self.search_state.search_focused = false;
+                        }
+
                         if search_response.changed() {
                             // 重新搜索
                             let session = self.session_manager.get_active_session_mut();
@@ -849,9 +856,6 @@ impl TerminalApp {
                             self.search_state.matches = matches;
                             self.search_state.error_message = error;
                             self.search_state.current_match_index = 0;
-                        }
-                        if search_response.has_focus() {
-                            self.search_state.search_focused = true;
                         }
 
                         // 显示匹配计数
@@ -1079,6 +1083,11 @@ impl eframe::App for TerminalApp {
         }
 
         // Step 2: 处理快捷键 - 使用可配置的快捷键系统
+
+        // 搜索快捷键 (Ctrl+Shift+F)
+        if ctx.input(|i| i.key_pressed(egui::Key::F) && i.modifiers.ctrl && i.modifiers.shift) {
+            self.search_state.toggle();
+        }
 
         // 命令调色板快捷键 (Ctrl+Shift+P)
         if ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && i.modifiers.shift) {
@@ -1340,23 +1349,6 @@ impl eframe::App for TerminalApp {
                                 self.search_state.history_next();
                             }
                             _ => {}
-                        }
-                    }
-                    egui::Event::Text(text) => {
-                        if !self.search_state.query.ends_with('\n') {
-                            self.search_state.query.push_str(text);
-                            // 重新搜索
-                            let terminal = session.terminal.lock();
-                            let (matches, error) = search::SearchEngine::search(
-                                &terminal.grid,
-                                &self.search_state.query,
-                                self.search_state.use_regex,
-                                self.search_state.case_sensitive,
-                            );
-                            drop(terminal);
-                            self.search_state.matches = matches;
-                            self.search_state.error_message = error;
-                            self.search_state.current_match_index = 0;
                         }
                     }
                     _ => {}
