@@ -644,7 +644,7 @@ impl TerminalRenderer {
                             egui::Key::A => input.push(0x01), // Ctrl+A
                             egui::Key::B => input.push(0x02), // Ctrl+B (backward page in vim)
                             egui::Key::C => input.push(0x03), // Ctrl+C (SIGINT)
-                            egui::Key::D => {}, // Ctrl+D (handled in main.rs to close session)
+                            egui::Key::D => {}, // Ctrl+D (handled by keybindings system - close session/EOF)
                             egui::Key::E => input.push(0x05), // Ctrl+E
                             egui::Key::F => input.push(0x06), // Ctrl+F (forward page in vim)
                             egui::Key::G => input.push(0x07), // Ctrl+G
@@ -663,7 +663,7 @@ impl TerminalRenderer {
                             egui::Key::T => input.push(0x14), // Ctrl+T
                             egui::Key::U => input.push(0x15), // Ctrl+U (delete line in vim)
                             egui::Key::V => input.push(0x16), // Ctrl+V (visual block in vim)
-                            egui::Key::W => {}, // Ctrl+W (handled in main.rs to close session)
+                            egui::Key::W => {}, // Ctrl+W (handled by keybindings system - close session)
                             egui::Key::X => input.push(0x18), // Ctrl+X
                             egui::Key::Y => input.push(0x19), // Ctrl+Y
                             egui::Key::Z => input.push(0x1a), // Ctrl+Z (suspend)
