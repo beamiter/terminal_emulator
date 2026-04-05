@@ -1346,23 +1346,6 @@ impl eframe::App for TerminalApp {
                             _ => {}
                         }
                     }
-                    egui::Event::Text(text) => {
-                        if !self.search_state.query.ends_with('\n') {
-                            self.search_state.query.push_str(text);
-                            // 重新搜索
-                            let terminal = session.terminal.lock();
-                            let (matches, error) = search::SearchEngine::search(
-                                &terminal.grid,
-                                &self.search_state.query,
-                                self.search_state.use_regex,
-                                self.search_state.case_sensitive,
-                            );
-                            drop(terminal);
-                            self.search_state.matches = matches;
-                            self.search_state.error_message = error;
-                            self.search_state.current_match_index = 0;
-                        }
-                    }
                     _ => {}
                 }
             }
