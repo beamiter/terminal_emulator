@@ -166,7 +166,7 @@ impl TerminalRenderer {
         (cols, rows)
     }
 
-    pub fn render(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool) -> Response {
+    pub fn render(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>) -> Response {
         let grid = terminal.get_visible_cells();
 
         let rows = grid.len();
@@ -378,13 +378,38 @@ impl TerminalRenderer {
                 let (x, snapped_width) = snapped_span(content_rect.left(), col_idx, char_width);
                 let (y, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
 
-                let bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
+                let mut bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
                     color::defaults::selection()
                 } else if cell.flags.inverse {
                     resolve_foreground_color(cell.foreground)
                 } else {
                     resolve_background_color(cell.background)
                 };
+
+                // Check if this cell is part of a search match (反色高亮)
+                if !search_state.matches.is_empty() && !search_state.query.is_empty() {
+                    for (match_idx, m) in search_state.matches.iter().enumerate() {
+                        if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
+                            // 反色高亮：交换前景和背景色
+                            let orig_fg = resolve_foreground_color(cell.foreground);
+
+                            bg_color = orig_fg;
+
+                            // 如果这是当前匹配项，加深颜色
+                            if match_idx == search_state.current_match_index % search_state.matches.len() {
+                                // 让高亮更突出（降低 alpha 以加深）
+                                let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
+                                bg_color = Color32::from_rgba_unmultiplied(
+                                    (r as u16 * 180 / 255) as u8,
+                                    (g as u16 * 180 / 255) as u8,
+                                    (b as u16 * 180 / 255) as u8,
+                                    255,
+                                );
+                            }
+                            break;
+                        }
+                    }
+                }
 
                 let cell_width = if cell.wide {
                     let (_, next_width) = snapped_span(content_rect.left(), col_idx + 1, char_width);
@@ -403,10 +428,31 @@ impl TerminalRenderer {
 
                 // Render character
                 if cell.character != ' ' && !cell.wide_continuation {
-                    let fg_color = if cell.flags.inverse {
+                    let mut fg_color = if cell.flags.inverse {
                         resolve_background_color(cell.background)
                     } else {
                         resolve_foreground_color(cell.foreground)
+                    };
+
+                    // 检查是否是链接，修改颜色
+                    let is_link = if links.is_empty() {
+                        false
+                    } else {
+                        let mut found = false;
+                        for link in links {
+                            if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
+                                let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                                // 链接颜色：蓝色或浅蓝色（悬停时）
+                                fg_color = if is_hovered_link {
+                                    Color32::from_rgb(100, 200, 255)  // 浅蓝
+                                } else {
+                                    Color32::from_rgb(50, 150, 255)   // 深蓝
+                                };
+                                found = true;
+                                break;
+                            }
+                        }
+                        found
                     };
 
                     let text = cell.character.to_string();
@@ -426,6 +472,15 @@ impl TerminalRenderer {
                     let text_y = y + (snapped_height - galley.size().y) / 2.0;
 
                     painter.galley(egui::pos2(text_x, text_y), galley, fg_color);
+
+                    // 链接显示下划线
+                    if is_link {
+                        let underline_y = y + line_height - 1.0;
+                        painter.line_segment(
+                            [egui::pos2(x, underline_y), egui::pos2(x + cell_width, underline_y)],
+                            egui::Stroke::new(1.0, fg_color),
+                        );
+                    }
 
                     if cell.flags.underline {
                         let underline_y = y + line_height - 1.0;
