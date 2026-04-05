@@ -236,6 +236,7 @@ impl KeyBindings {
         // 会话管理
         bindings.bindings.insert("ctrl+shift+t".to_string(), "session:new".to_string());
         bindings.bindings.insert("ctrl+w".to_string(), "session:close".to_string());
+        bindings.bindings.insert("ctrl+d".to_string(), "terminal:send_eof".to_string());
         bindings.bindings.insert("ctrl+tab".to_string(), "session:next".to_string());
         bindings.bindings.insert("ctrl+shift+tab".to_string(), "session:prev".to_string());
         bindings.bindings.insert("ctrl+pagedown".to_string(), "session:next".to_string());
