@@ -835,6 +835,13 @@ impl TerminalApp {
                         // 搜索输入框
                         ui.label("Search:");
                         let search_response = ui.text_edit_singleline(&mut self.search_state.query);
+
+                        // 自动 focus 搜索框
+                        if self.search_state.search_focused {
+                            ui.memory_mut(|mem| mem.request_focus(search_response.id));
+                            self.search_state.search_focused = false;
+                        }
+
                         if search_response.changed() {
                             // 重新搜索
                             let session = self.session_manager.get_active_session_mut();
@@ -849,9 +856,6 @@ impl TerminalApp {
                             self.search_state.matches = matches;
                             self.search_state.error_message = error;
                             self.search_state.current_match_index = 0;
-                        }
-                        if search_response.has_focus() {
-                            self.search_state.search_focused = true;
                         }
 
                         // 显示匹配计数
