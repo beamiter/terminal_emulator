@@ -95,6 +95,7 @@ struct TerminalApp {
     hovered_tab_index: Option<usize>,
     dragging_tab: Option<usize>,
     drag_start_pos: Option<f32>,
+    current_mouse_x: f32,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -194,6 +195,7 @@ impl TerminalApp {
             hovered_tab_index: None,
             dragging_tab: None,
             drag_start_pos: None,
+            current_mouse_x: 0.0,
         }
     }
 
@@ -229,6 +231,11 @@ impl TerminalApp {
                     // 检测悬停位置（在绘制之前）
                     let hover_pos = ctx.input(|i| i.pointer.hover_pos());
                     self.hovered_tab_index = None;
+
+                    // 更新当前鼠标x位置（用于拖拽动画）
+                    if let Some(pos) = hover_pos {
+                        self.current_mouse_x = pos.x;
+                    }
 
                     // 检测鼠标释放（点击完成或拖拽结束）
                     let mouse_released = ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
@@ -419,7 +426,7 @@ impl TerminalApp {
                         );
 
                         let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
-                        let tab_rect_item = egui::Rect::from_min_size(
+                        let mut tab_rect_item = egui::Rect::from_min_size(
                             egui::pos2(x_offset, tab_rect.top() + 5.0),
                             egui::vec2(tab_width, tab_height - 10.0),
                         );
@@ -428,6 +435,35 @@ impl TerminalApp {
                         let is_dragging = self.dragging_tab == Some(*idx);
                         let is_drag_target = drag_target_idx == Some(*idx);
 
+                        // 计算拖拽过程中的动画位移
+                        if is_actively_dragging {
+                            if is_dragging {
+                                // 被拖拽的Tab跟随鼠标移动
+                                if let Some(start_x) = self.drag_start_pos {
+                                    let offset = self.current_mouse_x - start_x;
+                                    tab_rect_item = tab_rect_item.translate(egui::vec2(offset, 0.0));
+                                }
+                            } else if let Some(from_idx) = self.dragging_tab {
+                                // 其他Tabs根据拖拽目标位置进行动画插入
+                                let drag_to_left = is_drag_target && drag_target_idx.map(|t| t < from_idx).unwrap_or(false);
+                                let drag_to_right = is_drag_target && drag_target_idx.map(|t| t > from_idx).unwrap_or(false);
+
+                                if drag_to_left {
+                                    // 目标在左边，右侧的tabs应该向右推移
+                                    if *idx > from_idx {
+                                        let push_offset = tab_width + 2.0;
+                                        tab_rect_item = tab_rect_item.translate(egui::vec2(push_offset, 0.0));
+                                    }
+                                } else if drag_to_right {
+                                    // 目标在右边，左侧的tabs应该向左推移
+                                    if *idx < from_idx {
+                                        let push_offset = -(tab_width + 2.0);
+                                        tab_rect_item = tab_rect_item.translate(egui::vec2(push_offset, 0.0));
+                                    }
+                                }
+                            }
+                        }
+
                         // 检测悬停
                         let is_hovered = if let Some(hover_pos) = hover_pos {
                             tab_rect_item.contains(hover_pos)
@@ -435,7 +471,7 @@ impl TerminalApp {
                             false
                         };
 
-                        if is_hovered {
+                        if is_hovered && !is_actively_dragging {
                             self.hovered_tab_index = Some(*idx);
                         }
 
@@ -455,9 +491,9 @@ impl TerminalApp {
                             );
                         }
 
-                        // 计算Tab位置动画（拖拽过程中）
-                        let tab_rect_display = if is_dragging && is_actively_dragging {
-                            // 拖拽中的Tab降低不透明度，保持原位置等待drop
+                        // 绘制Tab背景和边框
+                        if is_dragging && is_actively_dragging {
+                            // 拖拽中的Tab：半透明+虚线边框
                             painter.rect_filled(tab_rect_item, 1.0, egui::Color32::from_rgba_premultiplied(
                                 bg_color.r(), bg_color.g(), bg_color.b(), 140
                             ));
@@ -482,7 +518,6 @@ impl TerminalApp {
                                 tab_rect_item.top()..=tab_rect_item.bottom(),
                                 egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
                             );
-                            tab_rect_item
                         } else {
                             painter.rect_filled(tab_rect_item, 1.0, bg_color);
                             // 绘制边框线
@@ -509,7 +544,7 @@ impl TerminalApp {
 
                             // 拖拽过程中，在目标Tab位置显示插入指示线
                             if is_drag_target && is_actively_dragging {
-                                let insert_line_x = if hover_pos.map(|p| p.x - tab_rect_item.center().x < 0.0).unwrap_or(false) {
+                                let insert_line_x = if self.current_mouse_x - tab_rect_item.center().x < 0.0 {
                                     tab_rect_item.left()
                                 } else {
                                     tab_rect_item.right()
@@ -520,15 +555,13 @@ impl TerminalApp {
                                     egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
                                 );
                             }
-
-                            tab_rect_item
-                        };
+                        }
 
                         // 绘制文本
                         painter.text(
                             egui::pos2(
-                                tab_rect_display.left() + 10.0,
-                                tab_rect_display.center().y,
+                                tab_rect_item.left() + 10.0,
+                                tab_rect_item.center().y,
                             ),
                             egui::Align2::LEFT_CENTER,
                             tab_text,
@@ -543,8 +576,8 @@ impl TerminalApp {
                         // 绘制关闭按钮
                         let close_btn_rect = egui::Rect::from_min_size(
                             egui::pos2(
-                                tab_rect_display.right() - close_btn_size - 3.0,
-                                tab_rect_display.center().y - close_btn_size / 2.0,
+                                tab_rect_item.right() - close_btn_size - 3.0,
+                                tab_rect_item.center().y - close_btn_size / 2.0,
                             ),
                             egui::vec2(close_btn_size, close_btn_size),
                         );
