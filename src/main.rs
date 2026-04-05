@@ -238,6 +238,9 @@ fn build_keybinding_string(key: egui::Key, modifiers: egui::Modifiers) -> Option
     if modifiers.alt {
         parts.push("alt");
     }
+    // 仅在 macOS 上（cfg(target_os = "macos")）才添加 super/command
+    // 在其他平台上忽略 command 修饰符，防止误触发
+    #[cfg(target_os = "macos")]
     if modifiers.mac_cmd || modifiers.command_only() {
         parts.push("super");
     }
@@ -286,10 +289,6 @@ impl TerminalApp {
         let clipboard = ClipboardManager::new().ok();
 
         let keybindings = keybindings::KeyBindings::load().unwrap_or_default();
-        eprintln!("[INIT] Loaded {} keybindings", keybindings.bindings.len());
-        for (key, cmd) in keybindings.bindings.iter().take(15) {
-            eprintln!("[INIT] {} -> {}", key, cmd);
-        }
 
         TerminalApp {
             session_manager,
@@ -1199,34 +1198,10 @@ impl eframe::App for TerminalApp {
             }).collect()
         });
 
-        // Debug: 打印所有事件（不仅是按键）
-        let all_events_debug: Vec<String> = ctx.input(|i| {
-            i.events.iter().take(5).map(|evt| format!("{:?}", evt)).collect()
-        });
-        if all_events_debug.len() > 0 {
-            eprintln!("[DEBUG] Events in this frame: {}", all_events_debug.len());
-            for evt in all_events_debug {
-                eprintln!("[DEBUG] Event: {}", evt);
-            }
-        }
-
-        // Debug: 初次加载时打印所有绑定
-        if pressed_keys.len() > 0 {
-            eprintln!("[DEBUG] Collected {} pressed keys", pressed_keys.len());
-            eprintln!("[DEBUG] Loaded keybindings count: {}", self.keybindings.bindings.len());
-            if self.keybindings.bindings.len() <= 20 {
-                for (key, cmd) in &self.keybindings.bindings {
-                    eprintln!("[DEBUG] {} -> {}", key, cmd);
-                }
-            }
-        }
-
         // 处理每个按下的快捷键
         for (key, modifiers) in pressed_keys {
             if let Some(keybinding_str) = build_keybinding_string(key, modifiers) {
-                eprintln!("[DEBUG] Pressed key: {}", keybinding_str);
                 if let Some(command) = self.keybindings.get_command(&keybinding_str) {
-                    eprintln!("[DEBUG] Found command: {:?}", command);
                     match command {
                         keybindings::Command::SearchOpen => {
                             self.search_state.toggle();
