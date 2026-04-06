@@ -166,6 +166,26 @@ impl TerminalRenderer {
         (cols, rows)
     }
 
+    /// 在指定矩形内渲染（用于多窗格模式）
+    pub fn render_in_rect(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>, target_rect: egui::Rect) -> Response {
+        let grid = terminal.get_visible_cells();
+
+        let rows = grid.len();
+        let cols = if rows > 0 { grid[0].len() } else { 80 };
+
+        let line_height = self.line_height;
+        let char_width = self.char_width;
+
+        // Allocate in the target rectangle area
+        let rect = target_rect;
+        let response = ui.allocate_exact_size(
+            egui::vec2(rect.width(), rect.height()),
+            egui::Sense::click_and_drag().union(egui::Sense::focusable_noninteractive()),
+        ).1;
+
+        self.render_terminal_at_rect(ui, terminal, cursor_visible, search_state, links, hovered_link, rect, response, cols, rows, line_height, char_width)
+    }
+
     pub fn render(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>) -> Response {
         let grid = terminal.get_visible_cells();
 
@@ -190,6 +210,12 @@ impl TerminalRenderer {
             Vec2::new(available_width, available_height),
             egui::Sense::click_and_drag().union(egui::Sense::focusable_noninteractive()),
         );
+
+        self.render_terminal_at_rect(ui, terminal, cursor_visible, search_state, links, hovered_link, rect, response.clone(), cols, rows, line_height, char_width)
+    }
+
+    fn render_terminal_at_rect(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>, rect: egui::Rect, response: egui::Response, cols: usize, rows: usize, line_height: f32, char_width: f32) -> Response {
+        let grid = terminal.get_visible_cells();
 
         // eprintln!("[UI] Rect: {:?}", rect);
 

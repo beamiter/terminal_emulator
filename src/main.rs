@@ -21,6 +21,7 @@ mod completion;
 mod scripting;
 mod ansi_advanced;
 mod windows_compat;
+mod help;
 
 use eframe::egui;
 use std::sync::Arc;
@@ -128,6 +129,8 @@ struct TerminalApp {
     pane_renderers: Vec<TerminalRenderer>,
     // Divider drag state
     dragging_divider: bool,
+    // Help panel
+    help_panel: help::HelpPanel,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -364,6 +367,7 @@ impl TerminalApp {
             layout_manager,
             pane_renderers,
             dragging_divider: false,
+            help_panel: help::HelpPanel::new(),
         }
     }
 
@@ -897,20 +901,15 @@ impl TerminalApp {
                             // 获取当前窗格的渲染器
                             let renderer = &mut self.pane_renderers[pane_idx];
 
-                            // 使用 allocate_exact_size 在指定矩形内渲染
-                            ui.allocate_exact_size(
-                                egui::vec2(pane.rect.width(), pane.rect.height()),
-                                egui::Sense::click_and_drag(),
-                            );
-
-                            // 直接在指定区域渲染（简化实现）
-                            renderer.render(
+                            // 在指定矩形内渲染（多窗格模式专用方法）
+                            renderer.render_in_rect(
                                 ui,
                                 &mut terminal_guard,
                                 self.cursor_visible,
                                 &self.search_state,
                                 &links,
                                 &self.hovered_link,
+                                pane.rect,
                             );
                         }
                     }
@@ -1170,6 +1169,11 @@ impl TerminalApp {
                     });
                 });
         }
+
+        // 帮助面板 UI（浮动窗口）
+        let mut help_open = self.help_panel.is_open;
+        self.help_panel.show(ctx, &mut help_open);
+        self.help_panel.is_open = help_open;
     }
 }
 
@@ -1240,6 +1244,11 @@ impl eframe::App for TerminalApp {
         // 命令调色板快捷键 (Ctrl+Shift+P)
         if ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && i.modifiers.shift) {
             self.command_palette.open();
+        }
+
+        // 帮助面板快捷键 (Ctrl+?)
+        if ctx.input(|i| i.key_pressed(egui::Key::Slash) && i.modifiers.ctrl) {
+            self.help_panel.toggle();
         }
 
         // 当命令调色板打开时，处理其事件
@@ -1798,6 +1807,28 @@ impl eframe::App for TerminalApp {
         }
     }
 }
+
+impl Drop for TerminalApp {
+    fn drop(&mut self) {
+        // 保存当前会话到持久化存储
+        if let Ok(session_history_path) = config::Config::session_history_path() {
+            let _ = session_persistence::ensure_session_history_dir(&session_history_path);
+
+            // 收集所有会话的元数据
+            let mut metadata_list = Vec::new();
+            for session in self.session_manager.sessions() {
+                metadata_list.push((session.metadata.name.clone(), session.metadata.tags.clone()));
+            }
+
+            // 创建并保存快照
+            let snapshot = session_persistence::SessionsSnapshot::from_metadata(metadata_list);
+            if let Err(e) = snapshot.save(&session_history_path) {
+                eprintln!("[SessionPersistence] Failed to save sessions: {}", e);
+            }
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
