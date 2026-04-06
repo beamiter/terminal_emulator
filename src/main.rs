@@ -409,9 +409,9 @@ impl TerminalApp {
 
                     // 处理拖拽结束或点击
                     if mouse_released {
-                        if let Some(hover_pos) = hover_pos {
-                            if let Some(from_idx) = self.dragging_tab {
-                                // 拖拽结束 - 计算drop目标并执行重排
+                        if let Some(from_idx) = self.dragging_tab {
+                            // 拖拽结束 - 计算drop目标并执行重排
+                            if let Some(hover_pos) = hover_pos {
                                 if tab_rect.contains(hover_pos) {
                                     let relative_x = hover_pos.x - tab_rect.left();
                                     let mut x_offset = 5.0;
@@ -443,10 +443,13 @@ impl TerminalApp {
                                         self.session_manager.reorder_sessions(from_idx, target_idx);
                                     }
                                 }
-                                self.dragging_tab = None;
-                                self.drag_start_pos = None;
-                            } else if let Some(click_pos) = ctx.input(|i| i.pointer.latest_pos()) {
-                                // 检查是否点击了Tab或按钮（拖拽未进行）
+                            }
+                            self.dragging_tab = None;
+                            self.drag_start_pos = None;
+                        } else if let Some(click_pos) = hover_pos.or_else(|| ctx.input(|i| i.pointer.latest_pos())) {
+                            // 检查是否点击了Tab或按钮（拖拽未进行）
+                            // 先尝试使用hover_pos，如果没有则使用latest_pos
+                            if tab_rect.contains(click_pos) {
                                 let mut x_offset = tab_rect.left() + 5.0;
                                 for (idx, session) in self.session_manager.sessions().iter().enumerate() {
                                     let galley = painter.layout_no_wrap(

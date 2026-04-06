@@ -214,8 +214,10 @@ impl TerminalRenderer {
         self.render_terminal_at_rect(ui, terminal, cursor_visible, search_state, links, hovered_link, rect, response.clone(), cols, rows, line_height, char_width)
     }
 
-    fn render_terminal_at_rect(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>, rect: egui::Rect, response: egui::Response, cols: usize, rows: usize, line_height: f32, char_width: f32) -> Response {
+    fn render_terminal_at_rect(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>, rect: egui::Rect, response: egui::Response, _cols: usize, _rows: usize, line_height: f32, char_width: f32) -> Response {
         let grid = terminal.get_visible_cells();
+        let rows = grid.len();
+        let cols = if rows > 0 { grid[0].len() } else { 80 };
 
         // eprintln!("[UI] Rect: {:?}", rect);
 
