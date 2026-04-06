@@ -19,7 +19,6 @@ pub mod layout;
 pub mod session_persistence;
 pub mod sidebar;
 pub mod search_replace;
-pub mod completion;
 pub mod scripting;
 pub mod ansi_advanced;
 pub mod windows_compat;

@@ -17,7 +17,6 @@ mod layout;
 mod session_persistence;
 mod sidebar;
 mod search_replace;
-mod completion;
 mod scripting;
 mod ansi_advanced;
 mod windows_compat;
