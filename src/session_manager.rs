@@ -219,6 +219,30 @@ impl SessionManager {
             }
         }
     }
+
+    /// 获取会话列表的元数据用于持久化
+    pub fn get_session_metadata(&self) -> Vec<(String, Vec<String>)> {
+        self.sessions
+            .iter()
+            .map(|s| (s.metadata.name.clone(), s.metadata.tags.clone()))
+            .collect()
+    }
+
+    /// 从元数据恢复会话列表
+    pub fn restore_from_metadata(&mut self, metadata_list: Vec<(String, Vec<String>)>) {
+        // 清除现有会话（除了第一个）
+        while self.sessions.len() > 1 {
+            self.sessions.pop();
+        }
+
+        // 为每个元数据创建新会话
+        for (name, tags) in metadata_list.into_iter().skip(1) {
+            let new_idx = self.new_session(Some(name), Some(tags));
+            if new_idx == 0 {
+                break; // 创建失败
+            }
+        }
+    }
 }
 
 #[cfg(test)]

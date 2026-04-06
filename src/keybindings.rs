@@ -32,6 +32,13 @@ pub enum Command {
     TerminalScrollUp,
     TerminalScrollDown,
 
+    // === 分屏操作 ===
+    TerminalSplitVertical,    // Ctrl+Shift+D
+    TerminalSplitHorizontal,  // Ctrl+Shift+E
+    TerminalClosePane,        // Ctrl+Shift+W
+    PaneFocusNext,            // Alt+Tab
+    PaneFocusPrev,            // Alt+Shift+Tab
+
     // === 窗口操作 ===
     WindowClose,
 }
@@ -57,6 +64,11 @@ impl std::fmt::Display for Command {
             Command::TerminalClear => write!(f, "terminal:clear"),
             Command::TerminalScrollUp => write!(f, "terminal:scroll_up"),
             Command::TerminalScrollDown => write!(f, "terminal:scroll_down"),
+            Command::TerminalSplitVertical => write!(f, "terminal:split_vertical"),
+            Command::TerminalSplitHorizontal => write!(f, "terminal:split_horizontal"),
+            Command::TerminalClosePane => write!(f, "terminal:close_pane"),
+            Command::PaneFocusNext => write!(f, "pane:focus_next"),
+            Command::PaneFocusPrev => write!(f, "pane:focus_prev"),
             Command::WindowClose => write!(f, "window:close"),
         }
     }
@@ -84,6 +96,11 @@ impl std::str::FromStr for Command {
             "terminal:clear" => Ok(Command::TerminalClear),
             "terminal:scroll_up" => Ok(Command::TerminalScrollUp),
             "terminal:scroll_down" => Ok(Command::TerminalScrollDown),
+            "terminal:split_vertical" => Ok(Command::TerminalSplitVertical),
+            "terminal:split_horizontal" => Ok(Command::TerminalSplitHorizontal),
+            "terminal:close_pane" => Ok(Command::TerminalClosePane),
+            "pane:focus_next" => Ok(Command::PaneFocusNext),
+            "pane:focus_prev" => Ok(Command::PaneFocusPrev),
             "window:close" => Ok(Command::WindowClose),
             s if s.starts_with("session:jump:") => {
                 let num_str = &s[13..];

@@ -39,6 +39,15 @@ pub struct Config {
 
     #[serde(default = "default_rows")]
     pub rows: usize,
+
+    #[serde(default = "default_theme")]
+    pub theme: String,
+
+    #[serde(default)]
+    pub restore_session: bool,
+
+    #[serde(default)]
+    pub session_history_file: Option<PathBuf>,
 }
 
 fn default_font_size() -> f32 {
@@ -69,6 +78,10 @@ fn default_rows() -> usize {
     30
 }
 
+fn default_theme() -> String {
+    "dark".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -80,6 +93,9 @@ impl Default for Config {
             initial_height: default_initial_height(),
             cols: default_cols(),
             rows: default_rows(),
+            theme: default_theme(),
+            restore_session: false,
+            session_history_file: None,
         }
     }
 }
@@ -102,6 +118,7 @@ impl Config {
         Self::default()
     }
 
+    #[allow(dead_code)]
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         let config_path = Self::config_path()?;
         let config_dir = config_path.parent().unwrap();
@@ -114,6 +131,14 @@ impl Config {
         std::fs::write(&config_path, content)?;
         eprintln!("[Config] Saved to {}", config_path.display());
         Ok(())
+    }
+
+    pub fn session_history_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let config_dir = dirs::config_dir()
+            .ok_or("Failed to determine config directory")?;
+        Ok(config_dir
+            .join("terminal_emulator")
+            .join("session_history.json"))
     }
 
     fn config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {

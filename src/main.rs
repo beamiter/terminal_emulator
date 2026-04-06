@@ -12,6 +12,15 @@ mod search;
 mod link;
 mod keybindings;
 mod command_palette;
+mod theme;
+mod layout;
+mod session_persistence;
+mod sidebar;
+mod search_replace;
+mod completion;
+mod scripting;
+mod ansi_advanced;
+mod windows_compat;
 
 use eframe::egui;
 use std::sync::Arc;
@@ -111,6 +120,14 @@ struct TerminalApp {
     command_palette: command_palette::CommandPalette,
     // Force resize flag for new sessions
     force_resize_session: bool,
+    // Theme system
+    current_theme: theme::Theme,
+    // Layout system (split panes)
+    layout_manager: layout::LayoutManager,
+    // Pane renderers (one per pane)
+    pane_renderers: Vec<TerminalRenderer>,
+    // Divider drag state
+    dragging_divider: bool,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -281,7 +298,20 @@ impl TerminalApp {
             Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), dummy_shell)
         };
 
-        let session_manager = SessionManager::new(session, repaint_ctx);
+        let mut session_manager = SessionManager::new(session, repaint_ctx);
+
+        // 尝试恢复之前的会话（如果启用了配置）
+        if cfg.restore_session {
+            if let Ok(session_history_path) = config::Config::session_history_path() {
+                if let Ok(snapshot) = session_persistence::SessionsSnapshot::load(&session_history_path) {
+                    if !snapshot.sessions.is_empty() {
+                        let metadata = snapshot.to_metadata();
+                        session_manager.restore_from_metadata(metadata);
+                        eprintln!("[SessionPersistence] Restored {} sessions", session_manager.len());
+                    }
+                }
+            }
+        }
 
         let renderer = TerminalRenderer::new(
             cfg.font_size,
@@ -291,6 +321,23 @@ impl TerminalApp {
         let clipboard = ClipboardManager::new().ok();
 
         let keybindings = keybindings::KeyBindings::load().unwrap_or_default();
+
+        // Load theme
+        let current_theme = theme::Theme::get_builtin(&cfg.theme)
+            .unwrap_or_default();
+
+        // Initialize layout manager with first session
+        let layout_manager = layout::LayoutManager::new(0);
+
+        // Create additional renderers for multi-pane support (start with empty)
+        let mut pane_renderers = Vec::new();
+        for _ in 0..4 {
+            pane_renderers.push(TerminalRenderer::new(
+                cfg.font_size,
+                cfg.padding,
+                cfg.scrollbar_visibility.clone(),
+            ));
+        }
 
         TerminalApp {
             session_manager,
@@ -313,6 +360,10 @@ impl TerminalApp {
             keybindings,
             command_palette: command_palette::CommandPalette::new(),
             force_resize_session: false,
+            current_theme,
+            layout_manager,
+            pane_renderers,
+            dragging_divider: false,
         }
     }
 
@@ -821,12 +872,103 @@ impl TerminalApp {
                     self.force_resize_session = false;
                 }
 
-                let session = self.session_manager.get_active_session_mut();
-                let mut terminal_guard = session.terminal.lock();
+                // 多窗格支持：如果有多于一个窗格，则进行分屏渲染
+                if self.layout_manager.panes().len() > 1 {
+                    let available_rect = ui.available_rect_before_wrap();
 
-                // 获取链接列表用于渲染
-                let links = self.link_detector.detect_all_links(&terminal_guard.grid);
-                self.renderer.render(ui, &mut terminal_guard, self.cursor_visible, &self.search_state, &links, &self.hovered_link);
+                    // 计算窗格矩形
+                    self.layout_manager.compute_pane_rects(available_rect);
+
+                    // 获取所有窗格信息
+                    let panes = self.layout_manager.panes().to_vec();
+                    let divider_rect = self.layout_manager.get_divider_rect();
+
+                    // 为每个窗格渲染
+                    for (pane_idx, pane) in panes.iter().enumerate() {
+                        if pane_idx >= self.pane_renderers.len() {
+                            break;
+                        }
+
+                        let session_idx = pane.session_idx;
+                        if let Some(session) = self.session_manager.get_session_mut(session_idx) {
+                            let mut terminal_guard = session.terminal.lock();
+                            let links = self.link_detector.detect_all_links(&terminal_guard.grid);
+
+                            // 获取当前窗格的渲染器
+                            let renderer = &mut self.pane_renderers[pane_idx];
+
+                            // 使用 allocate_exact_size 在指定矩形内渲染
+                            ui.allocate_exact_size(
+                                egui::vec2(pane.rect.width(), pane.rect.height()),
+                                egui::Sense::click_and_drag(),
+                            );
+
+                            // 直接在指定区域渲染（简化实现）
+                            renderer.render(
+                                ui,
+                                &mut terminal_guard,
+                                self.cursor_visible,
+                                &self.search_state,
+                                &links,
+                                &self.hovered_link,
+                            );
+                        }
+                    }
+
+                    // 绘制分隔线
+                    if let Some(divider) = divider_rect {
+                        let painter = ui.painter();
+                        let divider_color = if self.dragging_divider {
+                            egui::Color32::from_rgb(100, 150, 200)
+                        } else {
+                            egui::Color32::from_rgb(80, 80, 80)
+                        };
+
+                        painter.rect_filled(divider, 0.0, divider_color);
+
+                        // 处理分隔线拖拽
+                        if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
+                            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                                if divider.contains(pos) {
+                                    self.dragging_divider = true;
+                                }
+                            }
+                        }
+
+                        if self.dragging_divider {
+                            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                                // 计算新的分割比例
+                                match self.layout_manager.mode {
+                                    layout::SplitMode::VerticalSplit { .. } => {
+                                        let delta = pos.x - divider.center().x;
+                                        let total_width = available_rect.width();
+                                        let ratio_delta = delta / total_width * 0.1; // 降低灵敏度
+                                        self.layout_manager.adjust_split_ratio(ratio_delta);
+                                    }
+                                    layout::SplitMode::HorizontalSplit { .. } => {
+                                        let delta = pos.y - divider.center().y;
+                                        let total_height = available_rect.height();
+                                        let ratio_delta = delta / total_height * 0.1;
+                                        self.layout_manager.adjust_split_ratio(ratio_delta);
+                                    }
+                                    _ => {}
+                                }
+                            }
+
+                            if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+                                self.dragging_divider = false;
+                            }
+                        }
+                    }
+                } else {
+                    // 单窗格渲染（原有逻辑）
+                    let session = self.session_manager.get_active_session_mut();
+                    let mut terminal_guard = session.terminal.lock();
+
+                    // 获取链接列表用于渲染
+                    let links = self.link_detector.detect_all_links(&terminal_guard.grid);
+                    self.renderer.render(ui, &mut terminal_guard, self.cursor_visible, &self.search_state, &links, &self.hovered_link);
+                }
             });
 
         // 搜索面板 UI（浮动窗口，右上角）
@@ -1167,6 +1309,33 @@ impl eframe::App for TerminalApp {
                                             if !terminal.is_alt_buffer_active() {
                                                 terminal.scroll(-3);
                                             }
+                                        }
+                                        // 分屏命令处理
+                                        keybindings::Command::TerminalSplitVertical => {
+                                            // 垂直分割（左右）
+                                            let new_session_idx = self.session_manager.new_session(None, None);
+                                            let _ = self.layout_manager.split(new_session_idx, false);
+                                            self.status_message = "Split vertically".to_string();
+                                        }
+                                        keybindings::Command::TerminalSplitHorizontal => {
+                                            // 水平分割（上下）
+                                            let new_session_idx = self.session_manager.new_session(None, None);
+                                            let _ = self.layout_manager.split(new_session_idx, true);
+                                            self.status_message = "Split horizontally".to_string();
+                                        }
+                                        keybindings::Command::TerminalClosePane => {
+                                            // 关闭当前窗格
+                                            if let Err(e) = self.layout_manager.close_focused_pane() {
+                                                self.status_message = e;
+                                            }
+                                        }
+                                        keybindings::Command::PaneFocusNext => {
+                                            // 切换到下一个窗格
+                                            self.layout_manager.focus_pane(layout::PaneDirection::Next);
+                                        }
+                                        keybindings::Command::PaneFocusPrev => {
+                                            // 切换到前一个窗格
+                                            self.layout_manager.focus_pane(layout::PaneDirection::Prev);
                                         }
                                         _ => {}
                                     }
