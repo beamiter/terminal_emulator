@@ -277,7 +277,8 @@ impl TerminalRenderer {
                 let scrollbar_height = scrollbar_rect.height();
                 let thumb_height = ((visible_lines as f32 / total_lines as f32) * scrollbar_height)
                     .clamp(Self::MIN_THUMB_HEIGHT, scrollbar_height);
-                let thumb_y = (terminal.scroll_offset as f32 / terminal.scrollback.len() as f32)
+                // 反转逻辑：scroll_offset=0时thumb在底部（最新内容），scroll_offset=max时thumb在顶部（历史）
+                let thumb_y = scrollbar_height - thumb_height - (terminal.scroll_offset as f32 / terminal.scrollback.len() as f32)
                     * (scrollbar_height - thumb_height);
                 let thumb_rect = egui::Rect::from_min_size(
                     egui::pos2(scrollbar_x, scrollbar_rect.top() + thumb_y),
@@ -312,9 +313,9 @@ impl TerminalRenderer {
                 if let Some((_, scrollbar_height, thumb_height, scrollback_len_f)) = scrollbar_thumb_rect {
                     let track_height = scrollbar_height - thumb_height;
                     if track_height > 0.0 {
-                        // Convert Y position to scroll_offset (clamped to valid range)
+                        // 反转逻辑：向上拖动看历史（增大scroll_offset），向下拖动看最新（减小scroll_offset）
                         let relative_y = (pos.y - scrollbar_rect.top() - thumb_height / 2.0).clamp(0.0, track_height);
-                        let new_offset = ((relative_y / track_height) * scrollback_len_f).round() as usize;
+                        let new_offset = (((track_height - relative_y) / track_height) * scrollback_len_f).round() as usize;
                         terminal.scroll_offset = new_offset.min(terminal.scrollback.len());
                     }
                 }
@@ -332,10 +333,10 @@ impl TerminalRenderer {
                 if pos.x >= scrollbar_x && terminal.scrollback.len() > 0 {
                     if let Some((thumb_rect, ..)) = scrollbar_thumb_rect {
                         if pos.y < thumb_rect.top() {
-                            // Click above thumb: scroll up (older history)
+                            // Click above thumb: scroll up (see older history)
                             terminal.scroll(rows as isize);
                         } else if pos.y > thumb_rect.bottom() {
-                            // Click below thumb: scroll down (newer/live view)
+                            // Click below thumb: scroll down (see newest content)
                             terminal.scroll(-(rows as isize));
                         }
                     }
@@ -602,7 +603,8 @@ impl TerminalRenderer {
                 let visible_lines = rows;
                 let thumb_height = ((visible_lines as f32 / total_lines as f32) * scrollbar_height)
                     .clamp(Self::MIN_THUMB_HEIGHT, scrollbar_height);
-                let thumb_y = (terminal.scroll_offset as f32 / scrollback_len_f) * (scrollbar_height - thumb_height);
+                // 反转逻辑：scroll_offset=0时thumb在底部（最新内容），scroll_offset=max时thumb在顶部（历史）
+                let thumb_y = scrollbar_height - thumb_height - (terminal.scroll_offset as f32 / scrollback_len_f) * (scrollbar_height - thumb_height);
                 let thumb_rect = egui::Rect::from_min_size(
                     egui::pos2(scrollbar_x, scrollbar_rect.top() + thumb_y),
                     egui::vec2(scrollbar_width, thumb_height),

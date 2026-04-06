@@ -52,6 +52,31 @@ fn main() -> Result<(), eframe::Error> {
             let cfg_clone = cfg.clone();
             let mut fonts = egui::FontDefinitions::default();
 
+            // Try to load system monospace fonts with full Unicode support
+            let mono_font_paths = [
+                "/usr/share/fonts/opentype/noto/NotoMono-Regular.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                "/usr/share/fonts/opentype/dejavu/DejaVuSansMono.otf",
+                "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+            ];
+
+            let mut mono_font_loaded = false;
+            for path in &mono_font_paths {
+                if let Ok(font_data) = std::fs::read(path) {
+                    fonts.font_data.insert(
+                        "monospace_unicode".to_owned(),
+                        std::sync::Arc::new(egui::FontData::from_owned(font_data)),
+                    );
+                    // Add to monospace family first (higher priority)
+                    fonts.families
+                        .get_mut(&egui::FontFamily::Monospace)
+                        .unwrap()
+                        .insert(0, "monospace_unicode".to_owned());
+                    mono_font_loaded = true;
+                    break;
+                }
+            }
+
             // Try to load system CJK fonts
             let cjk_font_paths = [
                 "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
@@ -407,83 +432,107 @@ impl TerminalApp {
                     let mouse_released = ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
                     let mouse_pressed = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
 
+                    // 检查是否发生了实际的拖拽（超过阈值距离）
+                    let is_actually_dragging = if let (Some(_), Some(start_x)) = (self.dragging_tab, self.drag_start_pos) {
+                        if let Some(current_pos) = ctx.input(|i| i.pointer.latest_pos()) {
+                            let distance = (current_pos.x - start_x).abs();
+                            distance > 5.0  // 5px拖拽阈值
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+
                     // 处理拖拽结束或点击
                     if mouse_released {
-                        if let Some(from_idx) = self.dragging_tab {
-                            // 拖拽结束 - 计算drop目标并执行重排
-                            if let Some(hover_pos) = hover_pos {
-                                if tab_rect.contains(hover_pos) {
-                                    let relative_x = hover_pos.x - tab_rect.left();
-                                    let mut x_offset = 5.0;
-                                    let sessions_count = self.session_manager.sessions().len();
-                                    let mut target_idx = from_idx;
+                        if is_actually_dragging {
+                            // 实际拖拽结束 - 计算drop目标并执行重排
+                            if let Some(from_idx) = self.dragging_tab {
+                                if let Some(hover_pos) = hover_pos {
+                                    if tab_rect.contains(hover_pos) {
+                                        let relative_x = hover_pos.x - tab_rect.left();
+                                        let mut x_offset = 5.0;
+                                        let sessions_count = self.session_manager.sessions().len();
+                                        let mut target_idx = from_idx;
 
-                                    for idx in 0..sessions_count {
-                                        let session = &self.session_manager.sessions()[idx];
+                                        for idx in 0..sessions_count {
+                                            let session = &self.session_manager.sessions()[idx];
+                                            let galley = painter.layout_no_wrap(
+                                                session.metadata.name.clone(),
+                                                egui::FontId::monospace(12.0),
+                                                egui::Color32::WHITE,
+                                            );
+                                            let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
+
+                                            if relative_x >= x_offset && relative_x < x_offset + tab_width {
+                                                target_idx = idx;
+                                                break;
+                                            }
+
+                                            x_offset += tab_width + 2.0;
+                                            if x_offset > tab_rect.right() - tab_rect.left() - 50.0 {
+                                                break;
+                                            }
+                                        }
+
+                                        // 执行重排
+                                        if target_idx != from_idx {
+                                            self.session_manager.reorder_sessions(from_idx, target_idx);
+                                        }
+                                    }
+                                }
+                            }
+                            self.dragging_tab = None;
+                            self.drag_start_pos = None;
+                        } else {
+                            // 简单点击（没有发生实际拖拽）
+                            if let Some(click_pos) = hover_pos.or_else(|| ctx.input(|i| i.pointer.latest_pos())) {
+                                if tab_rect.contains(click_pos) {
+                                    let mut x_offset = tab_rect.left() + 5.0;
+                                    for (idx, session) in self.session_manager.sessions().iter().enumerate() {
                                         let galley = painter.layout_no_wrap(
                                             session.metadata.name.clone(),
                                             egui::FontId::monospace(12.0),
                                             egui::Color32::WHITE,
                                         );
                                         let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
+                                        let tab_rect_item = egui::Rect::from_min_size(
+                                            egui::pos2(x_offset, tab_rect.top() + 5.0),
+                                            egui::vec2(tab_width, tab_height - 10.0),
+                                        );
 
-                                        if relative_x >= x_offset && relative_x < x_offset + tab_width {
-                                            target_idx = idx;
+                                        let close_btn_rect = egui::Rect::from_min_size(
+                                            egui::pos2(
+                                                tab_rect_item.right() - close_btn_size - 3.0,
+                                                tab_rect_item.center().y - close_btn_size / 2.0,
+                                            ),
+                                            egui::vec2(close_btn_size, close_btn_size),
+                                        );
+
+                                        if close_btn_rect.contains(click_pos) && self.session_manager.len() > 1 {
+                                            self.session_manager.close_session(idx);
+                                            self.dragging_tab = None;
+                                            self.drag_start_pos = None;
+                                            break;
+                                        } else if tab_rect_item.contains(click_pos) {
+                                            self.session_manager.switch_session(idx);
+                                            self.dragging_tab = None;
+                                            self.drag_start_pos = None;
                                             break;
                                         }
 
                                         x_offset += tab_width + 2.0;
-                                        if x_offset > tab_rect.right() - tab_rect.left() - 50.0 {
+                                        if x_offset > tab_rect.right() - 50.0 {
                                             break;
                                         }
                                     }
-
-                                    // 执行重排
-                                    if target_idx != from_idx {
-                                        self.session_manager.reorder_sessions(from_idx, target_idx);
-                                    }
                                 }
                             }
-                            self.dragging_tab = None;
-                            self.drag_start_pos = None;
-                        } else if let Some(click_pos) = hover_pos.or_else(|| ctx.input(|i| i.pointer.latest_pos())) {
-                            // 检查是否点击了Tab或按钮（拖拽未进行）
-                            // 先尝试使用hover_pos，如果没有则使用latest_pos
-                            if tab_rect.contains(click_pos) {
-                                let mut x_offset = tab_rect.left() + 5.0;
-                                for (idx, session) in self.session_manager.sessions().iter().enumerate() {
-                                    let galley = painter.layout_no_wrap(
-                                        session.metadata.name.clone(),
-                                        egui::FontId::monospace(12.0),
-                                        egui::Color32::WHITE,
-                                    );
-                                    let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
-                                    let tab_rect_item = egui::Rect::from_min_size(
-                                        egui::pos2(x_offset, tab_rect.top() + 5.0),
-                                        egui::vec2(tab_width, tab_height - 10.0),
-                                    );
-
-                                    let close_btn_rect = egui::Rect::from_min_size(
-                                        egui::pos2(
-                                            tab_rect_item.right() - close_btn_size - 3.0,
-                                            tab_rect_item.center().y - close_btn_size / 2.0,
-                                        ),
-                                        egui::vec2(close_btn_size, close_btn_size),
-                                    );
-
-                                    if close_btn_rect.contains(click_pos) && self.session_manager.len() > 1 {
-                                        self.session_manager.close_session(idx);
-                                        break;
-                                    } else if tab_rect_item.contains(click_pos) {
-                                        self.session_manager.switch_session(idx);
-                                        break;
-                                    }
-
-                                    x_offset += tab_width + 2.0;
-                                    if x_offset > tab_rect.right() - 50.0 {
-                                        break;
-                                    }
-                                }
+                            // 清除拖拽状态（即使没有找到点击的tab）
+                            if self.dragging_tab.is_some() {
+                                self.dragging_tab = None;
+                                self.drag_start_pos = None;
                             }
                         }
                     }
@@ -530,21 +579,9 @@ impl TerminalApp {
                         }
                     }
 
-                    // 检测拖拽过程中的移动 - 如果有拖拽且鼠标移动超过阈值，就认为正在拖拽
-                    let is_actively_dragging = if let (Some(_), Some(start_x)) = (self.dragging_tab, self.drag_start_pos) {
-                        if let Some(current_pos) = ctx.input(|i| i.pointer.latest_pos()) {
-                            let distance = (current_pos.x - start_x).abs();
-                            distance > 5.0  // 5px拖拽阈值
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    };
-
                     // 计算拖拽过程中的动画效果
                     let mut drag_target_idx: Option<usize> = None;
-                    if is_actively_dragging {
+                    if is_actually_dragging {
                         if let Some(hover_pos) = hover_pos {
                             if let Some(_from_idx) = self.dragging_tab {
                                 let relative_x = hover_pos.x - tab_rect.left();
@@ -605,7 +642,7 @@ impl TerminalApp {
                         let is_drag_target = drag_target_idx == Some(*idx);
 
                         // 计算拖拽过程中的动画位移
-                        if is_actively_dragging {
+                        if is_actually_dragging {
                             if is_dragging {
                                 // 被拖拽的Tab跟随鼠标移动
                                 if let Some(start_x) = self.drag_start_pos {
@@ -640,7 +677,7 @@ impl TerminalApp {
                             false
                         };
 
-                        if is_hovered && !is_actively_dragging {
+                        if is_hovered && !is_actually_dragging {
                             self.hovered_tab_index = Some(*idx);
                         }
 
@@ -661,7 +698,7 @@ impl TerminalApp {
                         }
 
                         // 绘制Tab背景和边框
-                        if is_dragging && is_actively_dragging {
+                        if is_dragging && is_actually_dragging {
                             // 拖拽中的Tab：半透明+虚线边框
                             painter.rect_filled(tab_rect_item, 1.0, egui::Color32::from_rgba_premultiplied(
                                 bg_color.r(), bg_color.g(), bg_color.b(), 140
@@ -712,7 +749,7 @@ impl TerminalApp {
                             );
 
                             // 拖拽过程中，在目标Tab位置显示插入指示线
-                            if is_drag_target && is_actively_dragging {
+                            if is_drag_target && is_actually_dragging {
                                 let insert_line_x = if self.current_mouse_x - tab_rect_item.center().x < 0.0 {
                                     tab_rect_item.left()
                                 } else {
