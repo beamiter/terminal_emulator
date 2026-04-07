@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use base64::Engine;
 use unicode_width::UnicodeWidthChar;
+use crate::kitty_graphics::KittyGraphicsState;
 
 const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
 const SECONDARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[>1;7802;0c";
@@ -147,6 +148,9 @@ pub struct TerminalState {
     xterm_format_other_keys: u16,
     pending_clipboard_requests: Vec<ClipboardReadRequest>,
     pending_paste_password: Option<String>,
+
+    // Kitty graphics protocol support
+    pub kitty_graphics: KittyGraphicsState,
 }
 
 impl TerminalState {
@@ -224,6 +228,7 @@ impl TerminalState {
             xterm_format_other_keys: 0,
             pending_clipboard_requests: Vec::new(),
             pending_paste_password: None,
+            kitty_graphics: KittyGraphicsState::new(),
         }
     }
 
@@ -605,8 +610,24 @@ impl TerminalState {
                             i += 2;
 
                             let mut terminated = false;
+                            let dcs_start = i;
                             while i < data.len() {
                                 if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == 0x5c {
+                                    // Extract DCS payload
+                                    let payload = &data[dcs_start..i];
+
+                                    // Check if this is a Kitty graphics protocol DCS
+                                    if let Ok(payload_str) = std::str::from_utf8(payload) {
+                                        // Kitty graphics protocol starts with @ or other specific markers
+                                        if payload_str.starts_with('@') ||
+                                           payload_str.contains("a=") ||
+                                           payload_str.starts_with("kitty") {
+                                            if let Err(e) = self.kitty_graphics.parse_graphics_payload(payload_str) {
+                                                crate::debug_log!("[DCS] Kitty graphics error: {}", e);
+                                            }
+                                        }
+                                    }
+
                                     i += 2;
                                     terminated = true;
                                     break;

@@ -21,6 +21,8 @@ mod scripting;
 mod ansi_advanced;
 mod windows_compat;
 mod help;
+mod kitty_graphics;
+mod image_cache;
 
 use base64::Engine;
 use eframe::egui;
@@ -198,7 +200,14 @@ fn normalize_terminal_shortcut_events(
             }
         }
 
-        if !matches!(event, egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)) {
+        // 关键修复：粘贴事件即使没有 preserve_paste_event 也应该保留
+        // 这样 main.rs 中的粘贴处理代码可以从剪贴板读取内容并发送
+        if matches!(event, egui::Event::Paste(_)) {
+            normalized_events.push(event);
+            continue;
+        }
+
+        if !matches!(event, egui::Event::Copy | egui::Event::Cut) {
             normalized_events.push(event);
         }
     }
@@ -1633,6 +1642,7 @@ impl eframe::App for TerminalApp {
                 let mime_types = clipboard.available_mime_types().unwrap_or_default();
                 let mut terminal = session.terminal.lock();
                 if terminal.is_paste_events_enabled() {
+                    // 应用支持粘贴事件协议，发送 MIME 类型列表，让应用请求
                     Some(terminal.build_paste_event(&mime_types))
                 } else {
                     None
@@ -1645,6 +1655,27 @@ impl eframe::App for TerminalApp {
                 crate::debug_log!("[OSC5522] sending unsolicited paste MIME list");
                 let _ = session.shell.write(&bytes);
                 consumed_keys.insert("PasteEvent".to_string());
+            } else {
+                // 应用不支持粘贴事件协议，从剪贴板读取内容并直接发送
+                if let Some(clipboard) = &self.clipboard {
+                    let bracketed_paste = {
+                        let terminal = session.terminal.lock();
+                        terminal.is_bracketed_paste_enabled()
+                    };
+
+                    if let Ok(content) = clipboard.paste_contents() {
+                        let bytes = clipboard_content_to_terminal_bytes(content);
+                        if !bytes.is_empty() {
+                            let paste_bytes = if bracketed_paste {
+                                wrap_bracketed_paste(bytes)
+                            } else {
+                                bytes
+                            };
+                            let _ = session.shell.write(&paste_bytes);
+                            consumed_keys.insert("PasteEvent".to_string());
+                        }
+                    }
+                }
             }
         }
 

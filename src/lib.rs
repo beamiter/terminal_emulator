@@ -22,3 +22,5 @@ pub mod search_replace;
 pub mod scripting;
 pub mod ansi_advanced;
 pub mod windows_compat;
+pub mod kitty_graphics;
+pub mod image_cache;

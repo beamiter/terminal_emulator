@@ -217,6 +217,8 @@ pub struct TerminalRenderer {
     requested_initial_focus: bool,
     ime_enabled: bool,
     last_ime_rect: Option<egui::Rect>,
+    // Kitty graphics texture cache: image_id -> (texture_handle, width, height)
+    texture_cache: std::collections::HashMap<u32, (egui::TextureHandle, u32, u32)>,
 }
 
 impl TerminalRenderer {
@@ -243,6 +245,7 @@ impl TerminalRenderer {
             requested_initial_focus: false,
             ime_enabled: false,
             last_ime_rect: None,
+            texture_cache: std::collections::HashMap::new(),
         }
     }
 
@@ -261,6 +264,15 @@ impl TerminalRenderer {
         if line_height.is_finite() && line_height > 0.0 {
             self.line_height = line_height;
         }
+    }
+
+    /// 获取或创建图像纹理
+    fn get_image_texture(&mut self, _ui: &mut Ui, image_id: u32, image: &crate::kitty_graphics::KittyImage) -> Option<()> {
+        // TODO: 实现 GPU 纹理缓存
+        // 暂时只返回 Ok 表示图像可以被绘制
+        crate::debug_log!("[KITTY_TEXTURE] Image {} ready for rendering ({}x{})",
+            image_id, image.width, image.height);
+        Some(())
     }
 
     fn content_size(&self, available: Vec2) -> Vec2 {
@@ -536,6 +548,107 @@ impl TerminalRenderer {
             }
         }
 
+        // Render Kitty graphics images
+        let placements = terminal.kitty_graphics.get_placements();
+        for placement in placements {
+            if let Some(image) = terminal.kitty_graphics.get_image(placement.image_id) {
+                // Calculate pixel position from grid coordinates
+                let img_x = content_rect.left() + placement.x as f32 * char_width;
+                let img_y = content_rect.top() + placement.y as f32 * line_height;
+                let img_width = placement.width as f32 * char_width;
+                let img_height = placement.height as f32 * line_height;
+
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(img_x, img_y),
+                    Vec2::new(img_width, img_height),
+                );
+
+                // Check if we can render the image
+                if self.get_image_texture(ui, image.id, image).is_some() {
+                    // Draw the image data as colored pixels
+                    let pixels_per_cell_x = (img_width / placement.width as f32).max(1.0);
+                    let pixels_per_cell_y = (img_height / placement.height as f32).max(1.0);
+
+                    // Sample image data at regular intervals for visual preview
+                    let step_x = ((image.width as f32 / 10.0).max(1.0)) as u32;
+                    let step_y = ((image.height as f32 / 10.0).max(1.0)) as u32;
+
+                    for iy in (0..image.height).step_by(step_y as usize) {
+                        for ix in (0..image.width).step_by(step_x as usize) {
+                            let idx = ((iy * image.width + ix) as usize) * 4;
+                            if idx + 3 < image.data.len() {
+                                let r = image.data[idx];
+                                let g = image.data[idx + 1];
+                                let b = image.data[idx + 2];
+                                let a = image.data[idx + 3];
+
+                                let color = Color32::from_rgba_unmultiplied(r, g, b, a);
+
+                                // Calculate position in the placement area
+                                let px = img_x + (ix as f32 / image.width as f32) * img_width;
+                                let py = img_y + (iy as f32 / image.height as f32) * img_height;
+                                let pw = pixels_per_cell_x;
+                                let ph = pixels_per_cell_y;
+
+                                let pixel_rect = egui::Rect::from_min_size(
+                                    egui::pos2(px, py),
+                                    Vec2::new(pw, ph),
+                                );
+
+                                painter.rect_filled(pixel_rect, egui::CornerRadius::ZERO, color);
+                            }
+                        }
+                    }
+
+                    // Draw border and info
+                    painter.rect_stroke(
+                        rect,
+                        egui::CornerRadius::ZERO,
+                        egui::Stroke::new(1.0, Color32::from_rgb(100, 150, 200)),
+                        egui::StrokeKind::Middle,
+                    );
+
+                    let info = format!("#{} ({}×{})", image.id, image.width, image.height);
+                    let font_id = FontId::monospace(self.font_size * 0.6);
+                    let galley = ui.painter().layout_no_wrap(
+                        info,
+                        font_id,
+                        Color32::from_rgb(100, 150, 200),
+                    );
+
+                    painter.galley(egui::pos2(img_x + 2.0, img_y + 2.0), galley, Color32::from_rgb(100, 150, 200));
+
+                    crate::debug_log!("[KITTY_RENDER] Rendered image #{} at ({},{}) size {}x{} placement {}x{}",
+                        image.id, placement.x, placement.y, image.width, image.height,
+                        placement.width, placement.height);
+                } else {
+                    // Render placeholder if image preparation failed
+                    painter.rect_filled(
+                        rect,
+                        egui::CornerRadius::ZERO,
+                        Color32::from_rgba_unmultiplied(50, 50, 50, 100),
+                    );
+
+                    painter.rect_stroke(
+                        rect,
+                        egui::CornerRadius::ZERO,
+                        egui::Stroke::new(1.0, Color32::from_rgb(100, 100, 100)),
+                        egui::StrokeKind::Middle,
+                    );
+
+                    let text = "Invalid Image";
+                    let font_id = FontId::monospace(self.font_size * 0.6);
+                    let galley = ui.painter().layout_no_wrap(
+                        text.to_string(),
+                        font_id,
+                        Color32::from_rgb(100, 100, 100),
+                    );
+
+                    painter.galley(egui::pos2(img_x + 2.0, img_y + 2.0), galley, Color32::from_rgb(100, 100, 100));
+                }
+            }
+        }
+
         // Render grid
         for row_idx in 0..rows {
             for col_idx in 0..cols {
@@ -789,15 +902,13 @@ impl TerminalRenderer {
         for event in events {
             match event {
                 egui::Event::Text(text) => {
-                    if suppress_text_events {
+                    if suppress_text_events || report_all_keys {
                         continue;
                     }
-                    // 不处理特殊按键对应的文本事件（控制字符由 Ctrl+letter 处理）
+                    // 不处理特殊按键对应的文本事件
                     if !text.is_empty() && text.as_bytes()[0] < 32 {
                         continue;
                     }
-                    // 即使在 report_all_keys 模式下，也要处理 Text 事件，因为特殊字符（_、空格、符号等）
-                    // 是通过 Text 事件传输的，而不是 Key 事件。这确保所有字符都能被输入。
                     input.extend(text.as_bytes());
                 }
                 egui::Event::Key {
