@@ -125,6 +125,30 @@ pub struct TerminalState {
 }
 
 impl TerminalState {
+    fn parse_csi_params(param_bytes: &[u8]) -> Vec<u16> {
+        let mut params = Vec::new();
+        let mut current = String::new();
+
+        for &byte in param_bytes {
+            match byte {
+                b'0'..=b'9' => current.push(byte as char),
+                b';' | b':' => {
+                    if let Ok(value) = current.parse::<u16>() {
+                        params.push(value);
+                    }
+                    current.clear();
+                }
+                _ => {}
+            }
+        }
+
+        if let Ok(value) = current.parse::<u16>() {
+            params.push(value);
+        }
+
+        params
+    }
+
     pub fn new(cols: usize, rows: usize) -> Self {
         let grid = vec![vec![TerminalCell::default(); cols]; rows];
         let alt_grid = vec![vec![TerminalCell::default(); cols]; rows];
@@ -171,12 +195,17 @@ impl TerminalState {
     }
 
     fn put_char(&mut self, ch: char) {
+        let orig_ch = ch;
         let ch = self.translate_char(ch);
         let width = UnicodeWidthChar::width(ch).unwrap_or(0);
         if width == 0 {
             return; // Skip zero-width characters for now
         }
 
+        if ch == '0' || ch == 'q' || orig_ch == '0' || orig_ch == 'q' {
+            crate::debug_log!("[PUT_CHAR-DEBUG] orig='{}' translated='{}' active_charset={:?} at ({},{})",
+                orig_ch, ch, self.active_charset, self.cursor_row, self.cursor_col);
+        }
         crate::debug_log!("[PUT_CHAR] '{}' at ({},{}) width={}", ch, self.cursor_row, self.cursor_col, width);
 
         let cols = self.grid[self.cursor_row].len();
@@ -343,17 +372,20 @@ impl TerminalState {
         }
         data.extend_from_slice(input);
 
-        // Log first 100 bytes as hex for debugging
+        // Always log first 200 bytes as hex for debugging (even in release)
         if !data.is_empty() {
             let preview = data.iter()
-                .take(100)
-                .map(|b| format!("{:02x}", b))
+                .take(200)
+                .map(|b| {
+                    if *b >= 32 && *b < 127 {
+                        format!("{}", *b as char)
+                    } else {
+                        format!("[{:02x}]", b)
+                    }
+                })
                 .collect::<Vec<_>>()
-                .join(" ");
-            crate::debug_log!("[INPUT-HEX] len={} data=[{}{}]",
-                data.len(),
-                preview,
-                if data.len() > 100 { " ..." } else { "" });
+                .join("");
+            eprintln!("[INPUT] len={} data={}", data.len(), preview);
         }
 
         let mut i = 0;
@@ -469,25 +501,65 @@ impl TerminalState {
                                 }
                             }
                         }
+                        b'P' | b'X' | b'^' | b'_' => {
+                            i += 2;
+
+                            let mut terminated = false;
+                            while i < data.len() {
+                                if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == 0x5c {
+                                    i += 2;
+                                    terminated = true;
+                                    break;
+                                }
+                                i += 1;
+                            }
+
+                            if !terminated {
+                                self.pending_escape.extend_from_slice(&data[esc_start..]);
+                                break;
+                            }
+                        }
+                        b'>' => {
+                            // ESC > - DECKPNM (Keypad Numeric Mode) or other private sequence
+                            // Just skip it and any following bytes that are part of it
+                            eprintln!("[ANSI] ESC > (keypad/private mode) - ignoring");
+                            i += 2;
+                        }
+                        b'<' => {
+                            // ESC < - DECKPM (Keypad Application Mode) or other private sequence
+                            // Just skip it
+                            eprintln!("[ANSI] ESC < (keypad/private mode) - ignoring");
+                            i += 2;
+                        }
+                        b'=' => {
+                            // ESC = - DECKPAM (Keypad Application Mode)
+                            // Just skip it
+                            eprintln!("[ANSI] ESC = (keypad application mode) - ignoring");
+                            i += 2;
+                        }
                         b'(' | b')' => {
                             if i + 2 >= data.len() {
                                 self.pending_escape.extend_from_slice(&data[esc_start..]);
                                 break;
                             }
 
-                            let target = data[i + 1];
+                            // Character set selection: ESC ( X or ESC ) X
+                            // data[i] = ESC, data[i+1] = '(' or ')', data[i+2] = designator
+                            let is_g0 = data[i + 1] == b'(';
                             let designator = data[i + 2];
                             let charset = Self::charset_from_designator(designator);
 
-                            match target {
-                                b'(' => {
-                                    self.g0_charset = charset;
-                                    self.active_charset = self.g0_charset;
-                                }
-                                b')' => {
-                                    self.g1_charset = charset;
-                                }
-                                _ => {}
+                            crate::debug_log!("[CHARSET] ESC {} designator={} (0x{:02x}) charset={:?}",
+                                if is_g0 { '(' } else { ')' },
+                                designator as char,
+                                designator,
+                                charset);
+
+                            if is_g0 {
+                                self.g0_charset = charset;
+                                self.active_charset = self.g0_charset;
+                            } else {
+                                self.g1_charset = charset;
                             }
 
                             i += 3;
@@ -532,51 +604,49 @@ impl TerminalState {
                         b'[' => {
                             i += 2;
 
-                            let is_private_mode = i < data.len() && data[i] == b'?';
-                            if is_private_mode {
-                                i += 1;
-                            }
+                            let mut param_bytes = Vec::new();
+                            let mut intermediates = Vec::new();
+                            let mut final_byte = None;
 
-                            let mut params = Vec::new();
-                            let mut param_str = String::new();
-
-                            while i < data.len() && (data[i].is_ascii_digit() || data[i] == b';') {
-                                if data[i] == b';' {
-                                    if let Ok(n) = param_str.parse::<u16>() {
-                                        params.push(n);
+                            while i < data.len() {
+                                match data[i] {
+                                    0x30..=0x3f => param_bytes.push(data[i]),
+                                    0x20..=0x2f => intermediates.push(data[i]),
+                                    0x40..=0x7e => {
+                                        final_byte = Some(data[i]);
+                                        break;
                                     }
-                                    param_str.clear();
-                                } else {
-                                    param_str.push(data[i] as char);
+                                    _ => break,
                                 }
                                 i += 1;
                             }
 
-                            if !param_str.is_empty() {
-                                if let Ok(n) = param_str.parse::<u16>() {
-                                    params.push(n);
-                                }
-                            }
-
-                            if i >= data.len() {
+                            let Some(final_byte) = final_byte else {
                                 self.pending_escape.extend_from_slice(&data[esc_start..]);
                                 break;
-                            }
+                            };
 
-                            // Handle intermediate bytes (like space in DECSCUSR)
-                            if data[i] == b' ' {
-                                i += 1;
-                                if i >= data.len() {
-                                    self.pending_escape.extend_from_slice(&data[esc_start..]);
-                                    break;
+                            let private_prefix = match param_bytes.first().copied() {
+                                Some(prefix @ (b'<' | b'=' | b'>' | b'?')) => {
+                                    param_bytes.remove(0);
+                                    Some(prefix)
                                 }
+                                _ => None,
+                            };
+                            let params = Self::parse_csi_params(&param_bytes);
+                            let cmd = final_byte as char;
+
+                            if let Some(prefix) = private_prefix {
+                                crate::debug_log!(
+                                    "[ANSI-RAW] CSI {} cmd={} intermediates={:?} params={:?}",
+                                    prefix as char,
+                                    cmd,
+                                    intermediates,
+                                    params
+                                );
                             }
 
-                            let cmd = data[i] as char;
-                            if is_private_mode {
-                                crate::debug_log!("[ANSI-RAW] CSI ? (private mode) cmd={}", cmd);
-                            }
-                            self.handle_escape_sequence(&params, cmd);
+                            self.handle_escape_sequence(&params, cmd, private_prefix, &intermediates);
                             i += 1;
                         }
                         _ => {
@@ -635,7 +705,13 @@ impl TerminalState {
         }
     }
 
-    fn handle_escape_sequence(&mut self, params: &[u16], cmd: char) {
+    fn handle_escape_sequence(
+        &mut self,
+        params: &[u16],
+        cmd: char,
+        private_prefix: Option<u8>,
+        intermediates: &[u8],
+    ) {
         // Debug logging for vim commands
         let params_str = params.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(";");
         crate::debug_log!("[ANSI] CSI {}{}{}  (cursor: {},{}, use_alt: {})",
@@ -807,12 +883,16 @@ impl TerminalState {
                 self.handle_sgr(params);
             }
             's' => {
-                self.saved_cursor_row = self.cursor_row;
-                self.saved_cursor_col = self.cursor_col;
+                if private_prefix.is_none() && intermediates.is_empty() {
+                    self.saved_cursor_row = self.cursor_row;
+                    self.saved_cursor_col = self.cursor_col;
+                }
             }
             'u' => {
-                self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
-                self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
+                if private_prefix.is_none() && intermediates.is_empty() {
+                    self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
+                    self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
+                }
             }
             'S' => {
                 // Scroll up (Scroll Up, SU) - content moves up, new lines appear at bottom
@@ -947,13 +1027,15 @@ impl TerminalState {
             }
             'q' => {
                 // DECSCUSR - Set cursor style
-                let shape = params.first().copied().unwrap_or(0) as u8;
-                self.cursor_shape = match shape {
-                    0 | 1 => CursorShape::Block,
-                    2 => CursorShape::Underline,
-                    3 => CursorShape::Beam,
-                    _ => CursorShape::Block,
-                };
+                if private_prefix.is_none() && intermediates == [b' '] {
+                    let shape = params.first().copied().unwrap_or(0) as u8;
+                    self.cursor_shape = match shape {
+                        0 | 1 => CursorShape::Block,
+                        2 => CursorShape::Underline,
+                        3 => CursorShape::Beam,
+                        _ => CursorShape::Block,
+                    };
+                }
             }
             _ => {}
         }
@@ -1572,5 +1654,46 @@ mod tests {
         assert_eq!(terminal.grid[0][0].character, '─');
         assert_eq!(terminal.grid[0][1].character, '│');
         assert_eq!(terminal.grid[0][2].character, 'A');
+    }
+
+    #[test]
+    fn decscusr_with_intermediate_space_does_not_leak_text() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[0 qX");
+
+        assert_eq!(terminal.grid[0][0].character, 'X');
+    }
+
+    #[test]
+    fn private_csi_u_sequence_does_not_restore_cursor_or_leak() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"AB");
+        terminal.process_input(b"\x1b[?4uC");
+
+        assert_eq!(terminal.grid[0][0].character, 'A');
+        assert_eq!(terminal.grid[0][1].character, 'B');
+        assert_eq!(terminal.grid[0][2].character, 'C');
+    }
+
+    #[test]
+    fn csi_with_gt_prefix_is_consumed_without_printing_parameters() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[>4;1mZ");
+
+        assert_eq!(terminal.grid[0][0].character, 'Z');
+        assert_eq!(terminal.grid[0][1].character, ' ');
+    }
+
+    #[test]
+    fn dcs_sequence_is_consumed_without_leaking_text() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1bP$q q\x1b\\X");
+
+        assert_eq!(terminal.grid[0][0].character, 'X');
+        assert_eq!(terminal.grid[0][1].character, ' ');
     }
 }

@@ -60,7 +60,6 @@ fn main() -> Result<(), eframe::Error> {
                 "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
             ];
 
-            let mut mono_font_loaded = false;
             for path in &mono_font_paths {
                 if let Ok(font_data) = std::fs::read(path) {
                     fonts.font_data.insert(
@@ -72,7 +71,6 @@ fn main() -> Result<(), eframe::Error> {
                         .get_mut(&egui::FontFamily::Monospace)
                         .unwrap()
                         .insert(0, "monospace_unicode".to_owned());
-                    mono_font_loaded = true;
                     break;
                 }
             }
