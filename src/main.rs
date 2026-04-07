@@ -36,6 +36,39 @@ use shell::{ShellSession, ShellEvent};
 use session_manager::SessionManager;
 use session::Session;
 
+fn detect_image_mime_type(data: &[u8]) -> Option<&'static str> {
+    if data.len() < 4 {
+        return None;
+    }
+
+    // PNG: 89 50 4E 47
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+
+    // JPEG: FF D8
+    if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+        return Some("image/jpeg");
+    }
+
+    // GIF: 47 49 46 (GIF)
+    if data.len() >= 3 && &data[0..3] == b"GIF" {
+        return Some("image/gif");
+    }
+
+    // WebP: RIFF...WEBP
+    if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+
+    // BMP: 42 4D (BM)
+    if data.len() >= 2 && data[0] == 0x42 && data[1] == 0x4D {
+        return Some("image/bmp");
+    }
+
+    None
+}
+
 fn main() -> Result<(), eframe::Error> {
     // Load configuration
     let cfg = config::Config::load();
