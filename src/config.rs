@@ -158,6 +158,7 @@ impl Config {
                 if let Ok(content) = std::fs::read_to_string(&config_path) {
                     if let Ok(config) = toml::from_str::<Config>(&content) {
                         eprintln!("[Config] Loaded from {}", config_path.display());
+                        eprintln!("[Config] Font: {}", config.font_family);
                         return config;
                     } else {
                         eprintln!("[Config] Failed to parse config file: {}", config_path.display());
@@ -166,7 +167,9 @@ impl Config {
             }
         }
         eprintln!("[Config] Using default configuration");
-        Self::default()
+        let config = Self::default();
+        eprintln!("[Config] Font: {}", config.font_family);
+        config
     }
 
     #[allow(dead_code)]
@@ -196,6 +199,10 @@ impl Config {
         let config_dir = dirs::config_dir()
             .ok_or("Failed to determine config directory")?;
         Ok(config_dir.join("terminal_emulator").join("config.toml"))
+    }
+
+    pub fn get_font_family(&self) -> &str {
+        &self.font_family
     }
 }
 
