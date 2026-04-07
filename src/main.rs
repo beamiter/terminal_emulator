@@ -1289,10 +1289,9 @@ impl eframe::App for TerminalApp {
 
         // Step 1: 处理 IME 事件
         let all_events = ctx.input(|i| i.events.clone());
-        let mut saw_ime_event = false;
+        let mut has_preedit = false;
         for evt in &all_events {
             if let egui::Event::Ime(ime_event) = evt {
-                saw_ime_event = true;
                 let mut terminal = session.terminal.lock();
                 match ime_event {
                     egui::ImeEvent::Enabled => {
@@ -1302,6 +1301,8 @@ impl eframe::App for TerminalApp {
                     egui::ImeEvent::Preedit(text) => {
                         crate::debug_log!("[IME] Preedit: {:?}", text);
                         terminal.set_preedit(text.clone(), text.len());
+                        // 只有当有实际的预编辑文本时，才抑制 Text 事件
+                        has_preedit = !text.is_empty();
                     }
                     egui::ImeEvent::Commit(text) => {
                         crate::debug_log!("[IME] Commit: {:?}", text);
@@ -1670,7 +1671,7 @@ impl eframe::App for TerminalApp {
                     ctx,
                     &mut keyboard_input,
                     &consumed_keys_refs,
-                    saw_ime_event,
+                    has_preedit,
                     keyboard_enhancement_flags,
                     report_all_keys_mode,
                     xterm_modify_other_keys,
