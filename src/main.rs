@@ -1235,11 +1235,21 @@ impl eframe::App for TerminalApp {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        crate::debug_log!(
+            "[RAW_INPUT] before normalize modifiers={:?} events={:?}",
+            raw_input.modifiers,
+            raw_input.events
+        );
         // egui-winit turns Ctrl/Cmd+C/X/V into semantic clipboard events and skips the
         // corresponding Key press. Restore those as Key events so the terminal can receive
         // control bytes, while still preventing egui's default text-edit shortcut behavior.
         let restore_shortcuts = should_restore_terminal_shortcut_event(ctx, raw_input.modifiers);
         normalize_terminal_shortcut_events(&mut raw_input.events, raw_input.modifiers, restore_shortcuts);
+        crate::debug_log!(
+            "[RAW_INPUT] after normalize restore_shortcuts={} events={:?}",
+            restore_shortcuts,
+            raw_input.events
+        );
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

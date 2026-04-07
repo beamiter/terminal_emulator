@@ -739,6 +739,13 @@ impl TerminalRenderer {
                     }
 
                     if let Some(encoded) = kitty_encode_key_event(key, modifiers, keyboard_enhancement_flags) {
+                        crate::debug_log!(
+                            "[KEYBOARD] kitty key event key={:?} modifiers={:?} flags={} encoded={}",
+                            key,
+                            modifiers,
+                            keyboard_enhancement_flags,
+                            encoded
+                        );
                         input.extend(encoded.as_bytes());
                         continue;
                     }
@@ -747,6 +754,12 @@ impl TerminalRenderer {
                     let seq = key_to_terminal_sequence(key, modifiers);
 
                     if let Some(s) = seq {
+                        crate::debug_log!(
+                            "[KEYBOARD] legacy key sequence key={:?} modifiers={:?} seq={}",
+                            key,
+                            modifiers,
+                            crate::debug::format_bytes(s.as_bytes())
+                        );
                         input.extend(s.as_bytes());
                     }
 
@@ -780,6 +793,14 @@ impl TerminalRenderer {
                             egui::Key::Y => input.push(0x19), // Ctrl+Y
                             egui::Key::Z => input.push(0x1a), // Ctrl+Z (suspend)
                             _ => {}
+                        }
+
+                        if let Some(last) = input.last().copied() {
+                            crate::debug_log!(
+                                "[KEYBOARD] ctrl key fallback key={:?} emitted={}",
+                                key,
+                                crate::debug::format_bytes(&[last])
+                            );
                         }
                     }
                 }

@@ -403,6 +403,11 @@ impl TerminalState {
     }
 
     pub fn process_input(&mut self, input: &[u8]) {
+        crate::debug_log!(
+            "[TERMINAL] process_input {} bytes {}",
+            input.len(),
+            crate::debug::format_bytes(input)
+        );
         let mut data = Vec::with_capacity(self.pending_escape.len() + input.len());
         if !self.pending_escape.is_empty() {
             data.extend_from_slice(&self.pending_escape);
@@ -915,21 +920,50 @@ impl TerminalState {
                             self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
                         }
                         Some(b'?') => {
+                            crate::debug_log!(
+                                "[KEYBOARD_PROTO] query current kitty flags -> {}",
+                                self.keyboard_enhancement_flags
+                            );
                             let response = format!("\x1b[?{}u", self.keyboard_enhancement_flags);
                             self.output_buffer.extend_from_slice(response.as_bytes());
                         }
                         Some(b'=') => {
                             let flags = params.first().copied().unwrap_or(0);
                             let mode = params.get(1).copied().unwrap_or(1);
+                            crate::debug_log!(
+                                "[KEYBOARD_PROTO] set kitty flags flags={} mode={} previous={}",
+                                flags,
+                                mode,
+                                self.keyboard_enhancement_flags
+                            );
                             self.set_keyboard_enhancement_flags(flags, mode);
+                            crate::debug_log!(
+                                "[KEYBOARD_PROTO] new kitty flags={}",
+                                self.keyboard_enhancement_flags
+                            );
                         }
                         Some(b'>') => {
                             let flags = params.first().copied().unwrap_or(0);
+                            crate::debug_log!(
+                                "[KEYBOARD_PROTO] push kitty flags current={} new={}",
+                                self.keyboard_enhancement_flags,
+                                flags
+                            );
                             self.push_keyboard_enhancement_flags(flags);
                         }
                         Some(b'<') => {
                             let count = params.first().copied().unwrap_or(1) as usize;
+                            crate::debug_log!(
+                                "[KEYBOARD_PROTO] pop kitty flags count={} current={} stack_depth={}",
+                                count,
+                                self.keyboard_enhancement_flags,
+                                self.keyboard_enhancement_stack.len()
+                            );
                             self.pop_keyboard_enhancement_flags(count);
+                            crate::debug_log!(
+                                "[KEYBOARD_PROTO] new kitty flags={}",
+                                self.keyboard_enhancement_flags
+                            );
                         }
                         _ => {}
                     }
@@ -992,9 +1026,11 @@ impl TerminalState {
                 if intermediates.is_empty() {
                     match private_prefix {
                         None => {
+                            crate::debug_log!("[DA] primary device attributes request");
                             self.output_buffer.extend_from_slice(b"\x1b[?1;2c");
                         }
                         Some(b'>') => {
+                            crate::debug_log!("[DA] secondary device attributes request");
                             self.output_buffer.extend_from_slice(b"\x1b[>0;10;0c");
                         }
                         _ => {}

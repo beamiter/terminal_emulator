@@ -111,6 +111,11 @@ impl ShellSession {
                     match pty_guard.read(&mut buf) {
                         Ok(n) if n > 0 => {
                             let data = buf[..n].to_vec();
+                            crate::debug_log!(
+                                "[PTY->APP] {} bytes {}",
+                                data.len(),
+                                crate::debug::format_bytes(&data)
+                            );
                             if !Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Output(data)) {
                                 crate::debug_log!("[IOLoop] 接收者已断开，退出循环");
                                 return;
@@ -188,6 +193,11 @@ impl ShellSession {
             data.len(),
             preview,
             if data.len() > 20 { " ..." } else { "" }
+        );
+        crate::debug_log!(
+            "[APP->PTY] {} bytes {}",
+            data.len(),
+            crate::debug::format_bytes(data)
         );
 
         let mut pty = self.pty.lock().map_err(|_| "Failed to lock PTY for write".to_string())?;
