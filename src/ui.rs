@@ -789,13 +789,15 @@ impl TerminalRenderer {
         for event in events {
             match event {
                 egui::Event::Text(text) => {
-                    if suppress_text_events || report_all_keys {
+                    if suppress_text_events {
                         continue;
                     }
-                    // 不处理特殊按键对应的文本事件
+                    // 不处理特殊按键对应的文本事件（控制字符由 Ctrl+letter 处理）
                     if !text.is_empty() && text.as_bytes()[0] < 32 {
                         continue;
                     }
+                    // 即使在 report_all_keys 模式下，也要处理 Text 事件，因为特殊字符（_、空格、符号等）
+                    // 是通过 Text 事件传输的，而不是 Key 事件。这确保所有字符都能被输入。
                     input.extend(text.as_bytes());
                 }
                 egui::Event::Key {
