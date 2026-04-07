@@ -40,34 +40,47 @@ use session::Session;
 
 fn detect_image_mime_type(data: &[u8]) -> Option<&'static str> {
     if data.len() < 4 {
+        crate::debug_log!("[MIME] data too short: {} bytes", data.len());
         return None;
     }
 
     // PNG: 89 50 4E 47
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        crate::debug_log!("[MIME] detected PNG");
         return Some("image/png");
     }
 
     // JPEG: FF D8
     if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+        crate::debug_log!("[MIME] detected JPEG");
         return Some("image/jpeg");
     }
 
     // GIF: 47 49 46 (GIF)
     if data.len() >= 3 && &data[0..3] == b"GIF" {
+        crate::debug_log!("[MIME] detected GIF");
         return Some("image/gif");
     }
 
     // WebP: RIFF...WEBP
     if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        crate::debug_log!("[MIME] detected WebP");
         return Some("image/webp");
     }
 
     // BMP: 42 4D (BM)
     if data.len() >= 2 && data[0] == 0x42 && data[1] == 0x4D {
+        crate::debug_log!("[MIME] detected BMP");
         return Some("image/bmp");
     }
 
+    // 未识别的格式，显示前几个字节
+    let hex_preview = if data.len() >= 8 {
+        format!("{:02X} {:02X} {:02X} {:02X} ...", data[0], data[1], data[2], data[3])
+    } else {
+        format!("{}", data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "))
+    };
+    crate::debug_log!("[MIME] unknown format ({}bytes): {}", data.len(), hex_preview);
     None
 }
 
@@ -179,6 +192,59 @@ fn load_first_matching_font(
     }
 
     false
+}
+
+/// 从 PNG 数据中提取宽度和高度
+fn extract_png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    if data.len() < 24 {
+        return None;
+    }
+
+    // PNG 宽度在偏移 16-19，高度在 20-23
+    let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+    let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+
+    crate::debug_log!("[KITTY] PNG dimensions: {}x{}", width, height);
+    Some((width, height))
+}
+
+/// 生成 Kitty 图像协议数据包
+fn kitty_graphics_payload(mime_type: &str, data: &[u8]) -> Vec<u8> {
+    crate::debug_log!("[KITTY] generating payload: mime_type={}, data_size={}", mime_type, data.len());
+
+    let encoded = base64::engine::general_purpose::STANDARD_NO_PAD.encode(data);
+    crate::debug_log!("[KITTY] encoded data size (base64): {} bytes", encoded.len());
+
+    let mut output = Vec::new();
+
+    // 获取尺寸（如果是 PNG）
+    let (width, height) = if mime_type == "image/png" {
+        extract_png_dimensions(data).unwrap_or((0, 0))
+    } else {
+        (0, 0)
+    };
+
+    // Kitty 图像协议：ESC _ G id=1,s=WIDTH,v=HEIGHT,mime=image/png;BASE64_DATA ESC \
+    output.extend_from_slice(b"\x1b_G");
+
+    if width > 0 && height > 0 {
+        output.extend_from_slice(format!("s={},v={},", width, height).as_bytes());
+    }
+
+    output.extend_from_slice(b"m=1,");  // m=1: more data coming (or action)
+
+    // 添加 mime 类型（可选，但有助于解析）
+    let mime_encoded = base64::engine::general_purpose::STANDARD_NO_PAD.encode(mime_type.as_bytes());
+    output.extend_from_slice(format!("m={};", mime_encoded).as_bytes());
+
+    // 添加 base64 编码的数据
+    output.extend_from_slice(encoded.as_bytes());
+
+    // 结束符
+    output.extend_from_slice(b"\x1b\\");
+
+    crate::debug_log!("[KITTY] final packet size: {} bytes", output.len());
+    output
 }
 
 fn main() -> Result<(), eframe::Error> {
@@ -317,9 +383,19 @@ fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::
 
 fn shortcut_event_to_key_event(event: egui::Event, modifiers: egui::Modifiers) -> Option<egui::Event> {
     let key = match event {
-        egui::Event::Copy => egui::Key::C,
-        egui::Event::Cut => egui::Key::X,
-        egui::Event::Paste(_) => egui::Key::V,
+        egui::Event::Copy => {
+            crate::debug_log!("[EVENT] converting Copy to Key::C");
+            egui::Key::C
+        }
+        egui::Event::Cut => {
+            crate::debug_log!("[EVENT] converting Cut to Key::X");
+            egui::Key::X
+        }
+        egui::Event::Paste(ref content) => {
+            crate::debug_log!("[EVENT] converting Paste to Key::V (content: {} bytes, modifiers: ctrl={} shift={} alt={})",
+                             content.len(), modifiers.ctrl, modifiers.shift, modifiers.alt);
+            egui::Key::V
+        }
         _ => return None,
     };
 
@@ -338,16 +414,38 @@ fn normalize_terminal_shortcut_events(
     restore_shortcuts: bool,
     preserve_paste_event: bool,
 ) {
+    crate::debug_log!("[NORMALIZE] input: {} events, restore_shortcuts={}, preserve_paste_event={}",
+                      events.len(), restore_shortcuts, preserve_paste_event);
+
     let mut normalized_events = Vec::with_capacity(events.len());
 
     for event in events.drain(..) {
+        match &event {
+            egui::Event::Paste(_) => {
+                crate::debug_log!("[NORMALIZE] found Paste event");
+            }
+            egui::Event::Copy => {
+                crate::debug_log!("[NORMALIZE] found Copy event");
+            }
+            egui::Event::Cut => {
+                crate::debug_log!("[NORMALIZE] found Cut event");
+            }
+            egui::Event::Key { key, modifiers: key_mods, pressed, .. } => {
+                crate::debug_log!("[NORMALIZE] found Key event: {:?} pressed={} ctrl={} shift={}",
+                                 key, pressed, key_mods.ctrl, key_mods.shift);
+            }
+            _ => {}
+        }
+
         if preserve_paste_event && matches!(event, egui::Event::Paste(_)) {
+            crate::debug_log!("[NORMALIZE] preserving Paste (preserve_paste_event=true)");
             normalized_events.push(event);
             continue;
         }
 
         if restore_shortcuts {
             if let Some(key_event) = shortcut_event_to_key_event(event.clone(), modifiers) {
+                crate::debug_log!("[NORMALIZE] converted to Key event via restore_shortcuts");
                 normalized_events.push(key_event);
                 continue;
             }
@@ -356,6 +454,7 @@ fn normalize_terminal_shortcut_events(
         // 关键修复：粘贴事件即使没有 preserve_paste_event 也应该保留
         // 这样 main.rs 中的粘贴处理代码可以从剪贴板读取内容并发送
         if matches!(event, egui::Event::Paste(_)) {
+            crate::debug_log!("[NORMALIZE] preserving Paste as fallback");
             normalized_events.push(event);
             continue;
         }
@@ -365,6 +464,7 @@ fn normalize_terminal_shortcut_events(
         }
     }
 
+    crate::debug_log!("[NORMALIZE] output: {} events", normalized_events.len());
     *events = normalized_events;
 }
 
@@ -405,6 +505,29 @@ fn clipboard_5522_response_for_mime(mime_type: &str, data: &[u8]) -> Vec<u8> {
         Some(&encoded_data),
     ));
     output.extend_from_slice(&osc_5522_packet("type=read:status=DONE", None));
+    output
+}
+
+/// 生成 OSC 5522 主动粘贴数据包（type=write，用于向应用发送剪贴板内容）
+fn clipboard_5522_write_for_mime(mime_type: &str, data: &[u8]) -> Vec<u8> {
+    crate::debug_log!("[OSC5522] generating write packet: mime_type={}, data_size={}", mime_type, data.len());
+
+    let encoded_mime = base64::engine::general_purpose::STANDARD.encode(mime_type.as_bytes());
+    crate::debug_log!("[OSC5522] encoded mime (base64): {}", encoded_mime);
+
+    let encoded_data = base64::engine::general_purpose::STANDARD.encode(data);
+    crate::debug_log!("[OSC5522] encoded data size (base64): {} bytes", encoded_data.len());
+
+    let mut output = Vec::new();
+
+    // type=write 格式：主动向应用发送剪贴板内容
+    output.extend_from_slice(&osc_5522_packet(
+        &format!("type=write:mime={}", encoded_mime),
+        Some(&encoded_data),
+    ));
+
+    crate::debug_log!("[OSC5522] final packet size: {} bytes", output.len());
+
     output
 }
 
@@ -1433,16 +1556,23 @@ impl eframe::App for TerminalApp {
             let terminal = self.session_manager.get_active_session_mut().terminal.lock();
             terminal.is_paste_events_enabled()
         };
+        crate::debug_log!("[RAW_INPUT_HOOK] events before normalize: {}, preserve_paste_event={}",
+                         raw_input.events.len(), preserve_paste_event);
+
         // egui-winit turns Ctrl/Cmd+C/X/V into semantic clipboard events and skips the
         // corresponding Key press. Restore those as Key events so the terminal can receive
         // control bytes, while still preventing egui's default text-edit shortcut behavior.
         let restore_shortcuts = should_restore_terminal_shortcut_event(ctx, raw_input.modifiers);
+        crate::debug_log!("[RAW_INPUT_HOOK] restore_shortcuts={}", restore_shortcuts);
+
         normalize_terminal_shortcut_events(
             &mut raw_input.events,
             raw_input.modifiers,
             restore_shortcuts,
             preserve_paste_event,
         );
+
+        crate::debug_log!("[RAW_INPUT_HOOK] events after normalize: {}", raw_input.events.len());
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1739,19 +1869,34 @@ impl eframe::App for TerminalApp {
         let mut saw_ctrl_shift_v = false;
         let mut saw_semantic_paste = false;
 
+        if !all_events.is_empty() {
+            crate::debug_log!("[EVENT] total events this frame: {}", all_events.len());
+        }
+
         for evt in &all_events {
             match evt {
                 egui::Event::Key { key, modifiers, pressed, .. } => {
+                    // 检查 Ctrl+Shift+C/V（按下事件）
                     if *pressed {
                         if *key == egui::Key::C && modifiers.ctrl && modifiers.shift {
+                            crate::debug_log!("[EVENT] detected Ctrl+Shift+C (pressed=true)");
                             saw_ctrl_shift_c = true;
                         }
                         if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
+                            crate::debug_log!("[EVENT] detected Ctrl+Shift+V (pressed=true)");
                             saw_ctrl_shift_v = true;
                         }
                     }
+
+                    // 也检查 Ctrl+V（按键释放事件）- 这是 macOS 和某些 Linux 系统的行为
+                    // Ctrl+V 由于被转换为 Paste 事件，可能只发送释放事件
+                    if !*pressed && *key == egui::Key::V && modifiers.ctrl && !modifiers.shift {
+                        crate::debug_log!("[EVENT] detected Ctrl+V (pressed=false, release event)");
+                        saw_ctrl_shift_v = true;  // 使用同一个标志来触发粘贴
+                    }
                 }
-                egui::Event::Paste(_) => {
+                egui::Event::Paste(content) => {
+                    crate::debug_log!("[EVENT] detected Paste event: {:?}", if content.is_empty() { "empty" } else { "has content" });
                     saw_semantic_paste = true;
                 }
                 _ => {}
@@ -1769,67 +1914,145 @@ impl eframe::App for TerminalApp {
         }
 
         if saw_ctrl_shift_v {
-            let bracketed_paste = {
-                let terminal = session.terminal.lock();
-                terminal.is_bracketed_paste_enabled()
-            };
-
+            crate::debug_log!("[PASTE] ===== Ctrl+Shift+V triggered =====");
             if let Some(clipboard) = &self.clipboard {
+                crate::debug_log!("[PASTE] clipboard available");
                 if let Ok(content) = clipboard.paste_contents() {
-                    let bytes = clipboard_content_to_terminal_bytes(content);
-                    if !bytes.is_empty() {
-                        let paste_bytes = if bracketed_paste {
-                            wrap_bracketed_paste(bytes)
-                        } else {
-                            bytes
-                        };
-                        let _ = session.shell.write(&paste_bytes);
-                        consumed_keys.insert("Ctrl+Shift+V".to_string());
+                    match content {
+                        ClipboardContent::Text(text) => {
+                            crate::debug_log!("[PASTE] content type: TEXT ({} chars)", text.len());
+                            // 文本内容：按原来的方式处理（支持括号粘贴）
+                            let bytes = text.replace("\r\n", "\n").into_bytes();
+                            if !bytes.is_empty() {
+                                let bracketed_paste = {
+                                    let terminal = session.terminal.lock();
+                                    terminal.is_bracketed_paste_enabled()
+                                };
+
+                                crate::debug_log!("[PASTE] sending {} bytes (bracketed={})", bytes.len(), bracketed_paste);
+                                let paste_bytes = if bracketed_paste {
+                                    wrap_bracketed_paste(bytes)
+                                } else {
+                                    bytes
+                                };
+                                let _ = session.shell.write(&paste_bytes);
+                                consumed_keys.insert("Ctrl+Shift+V".to_string());
+                            } else {
+                                crate::debug_log!("[PASTE] text content is empty");
+                            }
+                        }
+                        ClipboardContent::Binary(bytes) => {
+                            crate::debug_log!("[PASTE] content type: BINARY ({} bytes)", bytes.len());
+                            // 二进制内容（如图像）：使用 Kitty 图像协议
+                            if !bytes.is_empty() {
+                                crate::debug_log!("[PASTE] detecting MIME type for {} bytes...", bytes.len());
+                                if let Some(mime_type) = detect_image_mime_type(&bytes) {
+                                    crate::debug_log!("[PASTE] MIME type detected: {}", mime_type);
+                                    let paste_packet = kitty_graphics_payload(mime_type, &bytes);
+                                    crate::debug_log!("[KITTY] Ctrl+Shift+V pasting {} bytes with mime_type={}, packet_size={}",
+                                                    bytes.len(), mime_type, paste_packet.len());
+                                    let write_result = session.shell.write(&paste_packet);
+                                    crate::debug_log!("[KITTY] write result: {:?}", write_result);
+                                    consumed_keys.insert("Ctrl+Shift+V".to_string());
+                                } else {
+                                    crate::debug_log!("[PASTE] MIME type NOT detected, ignoring binary data");
+                                }
+                            } else {
+                                crate::debug_log!("[PASTE] binary content is empty");
+                            }
+                        }
                     }
+                } else {
+                    crate::debug_log!("[PASTE] failed to get clipboard content");
                 }
+            } else {
+                crate::debug_log!("[PASTE] clipboard not available");
             }
+            crate::debug_log!("[PASTE] ===== Ctrl+Shift+V finished =====");
         }
 
         if saw_semantic_paste {
+            crate::debug_log!("[PASTE] ===== Semantic Paste triggered =====");
             let unsolicited_paste = if let Some(clipboard) = &self.clipboard {
                 let mime_types = clipboard.available_mime_types().unwrap_or_default();
+                crate::debug_log!("[PASTE] available MIME types: {:?}", mime_types);
                 let mut terminal = session.terminal.lock();
-                if terminal.is_paste_events_enabled() {
+                let paste_events_enabled = terminal.is_paste_events_enabled();
+                crate::debug_log!("[PASTE] terminal paste_events_enabled (mode 5522): {}", paste_events_enabled);
+                if paste_events_enabled {
                     // 应用支持粘贴事件协议，发送 MIME 类型列表，让应用请求
+                    crate::debug_log!("[PASTE] app supports paste events, building paste event");
                     Some(terminal.build_paste_event(&mime_types))
                 } else {
+                    crate::debug_log!("[PASTE] app does NOT support paste events");
                     None
                 }
             } else {
+                crate::debug_log!("[PASTE] clipboard not available");
                 None
             };
 
             if let Some(bytes) = unsolicited_paste {
-                crate::debug_log!("[OSC5522] sending unsolicited paste MIME list");
+                crate::debug_log!("[OSC5522] sending unsolicited paste MIME list ({} bytes)", bytes.len());
                 let _ = session.shell.write(&bytes);
                 consumed_keys.insert("PasteEvent".to_string());
             } else {
-                // 应用不支持粘贴事件协议，从剪贴板读取内容并直接发送
+                // 应用不支持粘贴事件协议，需要特殊处理不同类型的内容
+                crate::debug_log!("[PASTE] fallback: app doesn't support paste events, handling content directly");
                 if let Some(clipboard) = &self.clipboard {
-                    let bracketed_paste = {
-                        let terminal = session.terminal.lock();
-                        terminal.is_bracketed_paste_enabled()
-                    };
-
                     if let Ok(content) = clipboard.paste_contents() {
-                        let bytes = clipboard_content_to_terminal_bytes(content);
-                        if !bytes.is_empty() {
-                            let paste_bytes = if bracketed_paste {
-                                wrap_bracketed_paste(bytes)
-                            } else {
-                                bytes
-                            };
-                            let _ = session.shell.write(&paste_bytes);
-                            consumed_keys.insert("PasteEvent".to_string());
+                        match content {
+                            ClipboardContent::Text(text) => {
+                                crate::debug_log!("[PASTE] fallback: TEXT content ({} chars)", text.len());
+                                // 文本内容：按原来的方式处理（支持括号粘贴）
+                                let bytes = text.replace("\r\n", "\n").into_bytes();
+                                if !bytes.is_empty() {
+                                    let bracketed_paste = {
+                                        let terminal = session.terminal.lock();
+                                        terminal.is_bracketed_paste_enabled()
+                                    };
+
+                                    crate::debug_log!("[PASTE] fallback: sending text {} bytes (bracketed={})", bytes.len(), bracketed_paste);
+                                    let paste_bytes = if bracketed_paste {
+                                        wrap_bracketed_paste(bytes)
+                                    } else {
+                                        bytes
+                                    };
+                                    let _ = session.shell.write(&paste_bytes);
+                                    consumed_keys.insert("PasteEvent".to_string());
+                                } else {
+                                    crate::debug_log!("[PASTE] fallback: text is empty");
+                                }
+                            }
+                            ClipboardContent::Binary(bytes) => {
+                                crate::debug_log!("[PASTE] fallback: BINARY content ({} bytes)", bytes.len());
+                                // 二进制内容（如图像）：使用 Kitty 图像协议
+                                if !bytes.is_empty() {
+                                    crate::debug_log!("[PASTE] fallback: detecting MIME type...");
+                                    if let Some(mime_type) = detect_image_mime_type(&bytes) {
+                                        let paste_packet = kitty_graphics_payload(mime_type, &bytes);
+                                        crate::debug_log!("[KITTY] fallback: pasting {} bytes with mime_type={}, packet_size={}",
+                                                        bytes.len(), mime_type, paste_packet.len());
+                                        let write_result = session.shell.write(&paste_packet);
+                                        crate::debug_log!("[KITTY] fallback: write result: {:?}", write_result);
+                                        consumed_keys.insert("PasteEvent".to_string());
+                                    } else {
+                                        // 未知的二进制格式，不发送（防止破坏终端）
+                                        crate::debug_log!("[PASTE] fallback: MIME type NOT detected, ignoring binary data");
+                                    }
+                                } else {
+                                    crate::debug_log!("[PASTE] fallback: binary is empty");
+                                }
+                            }
                         }
+                    } else {
+                        crate::debug_log!("[PASTE] fallback: failed to get clipboard content");
                     }
+                } else {
+                    crate::debug_log!("[PASTE] fallback: clipboard not available");
                 }
             }
+            crate::debug_log!("[PASTE] ===== Semantic Paste finished =====");
         }
 
         // Step 4: 处理普通键盘输入
