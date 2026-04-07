@@ -1678,7 +1678,7 @@ impl eframe::App for TerminalApp {
         if scroll_delta != 0.0 && !mouse_enabled {
             let mut terminal = session.terminal.lock();
             // 根据是否按住 Shift 键来决定滚动速度
-            let scroll_multiplier = if shift_pressed { 5.0 } else { 2.0 };
+            let scroll_multiplier = if shift_pressed { 1.0 } else { 0.5 };
 
             // 根据滚轮滚动方向和速度计算滚动行数
             // scroll_delta > 0: 向上滚（显示更早的内容）

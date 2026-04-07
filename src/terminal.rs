@@ -372,22 +372,6 @@ impl TerminalState {
         }
         data.extend_from_slice(input);
 
-        // Always log first 200 bytes as hex for debugging (even in release)
-        if !data.is_empty() {
-            let preview = data.iter()
-                .take(200)
-                .map(|b| {
-                    if *b >= 32 && *b < 127 {
-                        format!("{}", *b as char)
-                    } else {
-                        format!("[{:02x}]", b)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("");
-            eprintln!("[INPUT] len={} data={}", data.len(), preview);
-        }
-
         let mut i = 0;
 
         while i < data.len() {
@@ -522,19 +506,16 @@ impl TerminalState {
                         b'>' => {
                             // ESC > - DECKPNM (Keypad Numeric Mode) or other private sequence
                             // Just skip it and any following bytes that are part of it
-                            eprintln!("[ANSI] ESC > (keypad/private mode) - ignoring");
                             i += 2;
                         }
                         b'<' => {
                             // ESC < - DECKPM (Keypad Application Mode) or other private sequence
                             // Just skip it
-                            eprintln!("[ANSI] ESC < (keypad/private mode) - ignoring");
                             i += 2;
                         }
                         b'=' => {
                             // ESC = - DECKPAM (Keypad Application Mode)
                             // Just skip it
-                            eprintln!("[ANSI] ESC = (keypad application mode) - ignoring");
                             i += 2;
                         }
                         b'(' | b')' => {
