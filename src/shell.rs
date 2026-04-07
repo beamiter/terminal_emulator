@@ -111,11 +111,6 @@ impl ShellSession {
                     match pty_guard.read(&mut buf) {
                         Ok(n) if n > 0 => {
                             let data = buf[..n].to_vec();
-                            crate::debug_log!(
-                                "[PTY->APP] {} bytes {}",
-                                data.len(),
-                                crate::debug::format_bytes(&data)
-                            );
                             if !Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Output(data)) {
                                 crate::debug_log!("[IOLoop] 接收者已断开，退出循环");
                                 return;
@@ -170,36 +165,6 @@ impl ShellSession {
 
     /// 向 shell 发送输入数据（例如用户输入）
     pub fn write(&self, data: &[u8]) -> std::result::Result<(), String> {
-        let has_sigint = data.contains(&0x03);
-        let has_ctrl_x = data.contains(&0x18);
-        let has_ctrl_v = data.contains(&0x16);
-
-        if has_sigint || has_ctrl_x || has_ctrl_v {
-            crate::debug_log!(
-                "[IOLoop-DEBUG] 特殊字节码: SIGINT={} Ctrl+X={} Ctrl+V={}",
-                has_sigint,
-                has_ctrl_x,
-                has_ctrl_v
-            );
-        }
-
-        let preview = data.iter()
-            .take(20)
-            .map(|b| format!("{:02x}", b))
-            .collect::<Vec<_>>()
-            .join(" ");
-        crate::debug_log!(
-            "[IOLoop] 输入已写入 PTY ({} 字节): [{}{}]",
-            data.len(),
-            preview,
-            if data.len() > 20 { " ..." } else { "" }
-        );
-        crate::debug_log!(
-            "[APP->PTY] {} bytes {}",
-            data.len(),
-            crate::debug::format_bytes(data)
-        );
-
         let mut pty = self.pty.lock().map_err(|_| "Failed to lock PTY for write".to_string())?;
         pty.write(data)
             .map(|_| ())

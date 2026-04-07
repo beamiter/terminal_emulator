@@ -106,6 +106,43 @@ fn kitty_text_key_code(key: egui::Key) -> Option<u32> {
     }
 }
 
+fn text_key_code(key: egui::Key, modifiers: egui::Modifiers) -> Option<u32> {
+    let codepoint = kitty_text_key_code(key)?;
+    if modifiers.shift {
+        Some(match key {
+            egui::Key::A => 'A' as u32,
+            egui::Key::B => 'B' as u32,
+            egui::Key::C => 'C' as u32,
+            egui::Key::D => 'D' as u32,
+            egui::Key::E => 'E' as u32,
+            egui::Key::F => 'F' as u32,
+            egui::Key::G => 'G' as u32,
+            egui::Key::H => 'H' as u32,
+            egui::Key::I => 'I' as u32,
+            egui::Key::J => 'J' as u32,
+            egui::Key::K => 'K' as u32,
+            egui::Key::L => 'L' as u32,
+            egui::Key::M => 'M' as u32,
+            egui::Key::N => 'N' as u32,
+            egui::Key::O => 'O' as u32,
+            egui::Key::P => 'P' as u32,
+            egui::Key::Q => 'Q' as u32,
+            egui::Key::R => 'R' as u32,
+            egui::Key::S => 'S' as u32,
+            egui::Key::T => 'T' as u32,
+            egui::Key::U => 'U' as u32,
+            egui::Key::V => 'V' as u32,
+            egui::Key::W => 'W' as u32,
+            egui::Key::X => 'X' as u32,
+            egui::Key::Y => 'Y' as u32,
+            egui::Key::Z => 'Z' as u32,
+            _ => codepoint,
+        })
+    } else {
+        Some(codepoint)
+    }
+}
+
 fn kitty_modifier_value(modifiers: egui::Modifiers) -> u8 {
     let mut bits = 0u8;
     if modifiers.shift {
@@ -137,6 +174,37 @@ fn kitty_encode_key_event(key: egui::Key, modifiers: egui::Modifiers, keyboard_f
     }
 
     Some(format!("\x1b[{};{}u", codepoint, kitty_modifier_value(modifiers)))
+}
+
+fn xterm_encode_modify_other_keys(
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+    modify_other_keys: u16,
+    format_other_keys: u16,
+    report_all_keys: bool,
+) -> Option<String> {
+    let codepoint = text_key_code(key, modifiers)?;
+    let modifier_value = kitty_modifier_value(modifiers);
+    let has_non_shift_modifier = modifiers.ctrl || modifiers.alt || (modifiers.command && !modifiers.ctrl);
+    let should_encode = if report_all_keys {
+        modifier_value > 1
+    } else {
+        match modify_other_keys {
+            0 => false,
+            1 => modifiers.alt || (modifiers.command && !modifiers.ctrl),
+            _ => has_non_shift_modifier || modifiers.shift,
+        }
+    };
+
+    if !should_encode {
+        return None;
+    }
+
+    if format_other_keys == 1 || report_all_keys {
+        Some(format!("\x1b[{};{}u", codepoint, modifier_value))
+    } else {
+        Some(format!("\x1b[27;{};{}~", modifier_value, codepoint))
+    }
 }
 
 pub struct TerminalRenderer {
@@ -706,9 +774,17 @@ impl TerminalRenderer {
         _consumed_keys: &std::collections::HashSet<&str>,
         suppress_text_events: bool,
         keyboard_enhancement_flags: u16,
+        report_all_keys_mode: bool,
+        xterm_modify_other_keys: u16,
+        xterm_format_other_keys: u16,
     ) {
         let events = ctx.input(|i| i.events.clone());
-        let report_all_keys = (keyboard_enhancement_flags & 0b1000) != 0;
+        let report_all_keys = report_all_keys_mode || (keyboard_enhancement_flags & 0b1000) != 0;
+        let effective_keyboard_flags = if report_all_keys_mode {
+            keyboard_enhancement_flags | 0b1000
+        } else {
+            keyboard_enhancement_flags
+        };
 
         for event in events {
             match event {
@@ -738,14 +814,18 @@ impl TerminalRenderer {
                         }
                     }
 
-                    if let Some(encoded) = kitty_encode_key_event(key, modifiers, keyboard_enhancement_flags) {
-                        crate::debug_log!(
-                            "[KEYBOARD] kitty key event key={:?} modifiers={:?} flags={} encoded={}",
-                            key,
-                            modifiers,
-                            keyboard_enhancement_flags,
-                            encoded
-                        );
+                    if let Some(encoded) = kitty_encode_key_event(key, modifiers, effective_keyboard_flags) {
+                        input.extend(encoded.as_bytes());
+                        continue;
+                    }
+
+                    if let Some(encoded) = xterm_encode_modify_other_keys(
+                        key,
+                        modifiers,
+                        xterm_modify_other_keys,
+                        xterm_format_other_keys,
+                        report_all_keys_mode,
+                    ) {
                         input.extend(encoded.as_bytes());
                         continue;
                     }
@@ -754,17 +834,11 @@ impl TerminalRenderer {
                     let seq = key_to_terminal_sequence(key, modifiers);
 
                     if let Some(s) = seq {
-                        crate::debug_log!(
-                            "[KEYBOARD] legacy key sequence key={:?} modifiers={:?} seq={}",
-                            key,
-                            modifiers,
-                            crate::debug::format_bytes(s.as_bytes())
-                        );
                         input.extend(s.as_bytes());
                     }
 
                     // Handle Ctrl+letter combinations (send control characters)
-                    if modifiers.ctrl && !modifiers.shift && !modifiers.alt {
+                    if modifiers.ctrl && !modifiers.shift && !modifiers.alt && !report_all_keys {
                         match key {
                             egui::Key::A => input.push(0x01), // Ctrl+A
                             egui::Key::B => input.push(0x02), // Ctrl+B (backward page in vim)
@@ -795,13 +869,6 @@ impl TerminalRenderer {
                             _ => {}
                         }
 
-                        if let Some(last) = input.last().copied() {
-                            crate::debug_log!(
-                                "[KEYBOARD] ctrl key fallback key={:?} emitted={}",
-                                key,
-                                crate::debug::format_bytes(&[last])
-                            );
-                        }
                     }
                 }
                 _ => {}

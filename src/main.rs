@@ -1267,11 +1267,6 @@ impl eframe::App for TerminalApp {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        crate::debug_log!(
-            "[RAW_INPUT] before normalize modifiers={:?} events={:?}",
-            raw_input.modifiers,
-            raw_input.events
-        );
         let preserve_paste_event = {
             let terminal = self.session_manager.get_active_session_mut().terminal.lock();
             terminal.is_paste_events_enabled()
@@ -1285,12 +1280,6 @@ impl eframe::App for TerminalApp {
             raw_input.modifiers,
             restore_shortcuts,
             preserve_paste_event,
-        );
-        crate::debug_log!(
-            "[RAW_INPUT] after normalize restore_shortcuts={} preserve_paste_event={} events={:?}",
-            restore_shortcuts,
-            preserve_paste_event,
-            raw_input.events
         );
     }
 
@@ -1662,9 +1651,14 @@ impl eframe::App for TerminalApp {
         // 当搜索面板打开时，不处理普通键盘输入（搜索面板会处理输入）
         let mut keyboard_input = Vec::new();
         if !self.search_state.is_open {
-            let keyboard_enhancement_flags = {
+            let (keyboard_enhancement_flags, report_all_keys_mode, xterm_modify_other_keys, xterm_format_other_keys) = {
                 let terminal = session.terminal.lock();
-                terminal.keyboard_enhancement_flags()
+                (
+                    terminal.keyboard_enhancement_flags(),
+                    terminal.is_report_all_keys_enabled(),
+                    terminal.xterm_modify_other_keys(),
+                    terminal.xterm_format_other_keys(),
+                )
             };
             // 转换 consumed_keys 为需要的格式（HashSet<&str>）
             let consumed_keys_refs: std::collections::HashSet<&str> = consumed_keys
@@ -1678,6 +1672,9 @@ impl eframe::App for TerminalApp {
                     &consumed_keys_refs,
                     saw_ime_event,
                     keyboard_enhancement_flags,
+                    report_all_keys_mode,
+                    xterm_modify_other_keys,
+                    xterm_format_other_keys,
                 );
         }
 

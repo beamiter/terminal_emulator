@@ -4,6 +4,7 @@ use unicode_width::UnicodeWidthChar;
 
 const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
 const SECONDARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[>1;7802;0c";
+const XTERM_VERSION_RESPONSE: &[u8] = b"\x1bP>|VTE(7802)\x1b\\";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Color {
@@ -142,6 +143,8 @@ pub struct TerminalState {
     keyboard_enhancement_stack: Vec<u16>,
     alt_keyboard_enhancement_flags: u16,
     alt_keyboard_enhancement_stack: Vec<u16>,
+    xterm_modify_other_keys: u16,
+    xterm_format_other_keys: u16,
     pending_clipboard_requests: Vec<ClipboardReadRequest>,
     pending_paste_password: Option<String>,
 }
@@ -217,6 +220,8 @@ impl TerminalState {
             keyboard_enhancement_stack: Vec::new(),
             alt_keyboard_enhancement_flags: 0,
             alt_keyboard_enhancement_stack: Vec::new(),
+            xterm_modify_other_keys: 0,
+            xterm_format_other_keys: 0,
             pending_clipboard_requests: Vec::new(),
             pending_paste_password: None,
         }
@@ -316,12 +321,6 @@ impl TerminalState {
         if width == 0 {
             return; // Skip zero-width characters for now
         }
-
-        if ch == '0' || ch == 'q' || orig_ch == '0' || orig_ch == 'q' {
-            crate::debug_log!("[PUT_CHAR-DEBUG] orig='{}' translated='{}' active_charset={:?} at ({},{})",
-                orig_ch, ch, self.active_charset, self.cursor_row, self.cursor_col);
-        }
-        crate::debug_log!("[PUT_CHAR] '{}' at ({},{}) width={}", ch, self.cursor_row, self.cursor_col, width);
 
         let cols = self.grid[self.cursor_row].len();
         let blank_cell = self.create_blank_cell();
@@ -480,11 +479,6 @@ impl TerminalState {
     }
 
     pub fn process_input(&mut self, input: &[u8]) {
-        crate::debug_log!(
-            "[TERMINAL] process_input {} bytes {}",
-            input.len(),
-            crate::debug::format_bytes(input)
-        );
         let mut data = Vec::with_capacity(self.pending_escape.len() + input.len());
         if !self.pending_escape.is_empty() {
             data.extend_from_slice(&self.pending_escape);
@@ -508,14 +502,11 @@ impl TerminalState {
                 }
                 b'\n' => {
                     // Linefeed - move cursor down or scroll
-                    crate::debug_log!("[LF] Linefeed at row {}, region {}-{}", self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
-
                     if self.cursor_row < self.scroll_region_bottom {
                         // Cursor is not at bottom of scroll region, just move down
                         self.cursor_row += 1;
                     } else {
                         // Cursor is at bottom of scroll region, scroll the region
-                        crate::debug_log!("[LF] At bottom of region, scrolling...");
                         self.scroll_region_up(self.scroll_region_top, self.scroll_region_bottom);
                         // Cursor stays at bottom row of the scroll region
                     }
@@ -556,14 +547,12 @@ impl TerminalState {
                     match data[i + 1] {
                         b'7' => {
                             // DECSC - Save Cursor Position
-                            crate::debug_log!("[ANSI-DECSC] Save cursor position: ({},{})", self.cursor_row, self.cursor_col);
                             self.saved_cursor_row = self.cursor_row;
                             self.saved_cursor_col = self.cursor_col;
                             i += 2;
                         }
                         b'8' => {
                             // DECRC - Restore Cursor Position
-                            crate::debug_log!("[ANSI-DECRC] Restore cursor position from ({},{})", self.saved_cursor_row, self.saved_cursor_col);
                             self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
                             self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
                             i += 2;
@@ -673,13 +662,11 @@ impl TerminalState {
                             i += 3;
                         }
                         b'M' => {
-                            crate::debug_log!("[ANSI-RI] Reverse Index");
                             i += 2;
 
                             if self.cursor_row > self.scroll_region_top {
                                 self.cursor_row -= 1;
                             } else {
-                                crate::debug_log!("[ANSI-RI] At top of region, scrolling down...");
                                 if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
                                     let cols = self.grid[self.scroll_region_top].len();
                                     let mut new_lines = vec![self.blank_line(cols)];
@@ -699,13 +686,11 @@ impl TerminalState {
                             }
                         }
                         b'D' => {
-                            crate::debug_log!("[ANSI-IND] Index");
                             i += 2;
 
                             if self.cursor_row < self.scroll_region_bottom {
                                 self.cursor_row += 1;
                             } else {
-                                crate::debug_log!("[ANSI-IND] At bottom of region, scrolling up...");
                                 self.scroll_region_up(self.scroll_region_top, self.scroll_region_bottom);
                             }
                         }
@@ -743,16 +728,6 @@ impl TerminalState {
                             };
                             let params = Self::parse_csi_params(&param_bytes);
                             let cmd = final_byte as char;
-
-                            if let Some(prefix) = private_prefix {
-                                crate::debug_log!(
-                                    "[ANSI-RAW] CSI {} cmd={} intermediates={:?} params={:?}",
-                                    prefix as char,
-                                    cmd,
-                                    intermediates,
-                                    params
-                                );
-                            }
 
                             self.handle_escape_sequence(&params, cmd, private_prefix, &intermediates);
                             i += 1;
@@ -820,19 +795,10 @@ impl TerminalState {
         private_prefix: Option<u8>,
         intermediates: &[u8],
     ) {
-        // Debug logging for vim commands
-        let params_str = params.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(";");
-        crate::debug_log!("[ANSI] CSI {}{}{}  (cursor: {},{}, use_alt: {})",
-            if params_str.is_empty() { "(default)".to_string() } else { params_str.clone() },
-            if !params.is_empty() { ":" } else { "" },
-            cmd,
-            self.cursor_row, self.cursor_col, self.use_alt_buffer);
-
         match cmd {
             'A' => {
                 // Cursor up - should scroll region down if at top
                 let n = params.first().copied().unwrap_or(1) as usize;
-                crate::debug_log!("[ANSI-A] Cursor up {} from row {} (scroll region: {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
 
                 for _ in 0..n {
                     if self.cursor_row > self.scroll_region_top {
@@ -840,7 +806,6 @@ impl TerminalState {
                         self.cursor_row -= 1;
                     } else {
                         // Cursor is at top of scroll region, scroll the region down
-                        crate::debug_log!("[ANSI-A] At top of region, scrolling down...");
                         if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
                             let cols = self.grid[self.scroll_region_top].len();
                             let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
@@ -892,11 +857,30 @@ impl TerminalState {
                 let col = params.first().copied().unwrap_or(1) as usize;
                 self.cursor_col = col.saturating_sub(1).min(self.grid[0].len() - 1);
             }
-            'H' | 'f' => {
+            'H' => {
                 let row = params.get(0).copied().unwrap_or(1) as usize;
                 let col = params.get(1).copied().unwrap_or(1) as usize;
                 self.cursor_row = row.saturating_sub(1).min(self.grid.len() - 1);
                 self.cursor_col = col.saturating_sub(1).min(self.grid[0].len() - 1);
+            }
+            'f' => {
+                if private_prefix == Some(b'>') && intermediates.is_empty() {
+                    let resource = params.first().copied().unwrap_or(0);
+                    let value = params.get(1).copied().unwrap_or(0);
+                    if resource == 4 {
+                        crate::debug_log!(
+                            "[XTFMTKEYS] formatOtherKeys={} previous={}",
+                            value,
+                            self.xterm_format_other_keys
+                        );
+                        self.xterm_format_other_keys = value;
+                    }
+                } else {
+                    let row = params.get(0).copied().unwrap_or(1) as usize;
+                    let col = params.get(1).copied().unwrap_or(1) as usize;
+                    self.cursor_row = row.saturating_sub(1).min(self.grid.len() - 1);
+                    self.cursor_col = col.saturating_sub(1).min(self.grid[0].len() - 1);
+                }
             }
             'J' => {
                 match params.first().copied().unwrap_or(0) {
@@ -955,8 +939,6 @@ impl TerminalState {
             'L' => {
                 // Insert line(s) at cursor position (push lines down)
                 let n = params.first().copied().unwrap_or(1) as usize;
-                crate::debug_log!("[ANSI-L] Insert {} line(s) at row {} (region {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
-
                 for _ in 0..n {
                     if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
                         let cols = self.grid[self.cursor_row].len();
@@ -972,8 +954,6 @@ impl TerminalState {
             'M' => {
                 // Delete line(s) at cursor position (pull lines up)
                 let n = params.first().copied().unwrap_or(1) as usize;
-                crate::debug_log!("[ANSI-M] Delete {} line(s) at row {} (region {}-{})", n, self.cursor_row, self.scroll_region_top, self.scroll_region_bottom);
-
                 for _ in 0..n {
                     if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
                         let cols = self.grid[self.cursor_row].len();
@@ -987,8 +967,21 @@ impl TerminalState {
                 }
             }
             'm' => {
-                // SGR - Select Graphic Rendition
-                self.handle_sgr(params);
+                if private_prefix == Some(b'>') && intermediates.is_empty() {
+                    let resource = params.first().copied().unwrap_or(0);
+                    let value = params.get(1).copied().unwrap_or(0);
+                    if resource == 4 {
+                        crate::debug_log!(
+                            "[XTMODKEYS] modifyOtherKeys={} previous={}",
+                            value,
+                            self.xterm_modify_other_keys
+                        );
+                        self.xterm_modify_other_keys = value;
+                    }
+                } else {
+                    // SGR - Select Graphic Rendition
+                    self.handle_sgr(params);
+                }
             }
             's' => {
                 if private_prefix.is_none() && intermediates.is_empty() {
@@ -1056,8 +1049,6 @@ impl TerminalState {
             'S' => {
                 // Scroll up (Scroll Up, SU) - content moves up, new lines appear at bottom
                 let n = params.first().copied().unwrap_or(1) as usize;
-                crate::debug_log!("[ANSI-S] Scroll up {} lines in region {}-{}", n, self.scroll_region_top, self.scroll_region_bottom);
-
                 // Scroll within the scroll region by moving lines
                 for _ in 0..n {
                     self.scroll_region_up(self.scroll_region_top, self.scroll_region_bottom);
@@ -1066,8 +1057,6 @@ impl TerminalState {
             'T' => {
                 // Scroll down (Scroll Down, SD) - content moves down, new lines appear at top
                 let n = params.first().copied().unwrap_or(1) as usize;
-                crate::debug_log!("[ANSI-T] Scroll down {} lines in region {}-{}", n, self.scroll_region_top, self.scroll_region_bottom);
-
                 // Scroll within the scroll region by moving lines
                 for _ in 0..n {
                     if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
@@ -1160,8 +1149,6 @@ impl TerminalState {
                     self.scroll_region_bottom = self.grid.len().saturating_sub(1);
                 }
 
-                crate::debug_log!("[ANSI-r] Set scroll region: {} to {}", self.scroll_region_top, self.scroll_region_bottom);
-
                 // Move cursor to home position when setting scroll region
                 self.cursor_row = 0;
                 self.cursor_col = 0;
@@ -1212,6 +1199,13 @@ impl TerminalState {
                 }
             }
             'q' => {
+                if private_prefix == Some(b'>') && intermediates.is_empty() {
+                    if params.first().copied().unwrap_or(0) == 0 {
+                        crate::debug_log!("[XTVERSION] report terminal version request");
+                        self.output_buffer.extend_from_slice(XTERM_VERSION_RESPONSE);
+                    }
+                }
+
                 // DECSCUSR - Set cursor style
                 if private_prefix.is_none() && intermediates == [b' '] {
                     let shape = params.first().copied().unwrap_or(0) as u8;
@@ -1529,6 +1523,18 @@ impl TerminalState {
 
     pub fn keyboard_enhancement_flags(&self) -> u16 {
         self.keyboard_enhancement_flags
+    }
+
+    pub fn xterm_modify_other_keys(&self) -> u16 {
+        self.xterm_modify_other_keys
+    }
+
+    pub fn xterm_format_other_keys(&self) -> u16 {
+        self.xterm_format_other_keys
+    }
+
+    pub fn is_report_all_keys_enabled(&self) -> bool {
+        self.modes.contains(&2031) || (self.keyboard_enhancement_flags & 0b1000) != 0
     }
 
     pub fn build_paste_event(&mut self, mime_types: &[String]) -> Vec<u8> {
@@ -1937,6 +1943,18 @@ mod tests {
     }
 
     #[test]
+    fn xtversion_query_is_reported() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[>0q");
+
+        assert_eq!(
+            String::from_utf8(terminal.get_output()).unwrap(),
+            "\x1bP>|VTE(7802)\x1b\\"
+        );
+    }
+
+    #[test]
     fn bracketed_paste_mode_is_tracked() {
         let mut terminal = TerminalState::new(8, 2);
 
@@ -1962,6 +1980,27 @@ mod tests {
 
         terminal.process_input(b"\x1b[<u");
         assert_eq!(terminal.keyboard_enhancement_flags(), 1);
+    }
+
+    #[test]
+    fn xtmodkeys_and_xtfmtkeys_state_is_tracked() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[>4;2m\x1b[>4;1f");
+
+        assert_eq!(terminal.xterm_modify_other_keys(), 2);
+        assert_eq!(terminal.xterm_format_other_keys(), 1);
+    }
+
+    #[test]
+    fn vte_report_all_keys_mode_is_tracked() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[?2031h");
+        assert!(terminal.is_report_all_keys_enabled());
+
+        terminal.process_input(b"\x1b[?2031l");
+        assert!(!terminal.is_report_all_keys_enabled());
     }
 
     #[test]
