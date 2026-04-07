@@ -172,6 +172,38 @@ mod unix_clipboard {
 
             Ok(ClipboardContent::Text(String::new()))
         }
+
+        pub fn available_mime_types(&self) -> Result<Vec<String>> {
+            if detect_wayland_clipboard() {
+                if let Some(types) = wl_list_types() {
+                    return Ok(types);
+                }
+            }
+
+            if let Some(types) = xclip_list_types() {
+                return Ok(types);
+            }
+
+            Ok(vec!["text/plain".to_string()])
+        }
+
+        pub fn read_mime(&self, mime_type: &str) -> Result<Vec<u8>> {
+            if detect_wayland_clipboard() {
+                if let Some(bytes) = read_wayland_type(mime_type) {
+                    return Ok(bytes);
+                }
+            }
+
+            if let Some(bytes) = read_xclip_type(mime_type) {
+                return Ok(bytes);
+            }
+
+            if TEXT_MIME_TYPES.iter().any(|candidate| candidate.eq_ignore_ascii_case(mime_type)) {
+                return Ok(self.paste()?.into_bytes());
+            }
+
+            Ok(Vec::new())
+        }
     }
 }
 
@@ -205,6 +237,14 @@ mod windows_clipboard {
 
         pub fn paste_contents(&self) -> Result<ClipboardContent> {
             Ok(ClipboardContent::Text(String::new()))
+        }
+
+        pub fn available_mime_types(&self) -> Result<Vec<String>> {
+            Ok(vec!["text/plain".to_string()])
+        }
+
+        pub fn read_mime(&self, _mime_type: &str) -> Result<Vec<u8>> {
+            Ok(Vec::new())
         }
     }
 }

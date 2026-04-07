@@ -1,5 +1,9 @@
 use std::collections::VecDeque;
+use base64::Engine;
 use unicode_width::UnicodeWidthChar;
+
+const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
+const SECONDARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[>1;7802;0c";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Color {
@@ -71,6 +75,17 @@ enum Charset {
     DecSpecialGraphics,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClipboardReadKind {
+    MimeList,
+    MimeData(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClipboardReadRequest {
+    pub kind: ClipboardReadKind,
+}
+
 pub struct TerminalState {
     pub grid: Vec<Vec<TerminalCell>>,
     alt_grid: Vec<Vec<TerminalCell>>,
@@ -127,6 +142,8 @@ pub struct TerminalState {
     keyboard_enhancement_stack: Vec<u16>,
     alt_keyboard_enhancement_flags: u16,
     alt_keyboard_enhancement_stack: Vec<u16>,
+    pending_clipboard_requests: Vec<ClipboardReadRequest>,
+    pending_paste_password: Option<String>,
 }
 
 impl TerminalState {
@@ -200,7 +217,67 @@ impl TerminalState {
             keyboard_enhancement_stack: Vec::new(),
             alt_keyboard_enhancement_flags: 0,
             alt_keyboard_enhancement_stack: Vec::new(),
+            pending_clipboard_requests: Vec::new(),
+            pending_paste_password: None,
         }
+    }
+
+    fn decode_base64(value: &str) -> Option<String> {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(value).ok()?;
+        String::from_utf8(bytes).ok()
+    }
+
+    fn osc_terminator() -> &'static [u8] {
+        b"\x1b\\"
+    }
+
+    fn append_osc_5522_status(&mut self, metadata: &str, payload: Option<&str>) {
+        self.output_buffer.extend_from_slice(b"\x1b]5522;");
+        self.output_buffer.extend_from_slice(metadata.as_bytes());
+        if let Some(payload) = payload {
+            self.output_buffer.extend_from_slice(b";");
+            self.output_buffer.extend_from_slice(payload.as_bytes());
+        }
+        self.output_buffer.extend_from_slice(Self::osc_terminator());
+    }
+
+    fn handle_osc_5522(&mut self, metadata: &str, payload: Option<&str>) {
+        crate::debug_log!("[OSC5522] metadata={} payload={:?}", metadata, payload);
+
+        let mut message_type = None;
+        let mut mime = None;
+        let mut password = None;
+
+        for part in metadata.split(':') {
+            if let Some(value) = part.strip_prefix("type=") {
+                message_type = Some(value);
+            } else if let Some(value) = part.strip_prefix("mime=") {
+                mime = Self::decode_base64(value);
+            } else if let Some(value) = part.strip_prefix("password=") {
+                password = Self::decode_base64(value);
+            } else if let Some(value) = part.strip_prefix("pw=") {
+                password = Self::decode_base64(value);
+            }
+        }
+
+        if message_type != Some("read") {
+            return;
+        }
+
+        let kind = if let Some(mime_type) = mime {
+            if let Some(expected) = &self.pending_paste_password {
+                if password.as_deref() != Some(expected.as_str()) {
+                    self.append_osc_5522_status("type=read:status=EPERM", None);
+                    return;
+                }
+            }
+            self.pending_paste_password = None;
+            ClipboardReadKind::MimeData(mime_type)
+        } else {
+            ClipboardReadKind::MimeList
+        };
+
+        self.pending_clipboard_requests.push(ClipboardReadRequest { kind });
     }
 
     fn set_keyboard_enhancement_flags(&mut self, flags: u16, mode: u16) {
@@ -523,6 +600,13 @@ impl TerminalState {
                                         if command == "0" || command == "2" {
                                             self.window_title.clear();
                                             self.window_title.push_str(value);
+                                        } else if command == "5522" {
+                                            let (metadata, osc_payload) = if let Some((metadata, osc_payload)) = value.split_once(';') {
+                                                (metadata, Some(osc_payload))
+                                            } else {
+                                                (value, None)
+                                            };
+                                            self.handle_osc_5522(metadata, osc_payload);
                                         }
                                     }
                                 }
@@ -1027,13 +1111,25 @@ impl TerminalState {
                     match private_prefix {
                         None => {
                             crate::debug_log!("[DA] primary device attributes request");
-                            self.output_buffer.extend_from_slice(b"\x1b[?1;2c");
+                            self.output_buffer
+                                .extend_from_slice(PRIMARY_DEVICE_ATTRIBUTES_RESPONSE);
                         }
                         Some(b'>') => {
                             crate::debug_log!("[DA] secondary device attributes request");
-                            self.output_buffer.extend_from_slice(b"\x1b[>0;10;0c");
+                            self.output_buffer
+                                .extend_from_slice(SECONDARY_DEVICE_ATTRIBUTES_RESPONSE);
                         }
                         _ => {}
+                    }
+                }
+            }
+            'p' => {
+                if private_prefix == Some(b'?') && intermediates == [b'$'] {
+                    if params.first().copied() == Some(5522) {
+                        let state = if self.modes.contains(&5522) { 1 } else { 2 };
+                        let response = format!("\x1b[?5522;{}$y", state);
+                        crate::debug_log!("[OSC5522] DECRQM query -> {}", response);
+                        self.output_buffer.extend_from_slice(response.as_bytes());
                     }
                 }
             }
@@ -1427,8 +1523,37 @@ impl TerminalState {
         self.modes.contains(&2004)
     }
 
+    pub fn is_paste_events_enabled(&self) -> bool {
+        self.modes.contains(&5522)
+    }
+
     pub fn keyboard_enhancement_flags(&self) -> u16 {
         self.keyboard_enhancement_flags
+    }
+
+    pub fn build_paste_event(&mut self, mime_types: &[String]) -> Vec<u8> {
+        let password = uuid::Uuid::new_v4().to_string();
+        self.pending_paste_password = Some(password.clone());
+        let encoded_password = base64::engine::general_purpose::STANDARD.encode(password.as_bytes());
+        let mut output = Vec::new();
+
+        output.extend_from_slice(b"\x1b]5522;type=read:status=OK:password=");
+        output.extend_from_slice(encoded_password.as_bytes());
+        output.extend_from_slice(Self::osc_terminator());
+
+        for mime_type in mime_types {
+            let encoded_mime = base64::engine::general_purpose::STANDARD.encode(mime_type.as_bytes());
+            output.extend_from_slice(b"\x1b]5522;type=read:status=DATA:mime=");
+            output.extend_from_slice(encoded_mime.as_bytes());
+            output.extend_from_slice(Self::osc_terminator());
+        }
+
+        output.extend_from_slice(b"\x1b]5522;type=read:status=DONE\x1b\\");
+        output
+    }
+
+    pub fn take_clipboard_read_requests(&mut self) -> Vec<ClipboardReadRequest> {
+        std::mem::take(&mut self.pending_clipboard_requests)
     }
 
     fn scroll_down(&mut self) {
@@ -1652,7 +1777,7 @@ impl TerminalState {
 
 #[cfg(test)]
 mod tests {
-    use super::{Color, TerminalState};
+    use super::{ClipboardReadKind, Color, TerminalState};
 
     #[test]
     fn resize_preserves_full_screen_scroll_region() {
@@ -1807,7 +1932,7 @@ mod tests {
 
         assert_eq!(
             String::from_utf8(terminal.get_output()).unwrap(),
-            "\x1b[?1;2c\x1b[>0;10;0c"
+            "\x1b[?65;1;9c\x1b[>1;7802;0c"
         );
     }
 
@@ -1837,5 +1962,25 @@ mod tests {
 
         terminal.process_input(b"\x1b[<u");
         assert_eq!(terminal.keyboard_enhancement_flags(), 1);
+    }
+
+    #[test]
+    fn osc_5522_read_request_is_queued() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b]5522;type=read;Lg==\x1b\\");
+
+        let requests = terminal.take_clipboard_read_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].kind, ClipboardReadKind::MimeList);
+    }
+
+    #[test]
+    fn decrqm_reports_5522_support() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[?5522$p");
+
+        assert_eq!(String::from_utf8(terminal.get_output()).unwrap(), "\x1b[?5522;2$y");
     }
 }

@@ -2,6 +2,10 @@ use anyhow::{anyhow, Result};
 use std::ffi::CString;
 use std::os::unix::io::RawFd;
 
+const TERM_PROGRAM_NAME: &str = "terminal_emulator";
+const TERM_PROGRAM_VERSION: &str = env!("CARGO_PKG_VERSION");
+const VTE_VERSION: &str = "7802";
+
 // 声明全局环境变量指针
 extern "C" {
     static environ: *const *const libc::c_char;
@@ -141,6 +145,22 @@ mod unix_pty {
                     let color_term_name = CString::new("COLORTERM").unwrap();
                     let color_term_value = CString::new("truecolor").unwrap();
                     libc::setenv(color_term_name.as_ptr(), color_term_value.as_ptr(), 1);
+
+                    let term_program_name = CString::new("TERM_PROGRAM").unwrap();
+                    let term_program_value = CString::new(TERM_PROGRAM_NAME).unwrap();
+                    libc::setenv(term_program_name.as_ptr(), term_program_value.as_ptr(), 1);
+
+                    let term_program_version_name = CString::new("TERM_PROGRAM_VERSION").unwrap();
+                    let term_program_version_value = CString::new(TERM_PROGRAM_VERSION).unwrap();
+                    libc::setenv(
+                        term_program_version_name.as_ptr(),
+                        term_program_version_value.as_ptr(),
+                        1,
+                    );
+
+                    let vte_version_name = CString::new("VTE_VERSION").unwrap();
+                    let vte_version_value = CString::new(VTE_VERSION).unwrap();
+                    libc::setenv(vte_version_name.as_ptr(), vte_version_value.as_ptr(), 1);
 
                     // 创建 C 字符串
                     let shell_cstr = match CString::new(shell_path.clone()) {

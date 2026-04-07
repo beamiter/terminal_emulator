@@ -22,6 +22,7 @@ mod ansi_advanced;
 mod windows_compat;
 mod help;
 
+use base64::Engine;
 use eframe::egui;
 use std::sync::Arc;
 use std::time::Duration;
@@ -180,10 +181,16 @@ fn normalize_terminal_shortcut_events(
     events: &mut Vec<egui::Event>,
     modifiers: egui::Modifiers,
     restore_shortcuts: bool,
+    preserve_paste_event: bool,
 ) {
     let mut normalized_events = Vec::with_capacity(events.len());
 
     for event in events.drain(..) {
+        if preserve_paste_event && matches!(event, egui::Event::Paste(_)) {
+            normalized_events.push(event);
+            continue;
+        }
+
         if restore_shortcuts {
             if let Some(key_event) = shortcut_event_to_key_event(event.clone(), modifiers) {
                 normalized_events.push(key_event);
@@ -212,6 +219,31 @@ fn wrap_bracketed_paste(mut payload: Vec<u8>) -> Vec<u8> {
     wrapped.append(&mut payload);
     wrapped.extend_from_slice(b"\x1b[201~");
     wrapped
+}
+
+fn osc_5522_packet(metadata: &str, payload: Option<&str>) -> Vec<u8> {
+    let mut packet = Vec::new();
+    packet.extend_from_slice(b"\x1b]5522;");
+    packet.extend_from_slice(metadata.as_bytes());
+    if let Some(payload) = payload {
+        packet.extend_from_slice(b";");
+        packet.extend_from_slice(payload.as_bytes());
+    }
+    packet.extend_from_slice(b"\x1b\\");
+    packet
+}
+
+fn clipboard_5522_response_for_mime(mime_type: &str, data: &[u8]) -> Vec<u8> {
+    let encoded_mime = base64::engine::general_purpose::STANDARD.encode(mime_type.as_bytes());
+    let encoded_data = base64::engine::general_purpose::STANDARD.encode(data);
+    let mut output = Vec::new();
+    output.extend_from_slice(&osc_5522_packet("type=read:status=OK", None));
+    output.extend_from_slice(&osc_5522_packet(
+        &format!("type=read:status=DATA:mime={}", encoded_mime),
+        Some(&encoded_data),
+    ));
+    output.extend_from_slice(&osc_5522_packet("type=read:status=DONE", None));
+    output
 }
 
 /// 将 egui::Key 转换为字符串表示
@@ -1240,14 +1272,24 @@ impl eframe::App for TerminalApp {
             raw_input.modifiers,
             raw_input.events
         );
+        let preserve_paste_event = {
+            let terminal = self.session_manager.get_active_session_mut().terminal.lock();
+            terminal.is_paste_events_enabled()
+        };
         // egui-winit turns Ctrl/Cmd+C/X/V into semantic clipboard events and skips the
         // corresponding Key press. Restore those as Key events so the terminal can receive
         // control bytes, while still preventing egui's default text-edit shortcut behavior.
         let restore_shortcuts = should_restore_terminal_shortcut_event(ctx, raw_input.modifiers);
-        normalize_terminal_shortcut_events(&mut raw_input.events, raw_input.modifiers, restore_shortcuts);
-        crate::debug_log!(
-            "[RAW_INPUT] after normalize restore_shortcuts={} events={:?}",
+        normalize_terminal_shortcut_events(
+            &mut raw_input.events,
+            raw_input.modifiers,
             restore_shortcuts,
+            preserve_paste_event,
+        );
+        crate::debug_log!(
+            "[RAW_INPUT] after normalize restore_shortcuts={} preserve_paste_event={} events={:?}",
+            restore_shortcuts,
+            preserve_paste_event,
             raw_input.events
         );
     }
@@ -1543,17 +1585,24 @@ impl eframe::App for TerminalApp {
 
         let mut saw_ctrl_shift_c = false;
         let mut saw_ctrl_shift_v = false;
+        let mut saw_semantic_paste = false;
 
         for evt in &all_events {
-            if let egui::Event::Key { key, modifiers, pressed, .. } = evt {
-                if *pressed {
-                    if *key == egui::Key::C && modifiers.ctrl && modifiers.shift {
-                        saw_ctrl_shift_c = true;
-                    }
-                    if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
-                        saw_ctrl_shift_v = true;
+            match evt {
+                egui::Event::Key { key, modifiers, pressed, .. } => {
+                    if *pressed {
+                        if *key == egui::Key::C && modifiers.ctrl && modifiers.shift {
+                            saw_ctrl_shift_c = true;
+                        }
+                        if *key == egui::Key::V && modifiers.ctrl && modifiers.shift {
+                            saw_ctrl_shift_v = true;
+                        }
                     }
                 }
+                egui::Event::Paste(_) => {
+                    saw_semantic_paste = true;
+                }
+                _ => {}
             }
         }
 
@@ -1586,6 +1635,26 @@ impl eframe::App for TerminalApp {
                         consumed_keys.insert("Ctrl+Shift+V".to_string());
                     }
                 }
+            }
+        }
+
+        if saw_semantic_paste {
+            let unsolicited_paste = if let Some(clipboard) = &self.clipboard {
+                let mime_types = clipboard.available_mime_types().unwrap_or_default();
+                let mut terminal = session.terminal.lock();
+                if terminal.is_paste_events_enabled() {
+                    Some(terminal.build_paste_event(&mime_types))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if let Some(bytes) = unsolicited_paste {
+                crate::debug_log!("[OSC5522] sending unsolicited paste MIME list");
+                let _ = session.shell.write(&bytes);
+                consumed_keys.insert("PasteEvent".to_string());
             }
         }
 
@@ -1654,6 +1723,36 @@ impl eframe::App for TerminalApp {
             let output = terminal.get_output();
             if !output.is_empty() {
                 let _ = session.shell.write(&output);
+            }
+            let clipboard_requests = terminal.take_clipboard_read_requests();
+            drop(terminal);
+
+            if let Some(clipboard) = &self.clipboard {
+                for request in clipboard_requests {
+                    match request.kind {
+                        terminal::ClipboardReadKind::MimeList => {
+                            let mime_types = clipboard.available_mime_types().unwrap_or_default();
+                            let mut terminal = session.terminal.lock();
+                            let response = terminal.build_paste_event(&mime_types);
+                            drop(terminal);
+                            let _ = session.shell.write(&response);
+                        }
+                        terminal::ClipboardReadKind::MimeData(mime_type) => {
+                            let data = clipboard.read_mime(&mime_type).unwrap_or_default();
+                            let response = if data.is_empty() {
+                                osc_5522_packet("type=read:status=ENOSYS", None)
+                            } else {
+                                clipboard_5522_response_for_mime(&mime_type, &data)
+                            };
+                            crate::debug_log!(
+                                "[OSC5522] responding to mime request mime={} bytes={}",
+                                mime_type,
+                                data.len()
+                            );
+                            let _ = session.shell.write(&response);
+                        }
+                    }
+                }
             }
         }
 
@@ -1953,7 +2052,7 @@ mod tests {
         };
         let mut events = vec![egui::Event::Paste("ignored clipboard payload".to_owned())];
 
-        normalize_terminal_shortcut_events(&mut events, modifiers, true);
+        normalize_terminal_shortcut_events(&mut events, modifiers, true, false);
 
         assert_eq!(
             events,
@@ -1976,8 +2075,22 @@ mod tests {
             egui::Event::Text("a".to_owned()),
         ];
 
-        normalize_terminal_shortcut_events(&mut events, modifiers, false);
+        normalize_terminal_shortcut_events(&mut events, modifiers, false, false);
 
         assert_eq!(events, vec![egui::Event::Text("a".to_owned())]);
+    }
+
+    #[test]
+    fn semantic_paste_event_is_preserved_when_requested() {
+        let modifiers = egui::Modifiers {
+            ctrl: true,
+            command: true,
+            ..Default::default()
+        };
+        let mut events = vec![egui::Event::Paste("ignored".to_owned())];
+
+        normalize_terminal_shortcut_events(&mut events, modifiers, true, true);
+
+        assert_eq!(events, vec![egui::Event::Paste("ignored".to_owned())]);
     }
 }
