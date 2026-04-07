@@ -28,19 +28,19 @@ mod unix_pty {
     }
 
     fn choose_shell() -> String {
-        // Try bash first (for better debugging)
-        if let Some(bash_path) = find_executable_in_path("bash") {
-            eprintln!("[PTY] Using bash: {}", bash_path);
-            return bash_path;
-        }
-
-        // Try rsh
+        // Priority 1: rsh (preferred shell with advanced features)
         if let Some(rsh_path) = find_executable_in_path("rsh") {
             eprintln!("[PTY] Using rsh: {}", rsh_path);
             return rsh_path;
         }
 
-        // Last resort: sh
+        // Priority 2: bash (fallback)
+        if let Some(bash_path) = find_executable_in_path("bash") {
+            eprintln!("[PTY] Using bash: {}", bash_path);
+            return bash_path;
+        }
+
+        // Priority 3: sh (last resort)
         eprintln!("[PTY] Using sh");
         "sh".to_string()
     }

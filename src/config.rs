@@ -1,5 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::process::Command;
+
+// Nerd Font priority list
+const NERD_FONT_CANDIDATES: &[&str] = &[
+    "SauceCodePro Nerd Font",
+    "SauceCodePro Nerd Font Mono",
+    "Monokoi Nerd Font",
+    "Monokoi Nerd Font Mono",
+    "JetBrains Mono Nerd Font",
+    "JetBrains Mono NF",
+    "JetBrainsMono Nerd Font",
+    "FiraCode Nerd Font",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +31,9 @@ impl Default for ScrollbarVisibility {
 pub struct Config {
     #[serde(default = "default_font_size")]
     pub font_size: f32,
+
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
 
     #[serde(default = "default_padding")]
     pub padding: f32,
@@ -54,6 +70,40 @@ fn default_font_size() -> f32 {
     14.0
 }
 
+fn detect_available_fonts() -> Vec<String> {
+    // Try to get installed fonts using fc-list
+    if let Ok(output) = Command::new("fc-list")
+        .args(&[":", "family,style"])
+        .output()
+    {
+        if let Ok(stdout) = String::from_utf8(output.stdout) {
+            return stdout
+                .lines()
+                .filter_map(|line| {
+                    line.split(',').next().map(|s| s.trim().to_string())
+                })
+                .collect();
+        }
+    }
+    Vec::new()
+}
+
+fn default_font_family() -> String {
+    let available_fonts = detect_available_fonts();
+
+    // Try each candidate font in priority order
+    for candidate in NERD_FONT_CANDIDATES {
+        if available_fonts.iter().any(|f| f.eq_ignore_ascii_case(candidate)) {
+            eprintln!("[Config] Using font: {}", candidate);
+            return candidate.to_string();
+        }
+    }
+
+    // Fallback to first candidate if none found (system may still have it)
+    eprintln!("[Config] No Nerd Font detected, using default: {}", NERD_FONT_CANDIDATES[0]);
+    NERD_FONT_CANDIDATES[0].to_string()
+}
+
 fn default_padding() -> f32 {
     2.0
 }
@@ -86,6 +136,7 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             font_size: default_font_size(),
+            font_family: default_font_family(),
             padding: default_padding(),
             scrollbar_visibility: ScrollbarVisibility::default(),
             scrollback_lines: default_scrollback_lines(),
