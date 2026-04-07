@@ -26,6 +26,8 @@ mod image_cache;
 
 use base64::Engine;
 use eframe::egui;
+use std::collections::{HashMap, HashSet};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 use terminal::TerminalState;
@@ -69,6 +71,116 @@ fn detect_image_mime_type(data: &[u8]) -> Option<&'static str> {
     None
 }
 
+fn register_font_family(
+    fonts: &mut egui::FontDefinitions,
+    family: egui::FontFamily,
+    font_name: &str,
+    prepend: bool,
+) {
+    if let Some(entries) = fonts.families.get_mut(&family) {
+        if entries.iter().any(|entry| entry == font_name) {
+            return;
+        }
+
+        if prepend {
+            entries.insert(0, font_name.to_owned());
+        } else {
+            entries.push(font_name.to_owned());
+        }
+    }
+}
+
+fn load_font_from_path(
+    fonts: &mut egui::FontDefinitions,
+    loaded_paths: &mut HashMap<String, String>,
+    path: &str,
+    font_name: &str,
+    families: &[egui::FontFamily],
+    prepend: bool,
+) -> bool {
+    let registered_name = if let Some(existing_name) = loaded_paths.get(path) {
+        existing_name.clone()
+    } else {
+        let Ok(font_data) = std::fs::read(path) else {
+            return false;
+        };
+
+        fonts.font_data.insert(
+            font_name.to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(font_data)),
+        );
+        loaded_paths.insert(path.to_owned(), font_name.to_owned());
+        font_name.to_owned()
+    };
+
+    for family in families {
+        register_font_family(fonts, family.clone(), &registered_name, prepend);
+    }
+
+    eprintln!("[Fonts] Loaded {} from {}", registered_name, path);
+    true
+}
+
+#[cfg(target_os = "linux")]
+fn fontconfig_match_file(family: &str) -> Option<String> {
+    let output = Command::new("fc-match")
+        .args(["-f", "%{file}\n", family])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    String::from_utf8(output.stdout)
+        .ok()?
+        .lines()
+        .map(str::trim)
+        .find(|path| !path.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fontconfig_match_file(_family: &str) -> Option<String> {
+    None
+}
+
+fn load_first_matching_font(
+    fonts: &mut egui::FontDefinitions,
+    loaded_paths: &mut HashMap<String, String>,
+    family_candidates: &[&str],
+    path_candidates: &[&str],
+    font_name: &str,
+    families: &[egui::FontFamily],
+    prepend: bool,
+) -> bool {
+    let mut seen_paths = HashSet::new();
+    let mut resolved_paths = Vec::new();
+
+    for family in family_candidates {
+        if let Some(path) = fontconfig_match_file(family) {
+            if seen_paths.insert(path.clone()) {
+                resolved_paths.push(path);
+            }
+        }
+    }
+
+    for path in path_candidates {
+        let path = (*path).to_owned();
+        if seen_paths.insert(path.clone()) {
+            resolved_paths.push(path);
+        }
+    }
+
+    for path in resolved_paths {
+        if load_font_from_path(fonts, loaded_paths, &path, font_name, families, prepend) {
+            return true;
+        }
+    }
+
+    false
+}
+
 fn main() -> Result<(), eframe::Error> {
     // Load configuration
     let cfg = config::Config::load();
@@ -87,55 +199,63 @@ fn main() -> Result<(), eframe::Error> {
         Box::new(move |cc| {
             let cfg_clone = cfg.clone();
             let mut fonts = egui::FontDefinitions::default();
+            let mut loaded_font_paths = HashMap::new();
 
-            // Try to load system monospace fonts with full Unicode support
-            let mono_font_paths = [
-                "/usr/share/fonts/opentype/noto/NotoMono-Regular.ttf",
-                "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-                "/usr/share/fonts/opentype/dejavu/DejaVuSansMono.otf",
-                "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-            ];
+            let configured_mono_family = cfg_clone.get_font_family();
+            let mono_loaded = load_first_matching_font(
+                &mut fonts,
+                &mut loaded_font_paths,
+                &[
+                    configured_mono_family,
+                    "DejaVu Sans Mono",
+                    "Liberation Mono",
+                    "Noto Sans Mono",
+                    "Noto Mono",
+                ],
+                &[
+                    "/usr/share/fonts/opentype/noto/NotoMono-Regular.ttf",
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+                    "/usr/share/fonts/opentype/dejavu/DejaVuSansMono.otf",
+                    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+                    "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Regular.ttf",
+                ],
+                "monospace_unicode",
+                &[egui::FontFamily::Monospace],
+                true,
+            );
 
-            for path in &mono_font_paths {
-                if let Ok(font_data) = std::fs::read(path) {
-                    fonts.font_data.insert(
-                        "monospace_unicode".to_owned(),
-                        std::sync::Arc::new(egui::FontData::from_owned(font_data)),
-                    );
-                    // Add to monospace family first (higher priority)
-                    fonts.families
-                        .get_mut(&egui::FontFamily::Monospace)
-                        .unwrap()
-                        .insert(0, "monospace_unicode".to_owned());
-                    break;
-                }
+            if !mono_loaded {
+                eprintln!(
+                    "[Fonts] Warning: no monospace font file could be loaded for {}",
+                    configured_mono_family
+                );
             }
 
-            // Try to load system CJK fonts
-            let cjk_font_paths = [
-                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
-                "/usr/share/fonts/wenquanyi/wqy-zenhei.ttc",
-            ];
+            let cjk_loaded = load_first_matching_font(
+                &mut fonts,
+                &mut loaded_font_paths,
+                &[
+                    "Noto Sans CJK SC",
+                    "Noto Sans CJK",
+                    "Source Han Sans SC",
+                    "WenQuanYi Zen Hei",
+                    "AR PL UMing CN",
+                ],
+                &[
+                    "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
+                    "/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc",
+                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+                    "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+                    "/usr/share/fonts/wenquanyi/wqy-zenhei.ttc",
+                ],
+                "cjk",
+                &[egui::FontFamily::Monospace, egui::FontFamily::Proportional],
+                false,
+            );
 
-            for path in &cjk_font_paths {
-                if let Ok(font_data) = std::fs::read(path) {
-                    fonts.font_data.insert(
-                        "cjk".to_owned(),
-                        std::sync::Arc::new(egui::FontData::from_owned(font_data)),
-                    );
-                    // 添加到所有字体族，确保 TextEdit 也能显示
-                    fonts.families
-                        .get_mut(&egui::FontFamily::Monospace)
-                        .unwrap()
-                        .push("cjk".to_owned());
-                    fonts.families
-                        .get_mut(&egui::FontFamily::Proportional)
-                        .unwrap()
-                        .push("cjk".to_owned());
-                    break;
-                }
+            if !cjk_loaded {
+                eprintln!("[Fonts] Warning: no CJK fallback font file could be loaded");
             }
 
             cc.egui_ctx.set_fonts(fonts);
