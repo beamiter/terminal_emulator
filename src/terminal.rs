@@ -122,6 +122,11 @@ pub struct TerminalState {
 
     // Output buffer for DSR/CPR responses to be sent back to PTY
     pub output_buffer: Vec<u8>,
+
+    keyboard_enhancement_flags: u16,
+    keyboard_enhancement_stack: Vec<u16>,
+    alt_keyboard_enhancement_flags: u16,
+    alt_keyboard_enhancement_stack: Vec<u16>,
 }
 
 impl TerminalState {
@@ -191,6 +196,39 @@ impl TerminalState {
             scroll_region_bottom: rows.saturating_sub(1),
             modes,
             output_buffer: Vec::new(),
+            keyboard_enhancement_flags: 0,
+            keyboard_enhancement_stack: Vec::new(),
+            alt_keyboard_enhancement_flags: 0,
+            alt_keyboard_enhancement_stack: Vec::new(),
+        }
+    }
+
+    fn set_keyboard_enhancement_flags(&mut self, flags: u16, mode: u16) {
+        match mode {
+            1 => self.keyboard_enhancement_flags = flags,
+            2 => self.keyboard_enhancement_flags |= flags,
+            3 => self.keyboard_enhancement_flags &= !flags,
+            _ => {}
+        }
+    }
+
+    fn push_keyboard_enhancement_flags(&mut self, flags: u16) {
+        if self.keyboard_enhancement_stack.len() >= 32 {
+            self.keyboard_enhancement_stack.remove(0);
+        }
+        self.keyboard_enhancement_stack.push(self.keyboard_enhancement_flags);
+        self.keyboard_enhancement_flags = flags;
+    }
+
+    fn pop_keyboard_enhancement_flags(&mut self, count: usize) {
+        for _ in 0..count.max(1) {
+            match self.keyboard_enhancement_stack.pop() {
+                Some(flags) => self.keyboard_enhancement_flags = flags,
+                None => {
+                    self.keyboard_enhancement_flags = 0;
+                    break;
+                }
+            }
         }
     }
 
@@ -870,9 +908,31 @@ impl TerminalState {
                 }
             }
             'u' => {
-                if private_prefix.is_none() && intermediates.is_empty() {
-                    self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
-                    self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
+                if intermediates.is_empty() {
+                    match private_prefix {
+                        None => {
+                            self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
+                            self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
+                        }
+                        Some(b'?') => {
+                            let response = format!("\x1b[?{}u", self.keyboard_enhancement_flags);
+                            self.output_buffer.extend_from_slice(response.as_bytes());
+                        }
+                        Some(b'=') => {
+                            let flags = params.first().copied().unwrap_or(0);
+                            let mode = params.get(1).copied().unwrap_or(1);
+                            self.set_keyboard_enhancement_flags(flags, mode);
+                        }
+                        Some(b'>') => {
+                            let flags = params.first().copied().unwrap_or(0);
+                            self.push_keyboard_enhancement_flags(flags);
+                        }
+                        Some(b'<') => {
+                            let count = params.first().copied().unwrap_or(1) as usize;
+                            self.pop_keyboard_enhancement_flags(count);
+                        }
+                        _ => {}
+                    }
                 }
             }
             'S' => {
@@ -926,6 +986,19 @@ impl TerminalState {
                     // Send cursor position response back to PTY
                     let response = format!("\x1b[{};{}R", row, col);
                     self.output_buffer.extend(response.as_bytes());
+                }
+            }
+            'c' => {
+                if intermediates.is_empty() {
+                    match private_prefix {
+                        None => {
+                            self.output_buffer.extend_from_slice(b"\x1b[?1;2c");
+                        }
+                        Some(b'>') => {
+                            self.output_buffer.extend_from_slice(b"\x1b[>0;10;0c");
+                        }
+                        _ => {}
+                    }
                 }
             }
             'h' => {
@@ -1212,6 +1285,8 @@ impl TerminalState {
                     std::mem::swap(&mut self.grid, &mut self.alt_grid);
                     self.alt_cursor_row = self.cursor_row;
                     self.alt_cursor_col = self.cursor_col;
+                    std::mem::swap(&mut self.keyboard_enhancement_flags, &mut self.alt_keyboard_enhancement_flags);
+                    std::mem::swap(&mut self.keyboard_enhancement_stack, &mut self.alt_keyboard_enhancement_stack);
                     self.use_alt_buffer = true;
 
                     // Clear alt buffer and move cursor to home
@@ -1255,6 +1330,8 @@ impl TerminalState {
                     std::mem::swap(&mut self.grid, &mut self.alt_grid);
                     self.cursor_row = self.saved_cursor_row;
                     self.cursor_col = self.saved_cursor_col;
+                    std::mem::swap(&mut self.keyboard_enhancement_flags, &mut self.alt_keyboard_enhancement_flags);
+                    std::mem::swap(&mut self.keyboard_enhancement_stack, &mut self.alt_keyboard_enhancement_stack);
                     self.use_alt_buffer = false;
                     self.modes.remove(&1049);
                 }
@@ -1308,6 +1385,14 @@ impl TerminalState {
 
     pub fn is_alt_buffer_active(&self) -> bool {
         self.use_alt_buffer
+    }
+
+    pub fn is_bracketed_paste_enabled(&self) -> bool {
+        self.modes.contains(&2004)
+    }
+
+    pub fn keyboard_enhancement_flags(&self) -> u16 {
+        self.keyboard_enhancement_flags
     }
 
     fn scroll_down(&mut self) {
@@ -1676,5 +1761,45 @@ mod tests {
 
         assert_eq!(terminal.grid[0][0].character, 'X');
         assert_eq!(terminal.grid[0][1].character, ' ');
+    }
+
+    #[test]
+    fn primary_and_secondary_device_attributes_are_reported() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[c\x1b[>c");
+
+        assert_eq!(
+            String::from_utf8(terminal.get_output()).unwrap(),
+            "\x1b[?1;2c\x1b[>0;10;0c"
+        );
+    }
+
+    #[test]
+    fn bracketed_paste_mode_is_tracked() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[?2004h");
+        assert!(terminal.is_bracketed_paste_enabled());
+
+        terminal.process_input(b"\x1b[?2004l");
+        assert!(!terminal.is_bracketed_paste_enabled());
+    }
+
+    #[test]
+    fn kitty_keyboard_flags_can_be_set_queried_and_popped() {
+        let mut terminal = TerminalState::new(8, 2);
+
+        terminal.process_input(b"\x1b[=1u");
+        assert_eq!(terminal.keyboard_enhancement_flags(), 1);
+
+        terminal.process_input(b"\x1b[?u");
+        assert_eq!(String::from_utf8(terminal.get_output()).unwrap(), "\x1b[?1u");
+
+        terminal.process_input(b"\x1b[>5u");
+        assert_eq!(terminal.keyboard_enhancement_flags(), 5);
+
+        terminal.process_input(b"\x1b[<u");
+        assert_eq!(terminal.keyboard_enhancement_flags(), 1);
     }
 }

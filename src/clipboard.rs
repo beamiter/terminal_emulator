@@ -1,6 +1,91 @@
 #[cfg(unix)]
 mod unix_clipboard {
     use anyhow::Result;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    pub enum ClipboardContent {
+        Text(String),
+        Binary(Vec<u8>),
+    }
+
+    const IMAGE_MIME_TYPES: &[&str] = &[
+        "image/png",
+        "image/jpeg",
+        "image/webp",
+        "image/gif",
+        "image/bmp",
+    ];
+
+    const TEXT_MIME_TYPES: &[&str] = &[
+        "text/plain;charset=utf-8",
+        "UTF8_STRING",
+        "text/plain",
+        "STRING",
+    ];
+
+    fn command_output(program: &str, args: &[&str]) -> Option<Vec<u8>> {
+        let output = Command::new(program).args(args).output().ok()?;
+        if output.status.success() {
+            Some(output.stdout)
+        } else {
+            None
+        }
+    }
+
+    fn command_with_stdin(program: &str, args: &[&str], input: &[u8]) -> Option<()> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .spawn()
+            .ok()?;
+
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(input);
+        }
+
+        child.wait().ok().filter(|status| status.success()).map(|_| ())
+    }
+
+    fn detect_wayland_clipboard() -> bool {
+        std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("XDG_SESSION_TYPE").as_deref() == Some(std::ffi::OsStr::new("wayland"))
+    }
+
+    fn wl_list_types() -> Option<Vec<String>> {
+        let output = command_output("wl-paste", &["--list-types"])?;
+        Some(
+            String::from_utf8_lossy(&output)
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
+        )
+    }
+
+    fn xclip_list_types() -> Option<Vec<String>> {
+        let output = command_output("xclip", &["-selection", "clipboard", "-o", "-t", "TARGETS"])?;
+        Some(
+            String::from_utf8_lossy(&output)
+                .split_whitespace()
+                .map(str::trim)
+                .filter(|entry| !entry.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
+        )
+    }
+
+    fn read_wayland_type(mime_type: &str) -> Option<Vec<u8>> {
+        command_output("wl-paste", &["--no-newline", "--type", mime_type])
+    }
+
+    fn read_xclip_type(mime_type: &str) -> Option<Vec<u8>> {
+        command_output("xclip", &["-selection", "clipboard", "-o", "-t", mime_type])
+    }
+
+    fn read_text_from_bytes(bytes: Vec<u8>) -> ClipboardContent {
+        ClipboardContent::Text(String::from_utf8_lossy(&bytes).into_owned())
+    }
 
     pub struct ClipboardManager;
 
@@ -11,78 +96,81 @@ mod unix_clipboard {
 
         /// 复制文本到系统剪贴板
         pub fn copy(&self, text: &str) -> Result<()> {
-            // 使用 xclip 命令（如果可用）
-            use std::process::{Command, Stdio};
-            use std::io::Write;
-
-            match Command::new("xclip")
-                .arg("-selection")
-                .arg("clipboard")
-                .stdin(Stdio::piped())
-                .spawn()
-            {
-                Ok(mut child) => {
-                    if let Some(mut stdin) = child.stdin.take() {
-                        let _ = stdin.write_all(text.as_bytes());
-                    }
-                    let _ = child.wait();
-                    Ok(())
-                }
-                Err(_) => {
-                    // xclip 不可用，尝试 xsel
-                    match Command::new("xsel")
-                        .arg("--clipboard")
-                        .arg("--input")
-                        .stdin(Stdio::piped())
-                        .spawn()
-                    {
-                        Ok(mut child) => {
-                            if let Some(mut stdin) = child.stdin.take() {
-                                let _ = stdin.write_all(text.as_bytes());
-                            }
-                            let _ = child.wait();
-                            Ok(())
-                        }
-                        Err(_) => {
-                            // 都不可用，静默失败
-                            Ok(())
-                        }
-                    }
-                }
+            if detect_wayland_clipboard() && command_with_stdin("wl-copy", &["--type", "text/plain;charset=utf-8"], text.as_bytes()).is_some() {
+                return Ok(());
             }
+
+            if command_with_stdin("xclip", &["-selection", "clipboard"], text.as_bytes()).is_some() {
+                return Ok(());
+            }
+
+            if command_with_stdin("xsel", &["--clipboard", "--input"], text.as_bytes()).is_some() {
+                return Ok(());
+            }
+
+            Ok(())
         }
 
         /// 从系统剪贴板粘贴文本
         pub fn paste(&self) -> Result<String> {
-            use std::process::Command;
+            Ok(match self.paste_contents()? {
+                ClipboardContent::Text(text) => text,
+                ClipboardContent::Binary(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+            })
+        }
 
-            // 尝试 xclip
-            match Command::new("xclip")
-                .arg("-selection")
-                .arg("clipboard")
-                .arg("-o")
-                .output()
-            {
-                Ok(output) => {
-                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+        pub fn paste_contents(&self) -> Result<ClipboardContent> {
+            if detect_wayland_clipboard() {
+                if let Some(types) = wl_list_types() {
+                    for mime_type in IMAGE_MIME_TYPES {
+                        if types.iter().any(|entry| entry.eq_ignore_ascii_case(mime_type)) {
+                            if let Some(bytes) = read_wayland_type(mime_type).filter(|bytes| !bytes.is_empty()) {
+                                return Ok(ClipboardContent::Binary(bytes));
+                            }
+                        }
+                    }
+
+                    for mime_type in TEXT_MIME_TYPES {
+                        if types.iter().any(|entry| entry.eq_ignore_ascii_case(mime_type)) {
+                            if let Some(bytes) = read_wayland_type(mime_type) {
+                                return Ok(read_text_from_bytes(bytes));
+                            }
+                        }
+                    }
                 }
-                Err(_) => {}
+
+                if let Some(bytes) = command_output("wl-paste", &["--no-newline"]) {
+                    return Ok(read_text_from_bytes(bytes));
+                }
             }
 
-            // 尝试 xsel
-            match Command::new("xsel")
-                .arg("--clipboard")
-                .arg("--output")
-                .output()
-            {
-                Ok(output) => {
-                    return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
+            if let Some(types) = xclip_list_types() {
+                for mime_type in IMAGE_MIME_TYPES {
+                    if types.iter().any(|entry| entry.eq_ignore_ascii_case(mime_type)) {
+                        if let Some(bytes) = read_xclip_type(mime_type).filter(|bytes| !bytes.is_empty()) {
+                            return Ok(ClipboardContent::Binary(bytes));
+                        }
+                    }
                 }
-                Err(_) => {}
+
+                for mime_type in TEXT_MIME_TYPES {
+                    if types.iter().any(|entry| entry.eq_ignore_ascii_case(mime_type)) {
+                        if let Some(bytes) = read_xclip_type(mime_type) {
+                            return Ok(read_text_from_bytes(bytes));
+                        }
+                    }
+                }
             }
 
-            // 都失败了，返回空字符串
-            Ok(String::new())
+            if let Some(bytes) = command_output("xclip", &["-selection", "clipboard", "-o"]) {
+                return Ok(read_text_from_bytes(bytes));
+            }
+
+            if let Some(bytes) = command_output("xsel", &["--clipboard", "--output"]) {
+                return Ok(read_text_from_bytes(bytes));
+            }
+
+            Ok(ClipboardContent::Text(String::new()))
         }
     }
 }
@@ -90,6 +178,11 @@ mod unix_clipboard {
 #[cfg(windows)]
 mod windows_clipboard {
     use anyhow::Result;
+
+    pub enum ClipboardContent {
+        Text(String),
+        Binary(Vec<u8>),
+    }
 
     pub struct ClipboardManager;
 
@@ -109,11 +202,15 @@ mod windows_clipboard {
             // 暂时实现为占位符
             Ok(String::new())
         }
+
+        pub fn paste_contents(&self) -> Result<ClipboardContent> {
+            Ok(ClipboardContent::Text(String::new()))
+        }
     }
 }
 
 #[cfg(unix)]
-pub use unix_clipboard::ClipboardManager;
+pub use unix_clipboard::{ClipboardContent, ClipboardManager};
 
 #[cfg(windows)]
-pub use windows_clipboard::ClipboardManager;
+pub use windows_clipboard::{ClipboardContent, ClipboardManager};

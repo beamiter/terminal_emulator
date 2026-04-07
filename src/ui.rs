@@ -64,6 +64,81 @@ fn key_to_terminal_sequence(key: egui::Key, modifiers: egui::Modifiers) -> Optio
     }
 }
 
+fn kitty_text_key_code(key: egui::Key) -> Option<u32> {
+    match key {
+        egui::Key::A => Some('a' as u32),
+        egui::Key::B => Some('b' as u32),
+        egui::Key::C => Some('c' as u32),
+        egui::Key::D => Some('d' as u32),
+        egui::Key::E => Some('e' as u32),
+        egui::Key::F => Some('f' as u32),
+        egui::Key::G => Some('g' as u32),
+        egui::Key::H => Some('h' as u32),
+        egui::Key::I => Some('i' as u32),
+        egui::Key::J => Some('j' as u32),
+        egui::Key::K => Some('k' as u32),
+        egui::Key::L => Some('l' as u32),
+        egui::Key::M => Some('m' as u32),
+        egui::Key::N => Some('n' as u32),
+        egui::Key::O => Some('o' as u32),
+        egui::Key::P => Some('p' as u32),
+        egui::Key::Q => Some('q' as u32),
+        egui::Key::R => Some('r' as u32),
+        egui::Key::S => Some('s' as u32),
+        egui::Key::T => Some('t' as u32),
+        egui::Key::U => Some('u' as u32),
+        egui::Key::V => Some('v' as u32),
+        egui::Key::W => Some('w' as u32),
+        egui::Key::X => Some('x' as u32),
+        egui::Key::Y => Some('y' as u32),
+        egui::Key::Z => Some('z' as u32),
+        egui::Key::Num0 => Some('0' as u32),
+        egui::Key::Num1 => Some('1' as u32),
+        egui::Key::Num2 => Some('2' as u32),
+        egui::Key::Num3 => Some('3' as u32),
+        egui::Key::Num4 => Some('4' as u32),
+        egui::Key::Num5 => Some('5' as u32),
+        egui::Key::Num6 => Some('6' as u32),
+        egui::Key::Num7 => Some('7' as u32),
+        egui::Key::Num8 => Some('8' as u32),
+        egui::Key::Num9 => Some('9' as u32),
+        _ => None,
+    }
+}
+
+fn kitty_modifier_value(modifiers: egui::Modifiers) -> u8 {
+    let mut bits = 0u8;
+    if modifiers.shift {
+        bits |= 0b1;
+    }
+    if modifiers.alt {
+        bits |= 0b10;
+    }
+    if modifiers.ctrl {
+        bits |= 0b100;
+    }
+    if modifiers.command && !modifiers.ctrl {
+        bits |= 0b1000;
+    }
+    bits + 1
+}
+
+fn kitty_encode_key_event(key: egui::Key, modifiers: egui::Modifiers, keyboard_flags: u16) -> Option<String> {
+    let disambiguate = (keyboard_flags & 0b1) != 0;
+    let report_all_keys = (keyboard_flags & 0b1000) != 0;
+    if !disambiguate && !report_all_keys {
+        return None;
+    }
+
+    let codepoint = kitty_text_key_code(key)?;
+    let should_encode = report_all_keys || modifiers.ctrl || modifiers.alt || (modifiers.command && !modifiers.ctrl);
+    if !should_encode {
+        return None;
+    }
+
+    Some(format!("\x1b[{};{}u", codepoint, kitty_modifier_value(modifiers)))
+}
+
 pub struct TerminalRenderer {
     pub font_size: f32,
     pub char_width: f32,
@@ -497,7 +572,7 @@ impl TerminalRenderer {
                         fg_color,
                     );
 
-                    let text_x = x + (cell_width - galley.size().x).max(0.0) / 2.0;
+                    let text_x = x;
                     let text_y = y + (snapped_height - galley.size().y) / 2.0;
 
                     painter.galley(egui::pos2(text_x, text_y), galley, fg_color);
@@ -630,13 +705,15 @@ impl TerminalRenderer {
         input: &mut Vec<u8>,
         _consumed_keys: &std::collections::HashSet<&str>,
         suppress_text_events: bool,
+        keyboard_enhancement_flags: u16,
     ) {
         let events = ctx.input(|i| i.events.clone());
+        let report_all_keys = (keyboard_enhancement_flags & 0b1000) != 0;
 
         for event in events {
             match event {
                 egui::Event::Text(text) => {
-                    if suppress_text_events {
+                    if suppress_text_events || report_all_keys {
                         continue;
                     }
                     // 不处理特殊按键对应的文本事件
@@ -659,6 +736,11 @@ impl TerminalRenderer {
                             }
                             _ => {}
                         }
+                    }
+
+                    if let Some(encoded) = kitty_encode_key_event(key, modifiers, keyboard_enhancement_flags) {
+                        input.extend(encoded.as_bytes());
+                        continue;
                     }
 
                     // Handle normal key sequences

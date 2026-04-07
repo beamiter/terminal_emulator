@@ -27,7 +27,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use terminal::TerminalState;
 use ui::TerminalRenderer;
-use clipboard::ClipboardManager;
+use clipboard::{ClipboardContent, ClipboardManager};
 use parking_lot::Mutex as ParkingMutex;
 use shell::{ShellSession, ShellEvent};
 use session_manager::SessionManager;
@@ -197,6 +197,21 @@ fn normalize_terminal_shortcut_events(
     }
 
     *events = normalized_events;
+}
+
+fn clipboard_content_to_terminal_bytes(content: ClipboardContent) -> Vec<u8> {
+    match content {
+        ClipboardContent::Text(text) => text.replace("\r\n", "\n").into_bytes(),
+        ClipboardContent::Binary(bytes) => bytes,
+    }
+}
+
+fn wrap_bracketed_paste(mut payload: Vec<u8>) -> Vec<u8> {
+    let mut wrapped = Vec::with_capacity(payload.len() + 12);
+    wrapped.extend_from_slice(b"\x1b[200~");
+    wrapped.append(&mut payload);
+    wrapped.extend_from_slice(b"\x1b[201~");
+    wrapped
 }
 
 /// 将 egui::Key 转换为字符串表示
@@ -1543,10 +1558,23 @@ impl eframe::App for TerminalApp {
         }
 
         if saw_ctrl_shift_v {
+            let bracketed_paste = {
+                let terminal = session.terminal.lock();
+                terminal.is_bracketed_paste_enabled()
+            };
+
             if let Some(clipboard) = &self.clipboard {
-                if let Ok(text) = clipboard.paste() {
-                    let _ = session.shell.write(text.replace("\r\n", "\n").as_bytes());
-                    consumed_keys.insert("Ctrl+Shift+V".to_string());
+                if let Ok(content) = clipboard.paste_contents() {
+                    let bytes = clipboard_content_to_terminal_bytes(content);
+                    if !bytes.is_empty() {
+                        let paste_bytes = if bracketed_paste {
+                            wrap_bracketed_paste(bytes)
+                        } else {
+                            bytes
+                        };
+                        let _ = session.shell.write(&paste_bytes);
+                        consumed_keys.insert("Ctrl+Shift+V".to_string());
+                    }
                 }
             }
         }
@@ -1555,13 +1583,23 @@ impl eframe::App for TerminalApp {
         // 当搜索面板打开时，不处理普通键盘输入（搜索面板会处理输入）
         let mut keyboard_input = Vec::new();
         if !self.search_state.is_open {
+            let keyboard_enhancement_flags = {
+                let terminal = session.terminal.lock();
+                terminal.keyboard_enhancement_flags()
+            };
             // 转换 consumed_keys 为需要的格式（HashSet<&str>）
             let consumed_keys_refs: std::collections::HashSet<&str> = consumed_keys
                 .iter()
                 .map(|s| s.as_str())
                 .collect();
             self.renderer
-                .handle_keyboard_input(ctx, &mut keyboard_input, &consumed_keys_refs, saw_ime_event);
+                .handle_keyboard_input(
+                    ctx,
+                    &mut keyboard_input,
+                    &consumed_keys_refs,
+                    saw_ime_event,
+                    keyboard_enhancement_flags,
+                );
         }
 
         let has_keyboard_input = !keyboard_input.is_empty();
