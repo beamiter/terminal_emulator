@@ -234,7 +234,9 @@ impl TerminalRenderer {
         line_spacing: f32,
         scrollbar_visibility: crate::config::ScrollbarVisibility,
     ) -> Self {
-        let char_width = font_size * 0.62;
+        // For monospace fonts, approximate char_width is around 0.5x font_size
+        // This is an initial estimate before sync_font_metrics is called
+        let char_width = font_size * 0.5;
         let line_height = font_size * line_spacing;
 
         TerminalRenderer {
@@ -255,7 +257,19 @@ impl TerminalRenderer {
     pub fn sync_font_metrics(&mut self, ctx: &egui::Context) {
         let font_id = FontId::monospace(self.font_size);
         let (char_width, line_height) = ctx.fonts_mut(|fonts| {
-            let glyph_width = fonts.glyph_width(&font_id, 'W');
+            // Measure multiple characters to get accurate average width
+            let widths = ['M', 'W', 'i', ' ', '0', 'A']
+                .iter()
+                .map(|&c| fonts.glyph_width(&font_id, c))
+                .filter(|&w| w > 0.0)
+                .collect::<Vec<_>>();
+
+            let glyph_width = if widths.is_empty() {
+                fonts.glyph_width(&font_id, 'W')
+            } else {
+                widths.iter().sum::<f32>() / widths.len() as f32
+            };
+
             let row_height = fonts.row_height(&font_id);
             (glyph_width, row_height)
         });
