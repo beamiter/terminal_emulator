@@ -653,6 +653,20 @@ impl TerminalState {
         vec![self.create_blank_cell(); cols]
     }
 
+    fn normalize_line_width(&self, mut line: Vec<TerminalCell>, cols: usize) -> Vec<TerminalCell> {
+        match line.len().cmp(&cols) {
+            std::cmp::Ordering::Equal => line,
+            std::cmp::Ordering::Greater => {
+                line.truncate(cols);
+                line
+            }
+            std::cmp::Ordering::Less => {
+                line.resize(cols, self.create_blank_cell());
+                line
+            }
+        }
+    }
+
     fn push_scrollback_line(&mut self, line: Vec<TerminalCell>) {
         if self.use_alt_buffer {
             return;
@@ -1899,7 +1913,7 @@ impl TerminalState {
             let start_idx = self.scrollback.len().saturating_sub(self.scroll_offset);
             for i in start_idx..self.scrollback.len() {
                 if result.len() < rows {
-                    result.push(self.scrollback[i].clone());
+                    result.push(self.normalize_line_width(self.scrollback[i].clone(), cols));
                 }
             }
         }
@@ -1907,7 +1921,7 @@ impl TerminalState {
         // Fill remaining rows with current grid
         for row in self.grid.iter() {
             if result.len() < rows {
-                result.push(row.to_vec());
+                result.push(self.normalize_line_width(row.to_vec(), cols));
             } else {
                 break;
             }
@@ -2004,6 +2018,13 @@ impl TerminalState {
 
         self.grid.resize(rows, cols, blank_cell.clone());
         self.alt_grid.resize(rows, cols, blank_cell.clone());
+        for line in &mut self.scrollback {
+            if line.len() > cols {
+                line.truncate(cols);
+            } else if line.len() < cols {
+                line.resize(cols, blank_cell.clone());
+            }
+        }
 
         self.scroll_offset = 0;
         self.cursor_row = self.cursor_row.min(rows.saturating_sub(1));
@@ -2102,6 +2123,25 @@ mod tests {
         assert_eq!(terminal.scrollback[0][0].character, 'A');
         assert_eq!(terminal.grid[0][0].character, 'B');
         assert_eq!(terminal.grid[1][0].character, ' ');
+    }
+
+    #[test]
+    fn visible_cells_keep_rectangular_shape_after_resize_with_scrollback() {
+        let mut terminal = TerminalState::new(4, 2);
+        terminal.grid.get_mut(0, 0).character = 'A';
+        terminal.grid.get_mut(1, 0).character = 'B';
+        terminal.cursor_row = 1;
+
+        terminal.process_input(b"\n");
+        terminal.on_resize(5, 2);
+        terminal.scroll(1);
+
+        let visible = terminal.get_visible_cells();
+
+        assert_eq!(visible.len(), 2);
+        assert!(visible.iter().all(|row| row.len() == 5));
+        assert_eq!(visible[0][0].character, 'A');
+        assert_eq!(visible[0][4].character, ' ');
     }
 
     #[test]
