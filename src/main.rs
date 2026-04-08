@@ -1753,9 +1753,22 @@ impl eframe::App for TerminalApp {
 
         // Step 2: 处理快捷键 - 使用可配置的快捷键系统
 
-        // 命令调色板快捷键 (Ctrl+Shift+P)
+        // 命令调色板快捷键 (Ctrl+Shift+P) - toggle
         if ctx.input(|i| i.key_pressed(egui::Key::P) && i.modifiers.ctrl && i.modifiers.shift) {
-            self.command_palette.open();
+            if self.command_palette.is_open {
+                self.command_palette.close();
+            } else {
+                self.command_palette.open();
+            }
+        }
+
+        // 配置面板快捷键 (Ctrl+Shift+O) - toggle
+        if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.ctrl && i.modifiers.shift) {
+            if self.config_panel.is_open {
+                self.config_panel.close();
+            } else {
+                self.config_panel.open(&self.config);
+            }
         }
 
         // 帮助面板快捷键 (Ctrl+?)
@@ -1869,12 +1882,6 @@ impl eframe::App for TerminalApp {
                                 }
                             }
                             _ => {}
-                        }
-                    }
-                    egui::Event::Text(text) => {
-                        if !text.is_empty() && *text != "\n" && *text != "\r" {
-                            self.command_palette.search_query.push_str(text);
-                            self.command_palette.update_search_results();
                         }
                     }
                     _ => {}
