@@ -2,6 +2,13 @@ use crate::color;
 use crate::terminal::TerminalState;
 use egui::{Color32, FontId, Response, Ui, Vec2};
 
+/// Check if a character is from Nerd Font private use area
+fn is_nerd_font(ch: char) -> bool {
+    let code = ch as u32;
+    (code >= 0xE000 && code <= 0xF8FF) || // Main Nerd Font range
+    (code >= 0xF0000 && code <= 0xFFFDD) // Supplementary Private Use Area-A
+}
+
 fn resolve_foreground_color(color_value: crate::terminal::Color) -> Color32 {
     match color_value {
         crate::terminal::Color::Default => color::defaults::FOREGROUND,
@@ -713,6 +720,13 @@ impl TerminalRenderer {
                     }
                 }
 
+                // Check if previous cell is nerd font - if so, skip background for spaces
+                let skip_bg = if col_idx > 0 && cell.character == ' ' {
+                    is_nerd_font(grid[row_idx][col_idx - 1].character)
+                } else {
+                    false
+                };
+
                 let cell_width = if cell.wide {
                     let (_, next_width) = snapped_span(content_rect.left(), col_idx + 1, char_width);
                     snapped_width + next_width
@@ -724,7 +738,8 @@ impl TerminalRenderer {
                     Vec2::new(cell_width, snapped_height),
                 );
 
-                if bg_color != color::defaults::BACKGROUND {
+                // Fill background, but skip for spaces after nerd font
+                if !skip_bg {
                     painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
                 }
 
