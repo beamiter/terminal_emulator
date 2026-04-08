@@ -1806,7 +1806,7 @@ impl eframe::App for TerminalApp {
                                             self.session_manager.switch_session(new_idx);
                                             self.force_resize_session = true;
                                         }
-                                        keybindings::Command::SessionClose | keybindings::Command::TerminalSendEof => {
+                                        keybindings::Command::SessionClose => {
                                             if self.session_manager.len() > 1 {
                                                 let active_idx = self.session_manager.active_index();
                                                 self.session_manager.close_session(active_idx);
@@ -1814,6 +1814,10 @@ impl eframe::App for TerminalApp {
                                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                                 return;
                                             }
+                                        }
+                                        keybindings::Command::TerminalSendEof => {
+                                            let session = self.session_manager.get_active_session_mut();
+                                            let _ = session.shell.write(&[0x04]); // EOF (Ctrl+D)
                                         }
                                         keybindings::Command::SessionNext => {
                                             self.session_manager.switch_to_next_session();
@@ -1925,13 +1929,17 @@ impl eframe::App for TerminalApp {
                             self.session_manager.switch_session(new_idx);
                             self.force_resize_session = true;
                         }
-                        keybindings::Command::SessionClose | keybindings::Command::TerminalSendEof => {
+                        keybindings::Command::SessionClose => {
                             if self.session_manager.len() > 1 {
                                 self.session_manager.close_session(active_session_idx);
                             } else {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 return;
                             }
+                        }
+                        keybindings::Command::TerminalSendEof => {
+                            let session = self.session_manager.get_active_session_mut();
+                            let _ = session.shell.write(&[0x04]); // EOF (Ctrl+D)
                         }
                         keybindings::Command::SessionNext => {
                             self.session_manager.switch_to_next_session();
