@@ -673,6 +673,7 @@ impl TerminalApp {
         let renderer = TerminalRenderer::new(
             cfg.font_size,
             cfg.padding,
+            cfg.line_spacing,
             cfg.scrollbar_visibility.clone(),
         );
         let clipboard = ClipboardManager::new().ok();
@@ -692,6 +693,7 @@ impl TerminalApp {
             pane_renderers.push(TerminalRenderer::new(
                 cfg.font_size,
                 cfg.padding,
+                cfg.line_spacing,
                 cfg.scrollbar_visibility.clone(),
             ));
         }
@@ -1335,6 +1337,45 @@ impl TerminalApp {
 
                     // 获取链接列表用于渲染
                     let links = self.link_detector.detect_all_links(&terminal_guard.grid);
+
+                    // 在渲染终端之前读取滚轮值和 Ctrl 键状态
+                    let ctrl_pressed_render = ui.input(|i| i.modifiers.ctrl);
+
+                    // 从原始 MouseWheel 事件中提取 delta（因为 smooth_scroll_delta 被 egui 消费了）
+                    let mut scroll_delta_from_event = 0.0;
+                    if ctrl_pressed_render {
+                        let all_events = ui.input(|i| i.events.clone());
+                        for evt in &all_events {
+                            if let egui::Event::MouseWheel { delta, modifiers, .. } = evt {
+                                if modifiers.ctrl {
+                                    scroll_delta_from_event += delta.y;
+                                    eprintln!("[MOUSEWHEEL_FOUND] delta.y={:.2}, cumulative={:.2}", delta.y, scroll_delta_from_event);
+                                }
+                            }
+                        }
+                    }
+
+                    eprintln!("[RENDER_BEFORE] ctrl={}, scroll_from_event={:.2}", ctrl_pressed_render, scroll_delta_from_event);
+
+                    // Ctrl+滚轮在此处理
+                    if scroll_delta_from_event != 0.0 && ctrl_pressed_render {
+                        eprintln!("[FONT_SIZE_IN_RENDER] Ctrl+scroll 触发! delta={:.2}", scroll_delta_from_event);
+                        let font_size_delta = if scroll_delta_from_event > 0.0 { 1.0 } else { -1.0 };
+                        drop(terminal_guard); // 先释放锁
+                        let new_font_size = (self.renderer.font_size + font_size_delta).clamp(8.0, 72.0);
+                        eprintln!("[FONT_SIZE_IN_RENDER] 更新字体: {:.1} -> {:.1}", self.renderer.font_size, new_font_size);
+                        self.renderer.font_size = new_font_size;
+                        self.renderer.char_width = new_font_size * 0.62;
+                        self.renderer.line_height = new_font_size * self.renderer.line_spacing;
+                        for pane_renderer in &mut self.pane_renderers {
+                            pane_renderer.font_size = new_font_size;
+                            pane_renderer.char_width = new_font_size * 0.62;
+                            pane_renderer.line_height = new_font_size * pane_renderer.line_spacing;
+                        }
+                        // 重新获取终端
+                        terminal_guard = session.terminal.lock();
+                    }
+
                     self.renderer.render(ui, &mut terminal_guard, self.cursor_visible, &self.search_state, &links, &self.hovered_link);
                 }
             });
@@ -1576,6 +1617,7 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        eprintln!("[UPDATE_START] CURRENT scroll_delta={:.2}", ctx.input(|i| i.smooth_scroll_delta.y));
         let active_session_idx = self.session_manager.active_index();
         let session = self.session_manager.get_active_session_mut();
 
@@ -2375,6 +2417,27 @@ impl eframe::App for TerminalApp {
                         }
                     }
                 }
+            }
+        }
+
+        // 在 render_ui 之前处理 Ctrl+滚轮 - 在此处读取滚轮值防止被 UI 消费
+        let ctrl_pressed = ctx.input(|i| i.modifiers.ctrl);
+        let scroll_delta_pre_render = ctx.input(|i| i.smooth_scroll_delta.y);
+
+        if scroll_delta_pre_render != 0.0 && ctrl_pressed {
+            eprintln!("[FONT_SIZE_PRE_RENDER] Ctrl+scroll 触发! delta={:.2}", scroll_delta_pre_render);
+            let font_size_delta = if scroll_delta_pre_render > 0.0 { 1.0 } else { -1.0 };
+            let new_font_size = (self.renderer.font_size + font_size_delta).clamp(8.0, 72.0);
+            eprintln!("[FONT_SIZE_PRE_RENDER] 更新字体: {:.1} -> {:.1}", self.renderer.font_size, new_font_size);
+            self.renderer.font_size = new_font_size;
+            self.renderer.char_width = new_font_size * 0.62;
+            self.renderer.line_height = new_font_size * self.renderer.line_spacing;
+
+            // 更新所有窗格的渲染器
+            for pane_renderer in &mut self.pane_renderers {
+                pane_renderer.font_size = new_font_size;
+                pane_renderer.char_width = new_font_size * 0.62;
+                pane_renderer.line_height = new_font_size * pane_renderer.line_spacing;
             }
         }
 

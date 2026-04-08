@@ -212,6 +212,7 @@ pub struct TerminalRenderer {
     pub char_width: f32,
     pub line_height: f32,
     pub padding: f32,
+    pub line_spacing: f32,
     pub dragging_scrollbar: bool,
     pub scrollbar_visibility: crate::config::ScrollbarVisibility,
     requested_initial_focus: bool,
@@ -230,16 +231,18 @@ impl TerminalRenderer {
     pub fn new(
         font_size: f32,
         padding: f32,
+        line_spacing: f32,
         scrollbar_visibility: crate::config::ScrollbarVisibility,
     ) -> Self {
         let char_width = font_size * 0.62;
-        let line_height = font_size * 1.35;
+        let line_height = font_size * line_spacing;
 
         TerminalRenderer {
             font_size,
             char_width,
             line_height,
             padding,
+            line_spacing,
             dragging_scrollbar: false,
             scrollbar_visibility,
             requested_initial_focus: false,

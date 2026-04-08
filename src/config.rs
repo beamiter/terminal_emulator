@@ -38,6 +38,9 @@ pub struct Config {
     #[serde(default = "default_padding")]
     pub padding: f32,
 
+    #[serde(default = "default_line_spacing")]
+    pub line_spacing: f32,
+
     #[serde(default)]
     pub scrollbar_visibility: ScrollbarVisibility,
 
@@ -68,6 +71,10 @@ pub struct Config {
 
 fn default_font_size() -> f32 {
     14.0
+}
+
+fn default_line_spacing() -> f32 {
+    1.3
 }
 
 fn detect_available_fonts() -> Vec<String> {
@@ -138,6 +145,7 @@ impl Default for Config {
             font_size: default_font_size(),
             font_family: default_font_family(),
             padding: default_padding(),
+            line_spacing: default_line_spacing(),
             scrollbar_visibility: ScrollbarVisibility::default(),
             scrollback_lines: default_scrollback_lines(),
             initial_width: default_initial_width(),
