@@ -2549,14 +2549,17 @@ impl eframe::App for TerminalApp {
             }
             ctx.request_repaint();
         } else if app_wants_cursor_visible {
-            // 只在状态即将改变时请求定时重绘（不要每次都请求）
+            // 当光标应该可见且没有其他事件时，定时请求重绘以保持闪烁效果
+            // 这样可以确保即使没有用户输入，光标也能持续闪烁
             let now = std::time::Instant::now();
             let time_until_next = self.next_cursor_blink_time.saturating_duration_since(now);
 
-            // 只有剩余时间在 20-50ms 范围内时才请求重绘
-            // 这样可以避免 0ms 导致的立即重绘，也避免频繁请求
-            if time_until_next.as_millis() < 50 && time_until_next.as_millis() > 0 {
-                debug_log!("[REPAINT] request_repaint_after({}ms)",
+            if time_until_next.as_millis() == 0 {
+                // 如果时间已经到了，立即重绘
+                ctx.request_repaint();
+            } else {
+                // 定时请求重绘（心跳）
+                debug_log!("[REPAINT] schedule cursor blink in {}ms",
                     time_until_next.as_millis());
                 ctx.request_repaint_after(time_until_next);
             }
