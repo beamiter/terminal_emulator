@@ -52,6 +52,7 @@ mod unix_pty {
     pub struct Pty {
         master: RawFd,
         child_pid: i32,
+        exit_code_cached: Option<i32>,
     }
 
     impl Pty {
@@ -222,6 +223,7 @@ mod unix_pty {
                     Ok(Pty {
                         master,
                         child_pid: fork_result as i32,
+                        exit_code_cached: None,
                     })
                 }
             }
@@ -301,6 +303,11 @@ mod unix_pty {
         }
 
         pub fn is_alive(&self) -> bool {
+            // If we already have a cached exit code, the process is not alive
+            if self.exit_code_cached.is_some() {
+                return false;
+            }
+
             unsafe {
                 let mut status = 0;
                 let result = libc::waitpid(self.child_pid, &mut status, libc::WNOHANG);
@@ -309,18 +316,35 @@ mod unix_pty {
         }
 
         pub fn wait_timeout(&mut self, _timeout_ms: u64) -> Result<i32> {
+            // If we already have a cached exit code, return it directly
+            if let Some(code) = self.exit_code_cached {
+                return Ok(code);
+            }
+
             unsafe {
                 let mut status = 0;
                 let result = libc::waitpid(self.child_pid, &mut status, 0);
 
                 if result < 0 {
-                    Err(anyhow!("waitpid failed"))
-                } else if libc::WIFEXITED(status) {
-                    Ok(libc::WEXITSTATUS(status) as i32)
-                } else if libc::WIFSIGNALED(status) {
-                    Ok(-(libc::WTERMSIG(status) as i32))
+                    // If waitpid fails with ECHILD, it means the process has already been waited on
+                    // In this case, return a default exit code of 0
+                    let err = std::io::Error::last_os_error();
+                    if err.raw_os_error() == Some(libc::ECHILD) {
+                        crate::debug_log!("[PTY] waitpid returned ECHILD, process already reaped");
+                        self.exit_code_cached = Some(0);
+                        return Ok(0);
+                    }
+                    Err(anyhow!("waitpid failed: {}", err))
                 } else {
-                    Ok(-1)
+                    let exit_code = if libc::WIFEXITED(status) {
+                        libc::WEXITSTATUS(status) as i32
+                    } else if libc::WIFSIGNALED(status) {
+                        -(libc::WTERMSIG(status) as i32)
+                    } else {
+                        -1
+                    };
+                    self.exit_code_cached = Some(exit_code);
+                    Ok(exit_code)
                 }
             }
         }

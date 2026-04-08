@@ -1967,6 +1967,8 @@ impl eframe::App for TerminalApp {
 
 
         // 获取当前活跃会话（在所有快捷键处理完后）
+        let session_count_before = self.session_manager.len();
+        let mut shell_exited = false;
         let session = self.session_manager.get_active_session_mut();
 
         // Step 2.5: 搜索面板事件处理
@@ -2252,8 +2254,10 @@ impl eframe::App for TerminalApp {
                     has_new_output = true;
                 }
                 ShellEvent::Exit(code) => {
+                    crate::debug_log!("[SHELL EXIT] shell exited with code: {}", code);
                     self.status_message = format!("Shell exited with code: {}", code);
                     has_new_output = true;
+                    shell_exited = true;
                 }
                 ShellEvent::Error(e) => {
                     self.status_message = format!("Error: {}", e);
@@ -2560,6 +2564,20 @@ impl eframe::App for TerminalApp {
 
         // Debounce 保存配置
         self.flush_config_save();
+
+        // Handle shell exit: close current session
+        if shell_exited {
+            crate::debug_log!("[SHELL EXIT] handling shell exit, session_count: {}", session_count_before);
+            if session_count_before > 1 {
+                // Close the current session if there are multiple sessions
+                self.session_manager.close_session(active_session_idx);
+                crate::debug_log!("[SHELL EXIT] closed session, remaining: {}", self.session_manager.len());
+            } else {
+                // Close the window if this is the only session
+                crate::debug_log!("[SHELL EXIT] closing window");
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+        }
     }
 }
 

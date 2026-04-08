@@ -123,7 +123,9 @@ impl ShellSession {
                                 crate::debug_log!("[IOLoop] 读取失败且进程已退出，退出循环");
                                 match pty_guard.wait_timeout(0) {
                                     Ok(exit_code) => {
-                                        let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Exit(exit_code));
+                                        crate::debug_log!("[IOLoop] 发送 Exit 事件，exit_code={}", exit_code);
+                                        let result = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Exit(exit_code));
+                                        crate::debug_log!("[IOLoop] Exit 事件发送结果: {}", result);
                                     }
                                     Err(e) => {
                                         let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Error(format!("Process exit error: {}", e)));
@@ -143,7 +145,8 @@ impl ShellSession {
                         match pty_guard.wait_timeout(0) {
                             Ok(exit_code) => {
                                 crate::debug_log!("[IOLoop] 子进程退出码: {}", exit_code);
-                                let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Exit(exit_code));
+                                let result = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Exit(exit_code));
+                                crate::debug_log!("[IOLoop] Exit 事件发送结果: {}", result);
                             }
                             Err(e) => {
                                 let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Error(format!(
