@@ -21,6 +21,7 @@ mod scripting;
 mod ansi_advanced;
 mod windows_compat;
 mod help;
+mod config_panel;
 mod kitty_graphics;
 mod image_cache;
 
@@ -375,6 +376,8 @@ struct TerminalApp {
     dragging_divider: bool,
     // Help panel
     help_panel: help::HelpPanel,
+    // Config panel
+    config_panel: config_panel::ConfigPanel,
     // Config system
     config: config::Config,
     config_save_pending: bool,
@@ -600,6 +603,18 @@ fn key_to_string(key: egui::Key) -> Option<String> {
         egui::Key::Num7 => Some("7".to_string()),
         egui::Key::Num8 => Some("8".to_string()),
         egui::Key::Num9 => Some("9".to_string()),
+        egui::Key::Comma => Some(",".to_string()),
+        egui::Key::Period => Some(".".to_string()),
+        egui::Key::Plus => Some("+".to_string()),
+        egui::Key::Minus => Some("-".to_string()),
+        egui::Key::Slash => Some("/".to_string()),
+        egui::Key::Backslash => Some("\\".to_string()),
+        egui::Key::Semicolon => Some(";".to_string()),
+        egui::Key::Quote => Some("'".to_string()),
+        egui::Key::OpenBracket => Some("[".to_string()),
+        egui::Key::CloseBracket => Some("]".to_string()),
+        egui::Key::Equals => Some("=".to_string()),
+        egui::Key::Backtick => Some("`".to_string()),
         _ => None,
     }
 }
@@ -626,7 +641,9 @@ fn build_keybinding_string(key: egui::Key, modifiers: egui::Modifiers) -> Option
     }
 
     parts.push(&key_str);
-    Some(parts.join("+"))
+    let result = parts.join("+");
+    crate::debug_log!("[KEYBINDING] key={:?}, shift={}, ctrl={}, alt={} => {}", key, modifiers.shift, modifiers.ctrl, modifiers.alt, result);
+    Some(result)
 }
 
 impl TerminalApp {
@@ -728,6 +745,7 @@ impl TerminalApp {
             pane_renderers,
             dragging_divider: false,
             help_panel: help::HelpPanel::new(),
+            config_panel: config_panel::ConfigPanel::new(),
             config: cfg.clone(),
             config_save_pending: false,
             config_save_deadline: std::time::Instant::now(),
@@ -1526,6 +1544,7 @@ impl TerminalApp {
                                         command_palette::CommandCategory::Search => egui::Color32::from_rgb(255, 200, 100),
                                         command_palette::CommandCategory::Terminal => egui::Color32::from_rgb(150, 150, 255),
                                         command_palette::CommandCategory::Window => egui::Color32::from_rgb(200, 100, 200),
+                                        command_palette::CommandCategory::Config => egui::Color32::from_rgb(200, 180, 100),
                                     };
 
                                     ui.colored_label(category_color, format!("[{}]", cmd_info.category));
@@ -1594,6 +1613,45 @@ impl TerminalApp {
         let mut help_open = self.help_panel.is_open;
         self.help_panel.show(ctx, &mut help_open);
         self.help_panel.is_open = help_open;
+
+        // 配置面板 UI（浮动窗口）
+        let config_actions = self.config_panel.show(ctx);
+        for action in config_actions {
+            match action {
+                config_panel::ConfigAction::FontSizeChanged(size) => {
+                    self.config.font_size = size;
+                    self.schedule_config_save();
+                }
+                config_panel::ConfigAction::LineSpacingChanged(spacing) => {
+                    self.config.line_spacing = spacing;
+                    self.schedule_config_save();
+                }
+                config_panel::ConfigAction::FontFamilyChanged(family) => {
+                    self.config.font_family = family;
+                    self.schedule_config_save();
+                }
+                config_panel::ConfigAction::ThemeChanged(theme) => {
+                    self.config.theme = theme;
+                    self.schedule_config_save();
+                }
+                config_panel::ConfigAction::PaddingChanged(padding) => {
+                    self.config.padding = padding;
+                    self.schedule_config_save();
+                }
+                config_panel::ConfigAction::ScrollbackLinesChanged(lines) => {
+                    self.config.scrollback_lines = lines;
+                    self.schedule_config_save();
+                }
+                config_panel::ConfigAction::SaveRequested => {
+                    self.config.save().ok();
+                }
+                config_panel::ConfigAction::ResetToDefaults => {
+                    self.config = config::Config::default();
+                    self.schedule_config_save();
+                }
+                config_panel::ConfigAction::None => {}
+            }
+        }
     }
 
     // 配置保存相关方法
@@ -1798,6 +1856,12 @@ impl eframe::App for TerminalApp {
                                             // 切换到前一个窗格
                                             self.layout_manager.focus_pane(layout::PaneDirection::Prev);
                                         }
+                                        keybindings::Command::ConfigOpen => {
+                                            self.config_panel.open(&self.config);
+                                        }
+                                        keybindings::Command::ConfigClose => {
+                                            self.config_panel.close();
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -1838,7 +1902,9 @@ impl eframe::App for TerminalApp {
         // 处理每个按下的快捷键
         for (key, modifiers) in pressed_keys {
             if let Some(keybinding_str) = build_keybinding_string(key, modifiers) {
-                if let Some(command) = self.keybindings.get_command(&keybinding_str) {
+                let command = self.keybindings.get_command(&keybinding_str);
+                crate::debug_log!("[KEYBINDING] Looking up: '{}' => {:?}", keybinding_str, command);
+                if let Some(command) = command {
                     match command {
                         keybindings::Command::SearchOpen => {
                             self.search_state.toggle();
@@ -1883,6 +1949,12 @@ impl eframe::App for TerminalApp {
                             if !terminal.is_alt_buffer_active() {
                                 terminal.scroll(-3);
                             }
+                        }
+                        keybindings::Command::ConfigOpen => {
+                            self.config_panel.open(&self.config);
+                        }
+                        keybindings::Command::ConfigClose => {
+                            self.config_panel.close();
                         }
                         // 其他命令在下面处理
                         _ => {}

@@ -11,6 +11,7 @@ pub enum CommandCategory {
     Search,
     Terminal,
     Window,
+    Config,
 }
 
 impl std::fmt::Display for CommandCategory {
@@ -21,6 +22,7 @@ impl std::fmt::Display for CommandCategory {
             CommandCategory::Search => write!(f, "Search"),
             CommandCategory::Terminal => write!(f, "Terminal"),
             CommandCategory::Window => write!(f, "Window"),
+            CommandCategory::Config => write!(f, "Config"),
         }
     }
 }
@@ -182,6 +184,13 @@ impl CommandPalette {
                 CommandCategory::Window,
                 "Close the entire application",
                 crate::keybindings::Command::WindowClose,
+            ),
+            // === 配置 ===
+            CommandInfo::new(
+                "Open Settings",
+                CommandCategory::Config,
+                "Open the settings panel",
+                crate::keybindings::Command::ConfigOpen,
             ),
         ]
     }
