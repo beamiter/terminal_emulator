@@ -728,7 +728,7 @@ impl TerminalApp {
             cols,
             rows,
             last_cursor_blink: std::time::Instant::now(),
-            next_cursor_blink_time: std::time::Instant::now() + Duration::from_millis(500),
+            next_cursor_blink_time: std::time::Instant::now() + Duration::from_millis(1000),
             cursor_visible: true,
             status_message: String::new(),
             last_window_title: String::new(),
@@ -2320,11 +2320,11 @@ impl eframe::App for TerminalApp {
                     self.cursor_visible = !self.cursor_visible;
                     cursor_state_changed = true;
 
-                    debug_log!("[CURSOR] blink toggle: {}, next in 500ms",
+                    debug_log!("[CURSOR] blink toggle: {}, next in 1000ms",
                         self.cursor_visible);
 
                     // 计算下一次改变的时间
-                    self.next_cursor_blink_time = now + Duration::from_millis(500);
+                    self.next_cursor_blink_time = now + Duration::from_millis(1000);
                 }
             } else {
                 if self.cursor_visible {
