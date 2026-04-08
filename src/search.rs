@@ -251,7 +251,7 @@ pub struct SearchEngine;
 impl SearchEngine {
     /// 在网格中搜索文本
     pub fn search(
-        grid: &[Vec<crate::terminal::TerminalCell>],
+        grid: &crate::terminal::TerminalGrid,
         query: &str,
         use_regex: bool,
         case_sensitive: bool,
@@ -269,7 +269,7 @@ impl SearchEngine {
 
     /// 普通文本搜索
     fn search_plaintext(
-        grid: &[Vec<crate::terminal::TerminalCell>],
+        grid: &crate::terminal::TerminalGrid,
         query: &str,
         case_sensitive: bool,
     ) -> Vec<SearchMatch> {
@@ -306,7 +306,7 @@ impl SearchEngine {
 
     /// 正则表达式搜索
     fn search_regex(
-        grid: &[Vec<crate::terminal::TerminalCell>],
+        grid: &crate::terminal::TerminalGrid,
         pattern: &str,
         case_sensitive: bool,
     ) -> (Vec<SearchMatch>, Option<String>) {

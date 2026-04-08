@@ -668,6 +668,8 @@ impl TerminalRenderer {
 
         // Render grid in two phases: first backgrounds, then characters
         // Phase 1: Render all backgrounds
+        // NOTE: P0 dirty rectangle optimization temporarily disabled due to flickering issues
+        // TODO: Redesign dirty rectangle logic to properly handle all cases
         for row_idx in 0..rows {
             for col_idx in 0..cols {
                 let cell = &grid[row_idx][col_idx];
@@ -731,6 +733,7 @@ impl TerminalRenderer {
         }
 
         // Phase 2: Render all characters
+        // NOTE: P0 dirty rectangle optimization temporarily disabled due to flickering issues
         for row_idx in 0..rows {
             for col_idx in 0..cols {
                 let cell = &grid[row_idx][col_idx];
@@ -945,6 +948,10 @@ impl TerminalRenderer {
                 painter.rect_filled(thumb_rect.shrink2(egui::vec2(1.0, 0.0)), 6.0, thumb_color);
             }
         }
+
+        // Clear dirty region after rendering
+        // NOTE: P0 dirty rectangle optimization temporarily disabled
+        // terminal.dirty_region.clear();
 
         response
     }

@@ -152,7 +152,7 @@ impl LinkDetector {
     }
 
     /// 在整个网格中检测链接（带缓存）
-    pub fn detect_all_links(&self, grid: &[Vec<crate::terminal::TerminalCell>]) -> Vec<Link> {
+    pub fn detect_all_links(&self, grid: &crate::terminal::TerminalGrid) -> Vec<Link> {
         let mut all_links = Vec::new();
 
         for (line_idx, line) in grid.iter().enumerate() {

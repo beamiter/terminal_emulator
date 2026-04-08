@@ -7,6 +7,201 @@ const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
 const SECONDARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[>1;7802;0c";
 const XTERM_VERSION_RESPONSE: &[u8] = b"\x1bP>|VTE(7802)\x1b\\";
 
+/// 连续内存网格存储 - 优化内存局部性和缓存命中率
+/// 内存布局: cells[row * cols + col] 对应 grid[row][col]
+#[derive(Clone)]
+pub struct TerminalGrid {
+    cells: Vec<TerminalCell>,
+    rows: usize,
+    cols: usize,
+}
+
+impl TerminalGrid {
+    pub fn new(rows: usize, cols: usize) -> Self {
+        TerminalGrid {
+            cells: vec![TerminalCell::default(); rows * cols],
+            rows,
+            cols,
+        }
+    }
+
+    #[inline]
+    pub fn get(&self, row: usize, col: usize) -> &TerminalCell {
+        &self.cells[row * self.cols + col]
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, row: usize, col: usize) -> &mut TerminalCell {
+        &mut self.cells[row * self.cols + col]
+    }
+
+    #[inline]
+    pub fn rows(&self) -> usize {
+        self.rows
+    }
+
+    #[inline]
+    pub fn cols(&self) -> usize {
+        self.cols
+    }
+
+    /// 获取行作Vec引用（用于兼容旧代码）
+    pub fn get_row(&self, row: usize) -> Vec<TerminalCell> {
+        let start = row * self.cols;
+        let end = start + self.cols;
+        self.cells[start..end].to_vec()
+    }
+
+    /// 返回行数（兼容 grid.len()）
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.rows
+    }
+
+    /// 返回行数（兼容 grid[i].len()）
+    #[inline]
+    pub fn row_len(&self) -> usize {
+        self.cols
+    }
+
+    /// 设置整行
+    pub fn set_row(&mut self, row: usize, cells: Vec<TerminalCell>) {
+        let start = row * self.cols;
+        let _end = start + self.cols;
+        for (i, cell) in cells.into_iter().enumerate() {
+            if start + i < self.cells.len() {
+                self.cells[start + i] = cell;
+            }
+        }
+    }
+
+    /// 获取所有行为Vec<Vec> (用于兼容旧代码)
+    pub fn to_vec(&self) -> Vec<Vec<TerminalCell>> {
+        let mut result = Vec::with_capacity(self.rows);
+        for row in 0..self.rows {
+            result.push(self.get_row(row));
+        }
+        result
+    }
+
+    /// 删除一行（向上移动所有后续行）
+    pub fn remove_row(&mut self, row: usize) {
+        if row >= self.rows {
+            return;
+        }
+        // 向前移动所有后续行
+        let start = row * self.cols;
+        let end = start + self.cols;
+        for i in end..self.cells.len() {
+            self.cells[i - self.cols] = self.cells[i].clone();
+        }
+        // 最后一行替换为空白
+        let last_row_start = (self.rows - 1) * self.cols;
+        for i in last_row_start..self.cells.len() {
+            self.cells[i] = TerminalCell::default();
+        }
+    }
+
+    /// 在指定行插入一行（向下移动所有后续行）
+    pub fn insert_row(&mut self, row: usize, new_cells: Vec<TerminalCell>) {
+        if row > self.rows {
+            return;
+        }
+        // 向后移动所有后续行
+        let start = row * self.cols;
+        for i in (start..self.cells.len() - self.cols).rev() {
+            self.cells[i + self.cols] = self.cells[i].clone();
+        }
+        // 插入新行
+        for (i, cell) in new_cells.into_iter().enumerate() {
+            if start + i < self.cells.len() {
+                self.cells[start + i] = cell;
+            }
+        }
+    }
+
+    /// 在行内指定列插入一个cell，右侧cell右移，末尾cell被丢弃
+    pub fn insert_cell_in_row(&mut self, row: usize, col: usize, cell: TerminalCell) {
+        if row >= self.rows || col >= self.cols {
+            return;
+        }
+        let start = row * self.cols;
+        // Shift cells right from the end of the row down to col+1
+        for i in (start + col..start + self.cols - 1).rev() {
+            self.cells[i + 1] = self.cells[i].clone();
+        }
+        self.cells[start + col] = cell;
+    }
+
+    /// 删除行内指定列的cell，右侧cell左移，末尾补blank
+    pub fn remove_cell_from_row(&mut self, row: usize, col: usize) {
+        if row >= self.rows || col >= self.cols {
+            return;
+        }
+        let start = row * self.cols;
+        // Shift cells left
+        for i in start + col..start + self.cols - 1 {
+            self.cells[i] = self.cells[i + 1].clone();
+        }
+        // Fill last cell with default
+        self.cells[start + self.cols - 1] = TerminalCell::default();
+    }
+
+    /// 删除第一行，向上移动所有行，末尾补新行
+    pub fn remove_first_row(&mut self) -> Vec<TerminalCell> {
+        let removed = self.get_row(0);
+        // Shift all cells up by one row
+        for i in 0..self.cells.len() - self.cols {
+            self.cells[i] = self.cells[i + self.cols].clone();
+        }
+        // Clear last row
+        let last_start = (self.rows - 1) * self.cols;
+        for i in last_start..self.cells.len() {
+            self.cells[i] = TerminalCell::default();
+        }
+        removed
+    }
+
+    /// 用blank_cell填充末尾一行
+    pub fn fill_last_row(&mut self, cell: TerminalCell) {
+        let last_start = (self.rows - 1) * self.cols;
+        for i in last_start..self.cells.len() {
+            self.cells[i] = cell.clone();
+        }
+    }
+
+    /// 是否为空
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.rows == 0
+    }
+
+    /// 调整网格大小
+    pub fn resize(&mut self, new_rows: usize, new_cols: usize, default_cell: TerminalCell) {
+        let mut new_cells = vec![default_cell; new_rows * new_cols];
+        let copy_rows = self.rows.min(new_rows);
+        let copy_cols = self.cols.min(new_cols);
+        for row in 0..copy_rows {
+            for col in 0..copy_cols {
+                new_cells[row * new_cols + col] = self.cells[row * self.cols + col].clone();
+            }
+        }
+        self.cells = new_cells;
+        self.rows = new_rows;
+        self.cols = new_cols;
+    }
+
+    /// 获取mut访问所有行
+    pub fn iter_mut(&mut self) -> std::slice::ChunksMut<'_, TerminalCell> {
+        self.cells.chunks_mut(self.cols)
+    }
+
+    /// 获取只读访问所有行
+    pub fn iter(&self) -> std::slice::Chunks<'_, TerminalCell> {
+        self.cells.chunks(self.cols)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Color {
     Black, Red, Green, Yellow, Blue, Magenta, Cyan, White,
@@ -64,6 +259,64 @@ impl Default for TerminalCell {
     }
 }
 
+/// 追踪改变的行和列区间（脏矩形）
+#[derive(Clone, Debug)]
+pub struct DirtyRegion {
+    pub rows: Vec<(usize, usize)>,  // (row_start, row_end)，包含端点
+    pub col_start: usize,
+    pub col_end: usize,
+}
+
+impl DirtyRegion {
+    pub fn new(cols: usize) -> Self {
+        DirtyRegion {
+            rows: Vec::new(),
+            col_start: 0,
+            col_end: cols,
+        }
+    }
+
+    /// 标记某一行为脏
+    pub fn mark_row(&mut self, row: usize) {
+        if let Some(last) = self.rows.last_mut() {
+            if row > 0 && last.1 == row - 1 {
+                // 合并相邻的行
+                last.1 = row;
+                return;
+            }
+        }
+        self.rows.push((row, row));
+    }
+
+    /// 标记行范围为脏
+    pub fn mark_rows(&mut self, start: usize, end: usize) {
+        for row in start..=end {
+            self.mark_row(row);
+        }
+    }
+
+    /// 标记整个网格为脏
+    pub fn mark_all(&mut self, rows: usize) {
+        self.rows.clear();
+        self.rows.push((0, rows.saturating_sub(1)));
+    }
+
+    /// 清除脏标记
+    pub fn clear(&mut self) {
+        self.rows.clear();
+    }
+
+    /// 是否有脏区域
+    pub fn is_dirty(&self) -> bool {
+        !self.rows.is_empty()
+    }
+
+    /// 获取脏行数
+    pub fn dirty_rows_count(&self) -> usize {
+        self.rows.iter().map(|(start, end)| end - start + 1).sum()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Selection {
     pub start: (usize, usize),
@@ -89,8 +342,8 @@ pub struct ClipboardReadRequest {
 }
 
 pub struct TerminalState {
-    pub grid: Vec<Vec<TerminalCell>>,
-    alt_grid: Vec<Vec<TerminalCell>>,
+    pub grid: TerminalGrid,
+    alt_grid: TerminalGrid,
     pub scrollback: VecDeque<Vec<TerminalCell>>,
     pub selection: Option<Selection>,
     pub scroll_offset: usize,
@@ -151,6 +404,9 @@ pub struct TerminalState {
 
     // Kitty graphics protocol support
     pub kitty_graphics: KittyGraphicsState,
+
+    // Dirty rectangle tracking for optimized rendering
+    pub dirty_region: DirtyRegion,
 }
 
 impl TerminalState {
@@ -179,12 +435,16 @@ impl TerminalState {
     }
 
     pub fn new(cols: usize, rows: usize) -> Self {
-        let grid = vec![vec![TerminalCell::default(); cols]; rows];
-        let alt_grid = vec![vec![TerminalCell::default(); cols]; rows];
+        let grid = TerminalGrid::new(rows, cols);
+        let alt_grid = TerminalGrid::new(rows, cols);
 
         let mut modes = std::collections::HashSet::new();
         modes.insert(25); // Cursor visible by default
         modes.insert(7);  // Autowrap mode enabled by default (DECAWM)
+
+        let mut dirty_region = DirtyRegion::new(cols);
+        // Mark all rows as dirty on initialization to ensure first frame renders correctly
+        dirty_region.mark_all(rows);
 
         TerminalState {
             grid,
@@ -229,6 +489,7 @@ impl TerminalState {
             pending_clipboard_requests: Vec::new(),
             pending_paste_password: None,
             kitty_graphics: KittyGraphicsState::new(),
+            dirty_region,
         }
     }
 
@@ -320,14 +581,14 @@ impl TerminalState {
     }
 
     fn put_char(&mut self, ch: char) {
-        let orig_ch = ch;
+        let _orig_ch = ch;
         let ch = self.translate_char(ch);
         let width = UnicodeWidthChar::width(ch).unwrap_or(0);
         if width == 0 {
             return; // Skip zero-width characters for now
         }
 
-        let cols = self.grid[self.cursor_row].len();
+        let cols = self.grid.row_len();
         let blank_cell = self.create_blank_cell();
 
         // If character doesn't fit at end of line, handle based on autowrap mode
@@ -336,8 +597,8 @@ impl TerminalState {
             if self.modes.contains(&7) {
                 self.cursor_col = 0;
                 self.cursor_row += 1;
-                if self.cursor_row >= self.grid.len() {
-                    self.cursor_row = self.grid.len() - 1;
+                if self.cursor_row >= self.grid.rows() {
+                    self.cursor_row = self.grid.rows() - 1;
                     self.scroll_down();
                 }
             } else {
@@ -347,17 +608,17 @@ impl TerminalState {
         }
 
         // If current position has a continuation cell to its left, clear the wide character
-        if self.cursor_col > 0 && self.grid[self.cursor_row][self.cursor_col].wide_continuation {
-            self.grid[self.cursor_row][self.cursor_col - 1] = blank_cell.clone();
+        if self.cursor_col > 0 && self.grid.get(self.cursor_row, self.cursor_col).wide_continuation {
+            *self.grid.get_mut(self.cursor_row, self.cursor_col - 1) = blank_cell.clone();
         }
 
         // If current position has a wide character, clear its continuation cell
-        if self.grid[self.cursor_row][self.cursor_col].wide && self.cursor_col + 1 < cols {
-            self.grid[self.cursor_row][self.cursor_col + 1] = blank_cell.clone();
+        if self.grid.get(self.cursor_row, self.cursor_col).wide && self.cursor_col + 1 < cols {
+            *self.grid.get_mut(self.cursor_row, self.cursor_col + 1) = blank_cell.clone();
         }
 
         // Write character
-        let cell = &mut self.grid[self.cursor_row][self.cursor_col];
+        let cell = self.grid.get_mut(self.cursor_row, self.cursor_col);
         cell.character = ch;
         cell.foreground = self.current_fg;
         cell.background = self.current_bg;
@@ -367,12 +628,14 @@ impl TerminalState {
 
         // Set up wide character continuation cell if needed
         if width == 2 && self.cursor_col + 1 < cols {
-            let cont_cell = &mut self.grid[self.cursor_row][self.cursor_col + 1];
+            let cont_cell = self.grid.get_mut(self.cursor_row, self.cursor_col + 1);
             *cont_cell = blank_cell;
             cont_cell.wide_continuation = true;
         }
 
         self.cursor_col += width;
+        // Mark the row as dirty after writing character
+        self.dirty_region.mark_row(self.cursor_row);
     }
 
     fn create_blank_cell(&self) -> TerminalCell {
@@ -402,19 +665,23 @@ impl TerminalState {
     }
 
     fn scroll_region_up(&mut self, top: usize, bottom: usize) {
-        if top >= self.grid.len() || bottom >= self.grid.len() || top > bottom {
+        if top >= self.grid.rows() || bottom >= self.grid.rows() || top > bottom {
             return;
         }
 
-        let cols = self.grid[top].len();
-        let removed_line = self.grid[top].clone();
+        let cols = self.grid.row_len();
+        let removed_line = self.grid.get_row(top);
 
         for row in top..bottom {
-            self.grid[row] = self.grid[row + 1].clone();
+            let next_row = self.grid.get_row(row + 1);
+            self.grid.set_row(row, next_row);
         }
-        self.grid[bottom] = self.blank_line(cols);
+        self.grid.set_row(bottom, self.blank_line(cols));
 
-        let is_full_screen_region = top == 0 && bottom + 1 == self.grid.len();
+        // Mark the scrolled region as dirty
+        self.dirty_region.mark_rows(top, bottom);
+
+        let is_full_screen_region = top == 0 && bottom + 1 == self.grid.rows();
         if is_full_screen_region {
             self.push_scrollback_line(removed_line);
         }
@@ -462,7 +729,7 @@ impl TerminalState {
     }
 
     fn clear_cell(&mut self, row: usize, col: usize) {
-        let cols = self.grid[row].len();
+        let cols = self.grid.row_len();
         let bg_color = self.current_bg;
         let blank_cell = TerminalCell {
             character: ' ',
@@ -473,14 +740,14 @@ impl TerminalState {
             wide_continuation: false,
         };
         // If clearing a continuation cell, also clear the wide character body
-        if self.grid[row][col].wide_continuation && col > 0 {
-            self.grid[row][col - 1] = blank_cell.clone();
+        if self.grid.get(row, col).wide_continuation && col > 0 {
+            *self.grid.get_mut(row, col - 1) = blank_cell.clone();
         }
         // If clearing a wide character body, also clear the continuation cell
-        if self.grid[row][col].wide && col + 1 < cols {
-            self.grid[row][col + 1] = blank_cell.clone();
+        if self.grid.get(row, col).wide && col + 1 < cols {
+            *self.grid.get_mut(row, col + 1) = blank_cell.clone();
         }
-        self.grid[row][col] = blank_cell;
+        *self.grid.get_mut(row, col) = blank_cell;
     }
 
     pub fn process_input(&mut self, input: &[u8]) {
@@ -536,8 +803,8 @@ impl TerminalState {
                 b'\t' => {
                     // Tab
                     self.cursor_col = ((self.cursor_col + 8) / 8) * 8;
-                    if self.cursor_col >= self.grid[0].len() {
-                        self.cursor_col = self.grid[0].len() - 1;
+                    if self.cursor_col >= self.grid.row_len() {
+                        self.cursor_col = self.grid.row_len() - 1;
                     }
                     i += 1;
                 }
@@ -558,8 +825,8 @@ impl TerminalState {
                         }
                         b'8' => {
                             // DECRC - Restore Cursor Position
-                            self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
-                            self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
+                            self.cursor_row = self.saved_cursor_row.min(self.grid.rows() - 1);
+                            self.cursor_col = self.saved_cursor_col.min(self.grid.row_len() - 1);
                             i += 2;
                         }
                         b']' => {
@@ -688,19 +955,19 @@ impl TerminalState {
                             if self.cursor_row > self.scroll_region_top {
                                 self.cursor_row -= 1;
                             } else {
-                                if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
-                                    let cols = self.grid[self.scroll_region_top].len();
+                                if self.scroll_region_top < self.grid.rows() && self.scroll_region_bottom < self.grid.rows() && self.scroll_region_top <= self.scroll_region_bottom {
+                                    let cols = self.grid.row_len();
                                     let mut new_lines = vec![self.blank_line(cols)];
 
                                     for row in self.scroll_region_top..self.scroll_region_bottom {
-                                        if row < self.grid.len() {
-                                            new_lines.push(self.grid[row].clone());
+                                        if row < self.grid.rows() {
+                                            new_lines.push(self.grid.get_row(row));
                                         }
                                     }
 
                                     for (offset, line) in new_lines.iter().enumerate() {
                                         if self.scroll_region_top + offset <= self.scroll_region_bottom {
-                                            self.grid[self.scroll_region_top + offset] = line.clone();
+                                            self.grid.set_row(self.scroll_region_top + offset, line.clone());
                                         }
                                     }
                                 }
@@ -827,21 +1094,21 @@ impl TerminalState {
                         self.cursor_row -= 1;
                     } else {
                         // Cursor is at top of scroll region, scroll the region down
-                        if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() {
-                            let cols = self.grid[self.scroll_region_top].len();
+                        if self.scroll_region_top < self.grid.rows() && self.scroll_region_bottom < self.grid.rows() {
+                            let cols = self.grid.row_len();
                             let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
 
                             // Keep lines from top to bottom-1
                             for i in self.scroll_region_top..self.scroll_region_bottom {
-                                if i < self.grid.len() {
-                                    new_lines.push(self.grid[i].clone());
+                                if i < self.grid.rows() {
+                                    new_lines.push(self.grid.get_row(i));
                                 }
                             }
 
                             // Replace region lines
                             for (j, line) in new_lines.iter().enumerate() {
                                 if self.scroll_region_top + j <= self.scroll_region_bottom {
-                                    self.grid[self.scroll_region_top + j] = line.clone();
+                                    self.grid.set_row(self.scroll_region_top + j, line.clone());
                                 }
                             }
                         }
@@ -851,11 +1118,11 @@ impl TerminalState {
             }
             'B' => {
                 let n = params.first().copied().unwrap_or(1) as usize;
-                self.cursor_row = (self.cursor_row + n).min(self.grid.len() - 1);
+                self.cursor_row = (self.cursor_row + n).min(self.grid.rows() - 1);
             }
             'C' => {
                 let n = params.first().copied().unwrap_or(1) as usize;
-                self.cursor_col = (self.cursor_col + n).min(self.grid[0].len() - 1);
+                self.cursor_col = (self.cursor_col + n).min(self.grid.row_len() - 1);
             }
             'D' => {
                 let n = params.first().copied().unwrap_or(1) as usize;
@@ -864,7 +1131,7 @@ impl TerminalState {
             'E' => {
                 // Move cursor down and to start of line
                 let n = params.first().copied().unwrap_or(1) as usize;
-                self.cursor_row = (self.cursor_row + n).min(self.grid.len() - 1);
+                self.cursor_row = (self.cursor_row + n).min(self.grid.rows() - 1);
                 self.cursor_col = 0;
             }
             'F' => {
@@ -876,13 +1143,13 @@ impl TerminalState {
             'G' => {
                 // Move cursor to column
                 let col = params.first().copied().unwrap_or(1) as usize;
-                self.cursor_col = col.saturating_sub(1).min(self.grid[0].len() - 1);
+                self.cursor_col = col.saturating_sub(1).min(self.grid.row_len() - 1);
             }
             'H' => {
                 let row = params.get(0).copied().unwrap_or(1) as usize;
                 let col = params.get(1).copied().unwrap_or(1) as usize;
-                self.cursor_row = row.saturating_sub(1).min(self.grid.len() - 1);
-                self.cursor_col = col.saturating_sub(1).min(self.grid[0].len() - 1);
+                self.cursor_row = row.saturating_sub(1).min(self.grid.rows() - 1);
+                self.cursor_col = col.saturating_sub(1).min(self.grid.row_len() - 1);
             }
             'f' => {
                 if private_prefix == Some(b'>') && intermediates.is_empty() {
@@ -899,22 +1166,24 @@ impl TerminalState {
                 } else {
                     let row = params.get(0).copied().unwrap_or(1) as usize;
                     let col = params.get(1).copied().unwrap_or(1) as usize;
-                    self.cursor_row = row.saturating_sub(1).min(self.grid.len() - 1);
-                    self.cursor_col = col.saturating_sub(1).min(self.grid[0].len() - 1);
+                    self.cursor_row = row.saturating_sub(1).min(self.grid.rows() - 1);
+                    self.cursor_col = col.saturating_sub(1).min(self.grid.row_len() - 1);
                 }
             }
             'J' => {
                 match params.first().copied().unwrap_or(0) {
                     0 => {
                         // Clear from cursor to end of display
-                        for col in self.cursor_col..self.grid[0].len() {
+                        for col in self.cursor_col..self.grid.row_len() {
                             self.clear_cell(self.cursor_row, col);
                         }
-                        for row in (self.cursor_row + 1)..self.grid.len() {
-                            for col in 0..self.grid[0].len() {
+                        for row in (self.cursor_row + 1)..self.grid.rows() {
+                            for col in 0..self.grid.row_len() {
                                 self.clear_cell(row, col);
                             }
                         }
+                        // Mark affected rows as dirty
+                        self.dirty_region.mark_rows(self.cursor_row, self.grid.rows().saturating_sub(1));
                     }
                     1 => {
                         // Clear from start to cursor
@@ -922,14 +1191,19 @@ impl TerminalState {
                             let end_col = if row == self.cursor_row {
                                 self.cursor_col + 1
                             } else {
-                                self.grid[0].len()
+                                self.grid.row_len()
                             };
                             for col in 0..end_col {
                                 self.clear_cell(row, col);
                             }
                         }
+                        // Mark affected rows as dirty
+                        self.dirty_region.mark_rows(0, self.cursor_row);
                     }
-                    2 => self.clear_screen(),
+                    2 => {
+                        self.clear_screen();
+                        // clear_screen already marks all rows as dirty
+                    }
                     _ => {}
                 }
             }
@@ -938,21 +1212,27 @@ impl TerminalState {
                 match params.first().copied().unwrap_or(0) {
                     0 => {
                         // Clear from cursor to end of line
-                        for col in self.cursor_col..self.grid[0].len() {
+                        for col in self.cursor_col..self.grid.row_len() {
                             self.clear_cell(self.cursor_row, col);
                         }
+                        // Mark the line as dirty
+                        self.dirty_region.mark_row(self.cursor_row);
                     }
                     1 => {
                         // Clear from start of line to cursor
                         for col in 0..=self.cursor_col {
                             self.clear_cell(self.cursor_row, col);
                         }
+                        // Mark the line as dirty
+                        self.dirty_region.mark_row(self.cursor_row);
                     }
                     2 => {
                         // Clear entire line
-                        for col in 0..self.grid[0].len() {
+                        for col in 0..self.grid.row_len() {
                             self.clear_cell(self.cursor_row, col);
                         }
+                        // Mark the line as dirty
+                        self.dirty_region.mark_row(self.cursor_row);
                     }
                     _ => {}
                 }
@@ -962,13 +1242,14 @@ impl TerminalState {
                 let n = params.first().copied().unwrap_or(1) as usize;
                 for _ in 0..n {
                     if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
-                        let cols = self.grid[self.cursor_row].len();
-                        // Remove the last line of the region
-                        if self.scroll_region_bottom < self.grid.len() {
-                            self.grid.remove(self.scroll_region_bottom);
+                        let cols = self.grid.row_len();
+                        // Shift lines down within scroll region: move cursor_row..bottom-1 to cursor_row+1..bottom
+                        for row in (self.cursor_row..self.scroll_region_bottom).rev() {
+                            let src = self.grid.get_row(row);
+                            self.grid.set_row(row + 1, src);
                         }
                         // Insert blank line at cursor position
-                        self.grid.insert(self.cursor_row, self.blank_line(cols));
+                        self.grid.set_row(self.cursor_row, self.blank_line(cols));
                     }
                 }
             }
@@ -977,13 +1258,14 @@ impl TerminalState {
                 let n = params.first().copied().unwrap_or(1) as usize;
                 for _ in 0..n {
                     if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
-                        let cols = self.grid[self.cursor_row].len();
-                        // Remove line at cursor position
-                        if self.cursor_row < self.grid.len() {
-                            self.grid.remove(self.cursor_row);
+                        let cols = self.grid.row_len();
+                        // Shift lines up within scroll region: move cursor_row+1..bottom to cursor_row..bottom-1
+                        for row in self.cursor_row..self.scroll_region_bottom {
+                            let src = self.grid.get_row(row + 1);
+                            self.grid.set_row(row, src);
                         }
                         // Insert blank line at bottom of region
-                        self.grid.insert(self.scroll_region_bottom, self.blank_line(cols));
+                        self.grid.set_row(self.scroll_region_bottom, self.blank_line(cols));
                     }
                 }
             }
@@ -1014,8 +1296,8 @@ impl TerminalState {
                 if intermediates.is_empty() {
                     match private_prefix {
                         None => {
-                            self.cursor_row = self.saved_cursor_row.min(self.grid.len() - 1);
-                            self.cursor_col = self.saved_cursor_col.min(self.grid[0].len() - 1);
+                            self.cursor_row = self.saved_cursor_row.min(self.grid.rows() - 1);
+                            self.cursor_col = self.saved_cursor_col.min(self.grid.row_len() - 1);
                         }
                         Some(b'?') => {
                             crate::debug_log!(
@@ -1080,23 +1362,23 @@ impl TerminalState {
                 let n = params.first().copied().unwrap_or(1) as usize;
                 // Scroll within the scroll region by moving lines
                 for _ in 0..n {
-                    if self.scroll_region_top < self.grid.len() && self.scroll_region_bottom < self.grid.len() && self.scroll_region_top <= self.scroll_region_bottom {
-                        let cols = self.grid[self.scroll_region_top].len();
+                    if self.scroll_region_top < self.grid.rows() && self.scroll_region_bottom < self.grid.rows() && self.scroll_region_top <= self.scroll_region_bottom {
+                        let cols = self.grid.row_len();
 
                         // Shift lines down within the region by collecting from bottom to top
                         let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
 
                         // Keep lines from top to bottom-1
                         for i in self.scroll_region_top..self.scroll_region_bottom {
-                            if i < self.grid.len() {
-                                new_lines.push(self.grid[i].clone());
+                            if i < self.grid.rows() {
+                                new_lines.push(self.grid.get_row(i));
                             }
                         }
 
                         // Replace region lines
                         for (i, line) in new_lines.iter().enumerate() {
                             if self.scroll_region_top + i <= self.scroll_region_bottom {
-                                self.grid[self.scroll_region_top + i] = line.clone();
+                                self.grid.set_row(self.scroll_region_top + i, line.clone());
                             }
                         }
                     }
@@ -1158,16 +1440,16 @@ impl TerminalState {
             'r' => {
                 // Set scroll region (DECSTBM)
                 let top = params.get(0).copied().unwrap_or(1) as usize;
-                let bottom = params.get(1).copied().unwrap_or(self.grid.len() as u16) as usize;
+                let bottom = params.get(1).copied().unwrap_or(self.grid.rows() as u16) as usize;
 
                 // Convert from 1-indexed to 0-indexed, and clamp to valid range
-                self.scroll_region_top = top.saturating_sub(1).min(self.grid.len().saturating_sub(1));
-                self.scroll_region_bottom = bottom.saturating_sub(1).min(self.grid.len().saturating_sub(1));
+                self.scroll_region_top = top.saturating_sub(1).min(self.grid.rows().saturating_sub(1));
+                self.scroll_region_bottom = bottom.saturating_sub(1).min(self.grid.rows().saturating_sub(1));
 
                 // If range is invalid, reset to full screen
                 if self.scroll_region_top > self.scroll_region_bottom {
                     self.scroll_region_top = 0;
-                    self.scroll_region_bottom = self.grid.len().saturating_sub(1);
+                    self.scroll_region_bottom = self.grid.rows().saturating_sub(1);
                 }
 
                 // Move cursor to home position when setting scroll region
@@ -1177,17 +1459,14 @@ impl TerminalState {
             '@' => {
                 // ICH - Insert Character(s)
                 let n = params.first().copied().unwrap_or(1) as usize;
-                let cols = self.grid[0].len();
+                let cols = self.grid.row_len();
                 let blank_cell = self.create_blank_cell();
                 if self.cursor_col < cols {
                     // Insert n blank cells at cursor position, shifting content right
+                    // insert_cell_in_row shifts cells right and discards the last cell
                     for _ in 0..n {
                         if self.cursor_col < cols {
-                            self.grid[self.cursor_row].insert(self.cursor_col, blank_cell.clone());
-                            // Remove the cell at the end of the line to keep width constant
-                            if self.grid[self.cursor_row].len() > cols {
-                                self.grid[self.cursor_row].pop();
-                            }
+                            self.grid.insert_cell_in_row(self.cursor_row, self.cursor_col, blank_cell.clone());
                         }
                     }
                 }
@@ -1195,15 +1474,13 @@ impl TerminalState {
             'P' => {
                 // DCH - Delete Character(s)
                 let n = params.first().copied().unwrap_or(1) as usize;
-                let cols = self.grid[0].len();
                 let blank_cell = self.create_blank_cell();
                 for _ in 0..n {
-                    if self.cursor_col < self.grid[self.cursor_row].len() {
-                        self.grid[self.cursor_row].remove(self.cursor_col);
-                        // Add blank cell at the end to keep width constant
-                        if self.grid[self.cursor_row].len() < cols {
-                            self.grid[self.cursor_row].push(blank_cell.clone());
-                        }
+                    if self.cursor_col < self.grid.row_len() {
+                        self.grid.remove_cell_from_row(self.cursor_row, self.cursor_col);
+                        // Fill the last cell with proper blank (remove_cell_from_row uses default)
+                        let last_col = self.grid.row_len() - 1;
+                        *self.grid.get_mut(self.cursor_row, last_col) = blank_cell.clone();
                     }
                 }
             }
@@ -1212,7 +1489,7 @@ impl TerminalState {
                 let n = params.first().copied().unwrap_or(1) as usize;
                 for i in 0..n {
                     let col = self.cursor_col + i;
-                    if col < self.grid[self.cursor_row].len() {
+                    if col < self.grid.row_len() {
                         self.clear_cell(self.cursor_row, col);
                     } else {
                         break;
@@ -1391,8 +1668,8 @@ impl TerminalState {
 
     fn clear_screen(&mut self) {
         let bg_color = self.current_bg;
-        for row in &mut self.grid {
-            for cell in row {
+        for row in self.grid.iter_mut() {
+            for cell in row.iter_mut() {
                 *cell = TerminalCell {
                     character: ' ',
                     foreground: Color::Default,
@@ -1405,6 +1682,8 @@ impl TerminalState {
         }
         self.cursor_row = 0;
         self.cursor_col = 0;
+        // Mark all rows as dirty
+        self.dirty_region.mark_all(self.grid.rows());
     }
 
     fn set_mode(&mut self, mode: u16) {
@@ -1584,9 +1863,8 @@ impl TerminalState {
     }
 
     fn scroll_down(&mut self) {
-        if self.grid.len() > 0 {
+        if self.grid.rows() > 0 {
             crate::debug_log!("[SCROLL] scroll_down() in buffer (alt={})", self.use_alt_buffer);
-            let cols = self.grid[0].len();
             let bg_color = self.current_bg;
             let blank_cell = TerminalCell {
                 character: ' ',
@@ -1596,20 +1874,21 @@ impl TerminalState {
                 wide: false,
                 wide_continuation: false,
             };
-            let old_line = std::mem::replace(&mut self.grid[0], vec![blank_cell.clone(); cols]);
-            self.grid.remove(0);
-            self.grid.push(vec![blank_cell; cols]);
+            let old_line = self.grid.remove_first_row();
+            self.grid.fill_last_row(blank_cell);
             self.push_scrollback_line(old_line);
+            // Mark all rows as dirty after scrolling
+            self.dirty_region.mark_all(self.grid.rows());
         }
     }
 
     pub fn get_visible_cells(&self) -> Vec<Vec<TerminalCell>> {
-        let rows = self.grid.len();
-        let cols = if rows > 0 { self.grid[0].len() } else { 80 };
+        let rows = self.grid.rows();
+        let cols = if rows > 0 { self.grid.row_len() } else { 80 };
 
         // If not scrolling back, show current grid
         if self.scroll_offset == 0 {
-            return self.grid.clone();
+            return self.grid.to_vec();
         }
 
         // Build view from scrollback + current grid
@@ -1626,9 +1905,9 @@ impl TerminalState {
         }
 
         // Fill remaining rows with current grid
-        for row in &self.grid {
+        for row in self.grid.iter() {
             if result.len() < rows {
-                result.push(row.clone());
+                result.push(row.to_vec());
             } else {
                 break;
             }
@@ -1658,17 +1937,17 @@ impl TerminalState {
     pub fn copy_selection(&self) -> Option<String> {
         self.selection.map(|sel| {
             let mut result = String::new();
-            let cols = self.grid[0].len();
+            let cols = self.grid.row_len();
 
             if sel.start.0 == sel.end.0 {
                 for col in sel.start.1..=sel.end.1.min(cols - 1) {
-                    let cell = &self.grid[sel.start.0][col];
+                    let cell = self.grid.get(sel.start.0, col);
                     if !cell.wide_continuation {
                         result.push(cell.character);
                     }
                 }
             } else {
-                for row in sel.start.0..=sel.end.0.min(self.grid.len() - 1) {
+                for row in sel.start.0..=sel.end.0.min(self.grid.rows() - 1) {
                     let start_col = if row == sel.start.0 { sel.start.1 } else { 0 };
                     let end_col = if row == sel.end.0 {
                         sel.end.1.min(cols - 1)
@@ -1677,7 +1956,7 @@ impl TerminalState {
                     };
 
                     for col in start_col..=end_col {
-                        let cell = &self.grid[row][col];
+                        let cell = self.grid.get(row, col);
                         if !cell.wide_continuation {
                             result.push(cell.character);
                         }
@@ -1717,21 +1996,14 @@ impl TerminalState {
             return;
         }
 
-        let old_rows = self.grid.len();
+        let old_rows = self.grid.rows();
         let had_full_screen_region = old_rows == 0
             || (self.scroll_region_top == 0 && self.scroll_region_bottom + 1 >= old_rows);
 
         let blank_cell = self.create_blank_cell();
 
-        for row in &mut self.grid {
-            row.resize(cols, blank_cell.clone());
-        }
-        self.grid.resize_with(rows, || vec![blank_cell.clone(); cols]);
-
-        for row in &mut self.alt_grid {
-            row.resize(cols, blank_cell.clone());
-        }
-        self.alt_grid.resize_with(rows, || vec![blank_cell.clone(); cols]);
+        self.grid.resize(rows, cols, blank_cell.clone());
+        self.alt_grid.resize(rows, cols, blank_cell.clone());
 
         self.scroll_offset = 0;
         self.cursor_row = self.cursor_row.min(rows.saturating_sub(1));
@@ -1758,7 +2030,7 @@ impl TerminalState {
         if self.grid.is_empty() {
             (0, 0)
         } else {
-            (self.grid[0].len(), self.grid.len())
+            (self.grid.row_len(), self.grid.rows())
         }
     }
 
