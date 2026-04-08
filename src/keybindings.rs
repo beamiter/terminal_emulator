@@ -45,6 +45,7 @@ pub enum Command {
     // === 配置 ===
     ConfigOpen,
     ConfigClose,
+    ConfigToggle,
 }
 
 impl std::fmt::Display for Command {
@@ -76,6 +77,7 @@ impl std::fmt::Display for Command {
             Command::WindowClose => write!(f, "window:close"),
             Command::ConfigOpen => write!(f, "config:open"),
             Command::ConfigClose => write!(f, "config:close"),
+            Command::ConfigToggle => write!(f, "config:toggle"),
         }
     }
 }
@@ -110,6 +112,7 @@ impl std::str::FromStr for Command {
             "window:close" => Ok(Command::WindowClose),
             "config:open" => Ok(Command::ConfigOpen),
             "config:close" => Ok(Command::ConfigClose),
+            "config:toggle" => Ok(Command::ConfigToggle),
             s if s.starts_with("session:jump:") => {
                 let num_str = &s[13..];
                 let num = num_str.parse::<usize>()
@@ -283,7 +286,7 @@ impl KeyBindings {
         bindings.bindings.insert("ctrl+shift+f".to_string(), "search:open".to_string());
 
         // 配置操作
-        bindings.bindings.insert("ctrl+shift+o".to_string(), "config:open".to_string());
+        bindings.bindings.insert("ctrl+shift+o".to_string(), "config:toggle".to_string());
 
         // 终端操作
         bindings.bindings.insert("ctrl+up".to_string(), "terminal:scroll_up".to_string());

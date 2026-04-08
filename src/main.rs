@@ -1762,11 +1762,6 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        // 配置面板快捷键 (Ctrl+Shift+O) - toggle
-        if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.ctrl && i.modifiers.shift) {
-            self.config_panel.toggle(&self.config);
-        }
-
         // 帮助面板快捷键 (Ctrl+?)
         if ctx.input(|i| i.key_pressed(egui::Key::Slash) && i.modifiers.ctrl) {
             self.help_panel.toggle();
@@ -1873,6 +1868,9 @@ impl eframe::App for TerminalApp {
                                         keybindings::Command::ConfigClose => {
                                             self.config_panel.close();
                                         }
+                                        keybindings::Command::ConfigToggle => {
+                                            self.config_panel.toggle(&self.config);
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -1960,6 +1958,9 @@ impl eframe::App for TerminalApp {
                         }
                         keybindings::Command::ConfigClose => {
                             self.config_panel.close();
+                        }
+                        keybindings::Command::ConfigToggle => {
+                            self.config_panel.toggle(&self.config);
                         }
                         // 其他命令在下面处理
                         _ => {}
