@@ -1873,6 +1873,9 @@ impl eframe::App for TerminalApp {
                                         keybindings::Command::ConfigClose => {
                                             self.config_panel.close();
                                         }
+                                        keybindings::Command::ConfigToggle => {
+                                            self.config_panel.toggle(&self.config);
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -1960,6 +1963,9 @@ impl eframe::App for TerminalApp {
                         }
                         keybindings::Command::ConfigClose => {
                             self.config_panel.close();
+                        }
+                        keybindings::Command::ConfigToggle => {
+                            self.config_panel.toggle(&self.config);
                         }
                         // 其他命令在下面处理
                         _ => {}
