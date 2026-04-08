@@ -869,8 +869,13 @@ impl TerminalApp {
                                             egui::vec2(close_btn_size, close_btn_size),
                                         );
 
-                                        if close_btn_rect.contains(click_pos) && self.session_manager.len() > 1 {
-                                            self.session_manager.close_session(idx);
+                                        if close_btn_rect.contains(click_pos) {
+                                            if self.session_manager.len() > 1 {
+                                                self.session_manager.close_session(idx);
+                                            } else {
+                                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                                return;
+                                            }
                                             self.dragging_tab = None;
                                             self.drag_start_pos = None;
                                             break;
