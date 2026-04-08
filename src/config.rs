@@ -180,7 +180,6 @@ impl Config {
         config
     }
 
-    #[allow(dead_code)]
     pub fn save(&self) -> Result<(), Box<dyn std::error::Error>> {
         let config_path = Self::config_path()?;
         let config_dir = config_path.parent().unwrap();
@@ -211,6 +210,28 @@ impl Config {
 
     pub fn get_font_family(&self) -> &str {
         &self.font_family
+    }
+
+    // 配置值约束方法
+    pub fn clamp_font_size(size: f32) -> f32 {
+        size.clamp(8.0, 72.0)
+    }
+
+    pub fn clamp_line_spacing(spacing: f32) -> f32 {
+        spacing.clamp(0.8, 3.0)
+    }
+
+    pub fn clamp_padding(padding: f32) -> f32 {
+        padding.clamp(0.0, 20.0)
+    }
+
+    pub fn clamp_scrollback_lines(lines: usize) -> usize {
+        lines.clamp(100, 100_000)
+    }
+
+    // 获取系统中可用的等宽字体
+    pub fn get_available_monospace_fonts() -> Vec<String> {
+        detect_available_fonts()
     }
 }
 

@@ -375,6 +375,10 @@ struct TerminalApp {
     dragging_divider: bool,
     // Help panel
     help_panel: help::HelpPanel,
+    // Config system
+    config: config::Config,
+    config_save_pending: bool,
+    config_save_deadline: std::time::Instant,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -724,6 +728,9 @@ impl TerminalApp {
             pane_renderers,
             dragging_divider: false,
             help_panel: help::HelpPanel::new(),
+            config: cfg.clone(),
+            config_save_pending: false,
+            config_save_deadline: std::time::Instant::now(),
         }
     }
 
@@ -1332,46 +1339,54 @@ impl TerminalApp {
                     }
                 } else {
                     // 单窗格渲染（原有逻辑）
-                    let session = self.session_manager.get_active_session_mut();
-                    let mut terminal_guard = session.terminal.lock();
+                    {
+                        let session = self.session_manager.get_active_session_mut();
+                        let mut terminal_guard = session.terminal.lock();
 
-                    // 获取链接列表用于渲染
-                    let links = self.link_detector.detect_all_links(&terminal_guard.grid);
+                        // 获取链接列表用于渲染
+                        let links = self.link_detector.detect_all_links(&terminal_guard.grid);
 
-                    // 在渲染终端之前读取滚轮值和 Ctrl 键状态
-                    let ctrl_pressed_render = ui.input(|i| i.modifiers.ctrl);
+                        // 在渲染终端之前读取滚轮值和 Ctrl 键状态
+                        let ctrl_pressed_render = ui.input(|i| i.modifiers.ctrl);
 
-                    // 从原始 MouseWheel 事件中提取 delta（因为 smooth_scroll_delta 被 egui 消费了）
-                    let mut scroll_delta_from_event = 0.0;
-                    if ctrl_pressed_render {
-                        let all_events = ui.input(|i| i.events.clone());
-                        for evt in &all_events {
-                            if let egui::Event::MouseWheel { delta, modifiers, .. } = evt {
-                                if modifiers.ctrl {
-                                    scroll_delta_from_event += delta.y;
+                        // 从原始 MouseWheel 事件中提取 delta（因为 smooth_scroll_delta 被 egui 消费了）
+                        let mut scroll_delta_from_event = 0.0;
+                        if ctrl_pressed_render {
+                            let all_events = ui.input(|i| i.events.clone());
+                            for evt in &all_events {
+                                if let egui::Event::MouseWheel { delta, modifiers, .. } = evt {
+                                    if modifiers.ctrl {
+                                        scroll_delta_from_event += delta.y;
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    // Ctrl+滚轮在此处理
-                    if scroll_delta_from_event != 0.0 && ctrl_pressed_render {
-                        let font_size_delta = if scroll_delta_from_event > 0.0 { 1.0 } else { -1.0 };
-                        drop(terminal_guard); // 先释放锁
-                        let new_font_size = (self.renderer.font_size + font_size_delta).clamp(8.0, 72.0);
-                        self.renderer.font_size = new_font_size;
-                        self.renderer.char_width = new_font_size * 0.62;
-                        self.renderer.line_height = new_font_size * self.renderer.line_spacing;
-                        for pane_renderer in &mut self.pane_renderers {
-                            pane_renderer.font_size = new_font_size;
-                            pane_renderer.char_width = new_font_size * 0.62;
-                            pane_renderer.line_height = new_font_size * pane_renderer.line_spacing;
+                        // Ctrl+滚轮在此处理
+                        if scroll_delta_from_event != 0.0 && ctrl_pressed_render {
+                            let font_size_delta = if scroll_delta_from_event > 0.0 { 1.0 } else { -1.0 };
+                            drop(terminal_guard); // 先释放锁
+                            let new_font_size = config::Config::clamp_font_size(self.renderer.font_size + font_size_delta);
+                            self.renderer.font_size = new_font_size;
+                            self.renderer.char_width = new_font_size * 0.62;
+                            self.renderer.line_height = new_font_size * self.renderer.line_spacing;
+                            for pane_renderer in &mut self.pane_renderers {
+                                pane_renderer.font_size = new_font_size;
+                                pane_renderer.char_width = new_font_size * 0.62;
+                                pane_renderer.line_height = new_font_size * pane_renderer.line_spacing;
+                            }
+                            // 同步到 config 并触发保存
+                            self.config.font_size = new_font_size;
+                            // 释放 session 引用，允许调用 &mut self 方法
+                            let _ = session;
+                            self.schedule_config_save();
+                            // 重新获取
+                            let session = self.session_manager.get_active_session_mut();
+                            terminal_guard = session.terminal.lock();
                         }
-                        // 重新获取终端
-                        terminal_guard = session.terminal.lock();
-                    }
 
-                    self.renderer.render(ui, &mut terminal_guard, self.cursor_visible, &self.search_state, &links, &self.hovered_link);
+                        self.renderer.render(ui, &mut terminal_guard, self.cursor_visible, &self.search_state, &links, &self.hovered_link);
+                    }
                 }
             });
 
@@ -1579,6 +1594,21 @@ impl TerminalApp {
         let mut help_open = self.help_panel.is_open;
         self.help_panel.show(ctx, &mut help_open);
         self.help_panel.is_open = help_open;
+    }
+
+    // 配置保存相关方法
+    fn schedule_config_save(&mut self) {
+        self.config_save_pending = true;
+        self.config_save_deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    }
+
+    fn flush_config_save(&mut self) {
+        if self.config_save_pending && std::time::Instant::now() >= self.config_save_deadline {
+            self.config_save_pending = false;
+            if let Err(e) = self.config.save() {
+                eprintln!("[Config] Failed to save: {}", e);
+            }
+        }
     }
 }
 
@@ -2430,11 +2460,21 @@ impl eframe::App for TerminalApp {
             let next_blink_in = blink_interval.saturating_sub(self.last_cursor_blink.elapsed());
             ctx.request_repaint_after(next_blink_in);
         }
+
+        // Debounce 保存配置
+        self.flush_config_save();
     }
 }
 
 impl Drop for TerminalApp {
     fn drop(&mut self) {
+        // 保存配置
+        if self.config_save_pending {
+            if let Err(e) = self.config.save() {
+                eprintln!("[Config] Failed to save on exit: {}", e);
+            }
+        }
+
         // 保存当前会话到持久化存储
         if let Ok(session_history_path) = config::Config::session_history_path() {
             let _ = session_persistence::ensure_session_history_dir(&session_history_path);
