@@ -347,6 +347,7 @@ struct TerminalApp {
     cols: usize,
     rows: usize,
     last_cursor_blink: std::time::Instant,
+    next_cursor_blink_time: std::time::Instant,
     cursor_visible: bool,
     status_message: String,
     last_window_title: String,
@@ -727,6 +728,7 @@ impl TerminalApp {
             cols,
             rows,
             last_cursor_blink: std::time::Instant::now(),
+            next_cursor_blink_time: std::time::Instant::now() + Duration::from_millis(500),
             cursor_visible: true,
             status_message: String::new(),
             last_window_title: String::new(),
@@ -2301,28 +2303,24 @@ impl eframe::App for TerminalApp {
 
         // Step 8: 光标闪烁
         let mut cursor_state_changed = false;
-        let mut cursor_blink_active = false;
         {
             let terminal = session.terminal.lock();
             let app_wants_cursor_visible = terminal.is_cursor_visible();
             drop(terminal);
 
             if app_wants_cursor_visible {
-                cursor_blink_active = true;
-                let elapsed = self.last_cursor_blink.elapsed();
-                let blink_period = Duration::from_millis(1000); // 完整周期：500ms显示+500ms隐藏
+                let now = std::time::Instant::now();
 
-                // 基于经过的时间计算应该处于的状态（避免频繁toggle导致的边界问题）
-                let should_be_visible = (elapsed.as_millis() % blink_period.as_millis()) < 500;
-
-                if self.cursor_visible != should_be_visible {
-                    self.cursor_visible = should_be_visible;
+                // 只有当时间到达时才改变光标状态
+                if now >= self.next_cursor_blink_time {
+                    self.cursor_visible = !self.cursor_visible;
                     cursor_state_changed = true;
-                }
 
-                // 重置计时器以避免溢出
-                if elapsed > blink_period * 2 {
-                    self.last_cursor_blink = std::time::Instant::now();
+                    debug_log!("[CURSOR] blink toggle: {}, next in 500ms",
+                        self.cursor_visible);
+
+                    // 计算下一次改变的时间
+                    self.next_cursor_blink_time = now + Duration::from_millis(500);
                 }
             } else {
                 if self.cursor_visible {
@@ -2526,6 +2524,12 @@ impl eframe::App for TerminalApp {
             }
         }
 
+        // 检查光标闪烁是否需要进行（在render_ui之前完成）
+        let app_wants_cursor_visible = {
+            let terminal = session.terminal.lock();
+            terminal.is_cursor_visible()
+        };
+
         // 渲染 UI
         self.render_ui(ctx);
 
@@ -2536,27 +2540,21 @@ impl eframe::App for TerminalApp {
             || has_mouse_input;
 
         if should_repaint {
+            if cursor_state_changed {
+                debug_log!("[REPAINT] cursor_state_changed");
+            }
             ctx.request_repaint();
-        } else if cursor_blink_active {
-            // 光标闪烁周期：1000ms（500ms显示+500ms隐藏）
-            let blink_period = std::time::Duration::from_millis(1000);
-            let elapsed = self.last_cursor_blink.elapsed();
+        } else if app_wants_cursor_visible {
+            // 只在状态即将改变时请求定时重绘（不要每次都请求）
+            let now = std::time::Instant::now();
+            let time_until_next = self.next_cursor_blink_time.saturating_duration_since(now);
 
-            // 计算下一次状态改变的时间
-            let time_in_period = elapsed.as_millis() % blink_period.as_millis();
-            let next_change = if time_in_period < 500 {
-                // 当前在显示阶段，还需要500ms才能进入隐藏阶段
-                500 - time_in_period
-            } else {
-                // 当前在隐藏阶段，还需要1000-time_in_period才能进入下一个显示阶段
-                1000 - time_in_period
-            };
-
-            // 只有在有意义的延迟时才请求重绘（至少1ms，避免立即重绘导致高CPU）
-            if next_change > 0 {
-                ctx.request_repaint_after(std::time::Duration::from_millis(next_change as u64));
-            } else {
-                ctx.request_repaint();
+            // 只有剩余时间在 20-50ms 范围内时才请求重绘
+            // 这样可以避免 0ms 导致的立即重绘，也避免频繁请求
+            if time_until_next.as_millis() < 50 && time_until_next.as_millis() > 0 {
+                debug_log!("[REPAINT] request_repaint_after({}ms)",
+                    time_until_next.as_millis());
+                ctx.request_repaint_after(time_until_next);
             }
         }
 
