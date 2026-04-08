@@ -1764,11 +1764,7 @@ impl eframe::App for TerminalApp {
 
         // 配置面板快捷键 (Ctrl+Shift+O) - toggle
         if ctx.input(|i| i.key_pressed(egui::Key::O) && i.modifiers.ctrl && i.modifiers.shift) {
-            if self.config_panel.is_open {
-                self.config_panel.close();
-            } else {
-                self.config_panel.open(&self.config);
-            }
+            self.config_panel.toggle(&self.config);
         }
 
         // 帮助面板快捷键 (Ctrl+?)
