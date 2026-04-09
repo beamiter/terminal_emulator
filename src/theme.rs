@@ -827,6 +827,67 @@ impl Theme {
         Ok(())
     }
 
+    /// Custom themes directory
+    pub fn custom_themes_dir() -> Option<std::path::PathBuf> {
+        dirs::config_dir().map(|d| d.join("terminal_emulator").join("themes"))
+    }
+
+    /// Load all custom themes from the themes directory
+    pub fn load_custom_themes() -> Vec<Self> {
+        let Some(dir) = Self::custom_themes_dir() else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return Vec::new();
+        };
+        let mut themes = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "toml") {
+                if let Ok(theme) = Self::from_file(&path) {
+                    themes.push(theme);
+                }
+            }
+        }
+        themes.sort_by(|a, b| a.name.cmp(&b.name));
+        themes
+    }
+
+    /// Save this theme as a custom theme file
+    pub fn save_custom_theme(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = Self::custom_themes_dir()
+            .ok_or("Cannot determine config directory")?;
+        std::fs::create_dir_all(&dir)?;
+        let filename = format!("{}.toml", self.name);
+        let path = dir.join(filename);
+        self.save(&path)
+    }
+
+    /// Delete a custom theme file
+    pub fn delete_custom_theme(name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = Self::custom_themes_dir()
+            .ok_or("Cannot determine config directory")?;
+        let filename = format!("{}.toml", name);
+        let path = dir.join(filename);
+        if path.exists() {
+            std::fs::remove_file(&path)?;
+        }
+        Ok(())
+    }
+
+    /// Get a theme by name — checks builtins first, then custom themes
+    pub fn get_theme(name: &str) -> Option<Self> {
+        if let Some(t) = Self::get_builtin(name) {
+            return Some(t);
+        }
+        Self::load_custom_themes().into_iter().find(|t| t.name == name)
+    }
+
+    /// Check if a theme name is a builtin
+    pub fn is_builtin(name: &str) -> bool {
+        Self::get_builtin(name).is_some()
+    }
+
     /// 将 RGB 数组转换为 Color32
     pub fn rgb_to_color32(rgb: [u8; 3]) -> Color32 {
         Color32::from_rgb(rgb[0], rgb[1], rgb[2])

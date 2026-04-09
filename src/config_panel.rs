@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::theme::Theme;
 use egui::{Color32, RichText};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,6 +15,7 @@ pub enum ConfigAction {
     LineSpacingChanged(f32),
     FontFamilyChanged(String),
     ThemeChanged(String),
+    CustomThemeApplied(Box<Theme>),
     PaddingChanged(f32),
     ScrollbackLinesChanged(usize),
     DebugPanelToggled(bool),
@@ -41,6 +43,11 @@ pub struct ConfigPanel {
     // Font filter
     font_filter: String,
     show_all_fonts: bool,
+    // Custom theme editor
+    custom_themes: Vec<Theme>,
+    editing_theme: Option<Theme>,
+    custom_theme_name: String,
+    base_theme_for_new: String,
     // 保存编辑状态
     has_changes: bool,
 }
@@ -60,21 +67,35 @@ impl ConfigPanel {
             edit_debug_overlay: false,
             monospace_fonts: Vec::new(),
             all_fonts: Vec::new(),
-            available_themes: crate::theme::Theme::available_themes()
-                .iter()
-                .map(|s| s.to_string())
-                .collect(),
+            available_themes: Vec::new(),
             fonts_loaded: false,
             font_filter: String::new(),
             show_all_fonts: false,
+            custom_themes: Vec::new(),
+            editing_theme: None,
+            custom_theme_name: String::new(),
+            base_theme_for_new: "dark".to_string(),
             has_changes: false,
         }
+    }
+
+    pub fn refresh_theme_list(&mut self) {
+        self.custom_themes = Theme::load_custom_themes();
+        let mut themes: Vec<String> = Theme::available_themes()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        for ct in &self.custom_themes {
+            if !themes.contains(&ct.name) {
+                themes.push(ct.name.clone());
+            }
+        }
+        self.available_themes = themes;
     }
 
     pub fn open(&mut self, config: &Config) {
         self.is_open = true;
         self.has_changes = false;
-        // 从当前 config 拷贝值到编辑字段
         self.edit_font_size = config.font_size;
         self.edit_line_spacing = config.line_spacing;
         self.edit_padding = config.padding;
@@ -83,7 +104,6 @@ impl ConfigPanel {
         self.edit_theme = config.theme.clone();
         self.edit_restore_session = config.restore_session;
 
-        // 缓存系统字体列表（只加载一次）
         if !self.fonts_loaded {
             self.monospace_fonts = Config::get_monospace_fonts();
             self.all_fonts = Config::get_all_fonts();
@@ -98,10 +118,12 @@ impl ConfigPanel {
             self.fonts_loaded = true;
         }
         self.font_filter.clear();
+        self.refresh_theme_list();
     }
 
     pub fn close(&mut self) {
         self.is_open = false;
+        self.editing_theme = None;
     }
 
     pub fn toggle(&mut self, config: &Config) {
@@ -120,8 +142,8 @@ impl ConfigPanel {
         }
 
         let screen_rect = ctx.viewport_rect();
-        let panel_width = 550.0;
-        let panel_height = 500.0;
+        let panel_width = 580.0;
+        let panel_height = 560.0;
         let panel_pos = egui::pos2(
             (screen_rect.width() - panel_width) / 2.0,
             (screen_rect.height() - panel_height) / 3.0,
@@ -143,10 +165,11 @@ impl ConfigPanel {
             .show(ctx, |ui| {
                 // 标题栏
                 ui.horizontal(|ui| {
-                    ui.heading(RichText::new("⚙ Settings").size(18.0).strong());
+                    ui.heading(RichText::new("Settings").size(18.0).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("✕").clicked() {
+                        if ui.button("x").clicked() {
                             self.is_open = false;
+                            self.editing_theme = None;
                         }
                     });
                 });
@@ -154,9 +177,9 @@ impl ConfigPanel {
 
                 // Tab 栏
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.active_tab, ConfigTab::Font, "🔤 Font");
-                    ui.selectable_value(&mut self.active_tab, ConfigTab::Appearance, "🎨 Appearance");
-                    ui.selectable_value(&mut self.active_tab, ConfigTab::Advanced, "⚙ Advanced");
+                    ui.selectable_value(&mut self.active_tab, ConfigTab::Font, "Font");
+                    ui.selectable_value(&mut self.active_tab, ConfigTab::Appearance, "Appearance");
+                    ui.selectable_value(&mut self.active_tab, ConfigTab::Advanced, "Advanced");
                 });
                 ui.separator();
 
@@ -181,15 +204,15 @@ impl ConfigPanel {
                 // 底部按钮栏
                 ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("↺ Reset to Defaults").clicked() {
+                    if ui.button("Reset to Defaults").clicked() {
                         actions.push(ConfigAction::ResetToDefaults);
                         self.has_changes = true;
                     }
                     if self.has_changes {
-                        ui.label(RichText::new("●").color(Color32::from_rgb(200, 150, 0)).size(12.0));
+                        ui.label(RichText::new("*").color(Color32::from_rgb(200, 150, 0)).size(12.0));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("✓ Save").clicked() {
+                        if ui.button("Save").clicked() {
                             actions.push(ConfigAction::SaveRequested);
                             self.has_changes = false;
                         }
@@ -204,7 +227,6 @@ impl ConfigPanel {
         ui.label(RichText::new("Font Settings").strong().size(14.0));
         ui.separator();
 
-        // Font Size slider
         ui.horizontal(|ui| {
             ui.label("Size:");
             if ui
@@ -223,7 +245,6 @@ impl ConfigPanel {
 
         ui.separator();
 
-        // Line Spacing slider
         ui.horizontal(|ui| {
             ui.label("Line Spacing:");
             if ui
@@ -241,7 +262,6 @@ impl ConfigPanel {
 
         ui.separator();
 
-        // Current font display
         let current_display = if self.edit_font_family.is_empty() {
             "Default".to_string()
         } else {
@@ -254,7 +274,6 @@ impl ConfigPanel {
 
         ui.add_space(4.0);
 
-        // Search / filter input
         ui.horizontal(|ui| {
             ui.label("Search:");
             ui.add(
@@ -269,7 +288,6 @@ impl ConfigPanel {
             }
         });
 
-        // Toggle: show all fonts vs monospace only
         ui.horizontal(|ui| {
             ui.checkbox(&mut self.show_all_fonts, "Show all fonts");
             let count = if self.show_all_fonts {
@@ -286,7 +304,6 @@ impl ConfigPanel {
 
         ui.add_space(4.0);
 
-        // Font list
         let filter_lower = self.font_filter.to_lowercase();
         let fonts: &Vec<String> = if self.show_all_fonts {
             &self.all_fonts
@@ -294,7 +311,6 @@ impl ConfigPanel {
             &self.monospace_fonts
         };
 
-        // "Default" option at top
         let show_default = self.font_filter.is_empty() || "default".contains(&filter_lower);
         let matched_fonts: Vec<&String> = fonts
             .iter()
@@ -341,12 +357,11 @@ impl ConfigPanel {
                 });
         }
 
-        // Warning if font not found
         if !self.edit_font_family.is_empty()
             && !self.monospace_fonts.iter().any(|f| f == &self.edit_font_family)
             && !self.all_fonts.iter().any(|f| f == &self.edit_font_family)
         {
-            ui.colored_label(Color32::YELLOW, "⚠ Font not found in system");
+            ui.colored_label(Color32::YELLOW, "Font not found in system");
         }
 
         ui.add_space(2.0);
@@ -361,15 +376,24 @@ impl ConfigPanel {
         ui.label(RichText::new("Appearance Settings").strong().size(14.0));
         ui.separator();
 
-        // Theme ComboBox
+        // Theme selector
         ui.horizontal(|ui| {
             ui.label("Theme:");
-            if egui::ComboBox::from_label("")
+            if egui::ComboBox::from_id_salt("theme_selector")
                 .selected_text(self.edit_theme.clone())
                 .show_ui(ui, |ui| {
                     let mut changed = false;
                     for theme in &self.available_themes {
-                        if ui.selectable_value(&mut self.edit_theme, theme.clone(), theme).changed() {
+                        let is_custom = !Theme::is_builtin(theme);
+                        let label = if is_custom {
+                            format!("{} (custom)", theme)
+                        } else {
+                            theme.clone()
+                        };
+                        if ui
+                            .selectable_value(&mut self.edit_theme, theme.clone(), label)
+                            .changed()
+                        {
                             changed = true;
                         }
                     }
@@ -378,10 +402,63 @@ impl ConfigPanel {
                 .inner
                 .unwrap_or(false)
             {
+                self.editing_theme = None;
                 actions.push(ConfigAction::ThemeChanged(self.edit_theme.clone()));
                 self.has_changes = true;
             }
         });
+
+        // Custom theme management buttons
+        ui.horizontal(|ui| {
+            // Edit current custom theme
+            if !Theme::is_builtin(&self.edit_theme) {
+                if ui.button("Edit").clicked() {
+                    if let Some(ct) = self.custom_themes.iter().find(|t| t.name == self.edit_theme) {
+                        self.editing_theme = Some(ct.clone());
+                        self.custom_theme_name = ct.name.clone();
+                    }
+                }
+                if ui.button("Delete").clicked() {
+                    let name = self.edit_theme.clone();
+                    let _ = Theme::delete_custom_theme(&name);
+                    self.edit_theme = "dark".to_string();
+                    self.editing_theme = None;
+                    self.refresh_theme_list();
+                    actions.push(ConfigAction::ThemeChanged("dark".to_string()));
+                    self.has_changes = true;
+                }
+            }
+        });
+
+        ui.add_space(4.0);
+
+        // New custom theme
+        if self.editing_theme.is_none() {
+            ui.horizontal(|ui| {
+                ui.label("Base:");
+                egui::ComboBox::from_id_salt("base_theme_for_new")
+                    .selected_text(self.base_theme_for_new.clone())
+                    .width(120.0)
+                    .show_ui(ui, |ui| {
+                        for name in Theme::available_themes() {
+                            ui.selectable_value(
+                                &mut self.base_theme_for_new,
+                                name.to_string(),
+                                name,
+                            );
+                        }
+                    });
+                if ui.button("+ New Custom Theme").clicked() {
+                    if let Some(base) = Theme::get_builtin(&self.base_theme_for_new) {
+                        let custom_name = self.generate_custom_name(&self.base_theme_for_new.clone());
+                        let mut new_theme = base;
+                        new_theme.name = custom_name.clone();
+                        self.custom_theme_name = custom_name;
+                        self.editing_theme = Some(new_theme);
+                    }
+                }
+            });
+        }
 
         ui.separator();
 
@@ -401,13 +478,211 @@ impl ConfigPanel {
             }
             ui.label("px");
         });
+
+        // Theme editor (inline)
+        if self.editing_theme.is_some() {
+            ui.separator();
+            render_theme_editor(
+                ui,
+                actions,
+                &mut self.editing_theme,
+                &mut self.custom_theme_name,
+                &mut self.edit_theme,
+                &mut self.available_themes,
+                &mut self.custom_themes,
+                &mut self.has_changes,
+            );
+        }
     }
 
+    fn generate_custom_name(&self, base: &str) -> String {
+        let existing: Vec<&str> = self.custom_themes.iter().map(|t| t.name.as_str()).collect();
+        for i in 1..100 {
+            let name = format!("custom-{}-{}", base, i);
+            if !existing.contains(&name.as_str()) {
+                return name;
+            }
+        }
+        format!("custom-{}", base)
+    }
+
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_theme_editor(
+    ui: &mut egui::Ui,
+    actions: &mut Vec<ConfigAction>,
+    editing_theme: &mut Option<Theme>,
+    custom_theme_name: &mut String,
+    edit_theme: &mut String,
+    available_themes: &mut Vec<String>,
+    custom_themes: &mut Vec<Theme>,
+    has_changes: &mut bool,
+) {
+    let mut changed = false;
+    let mut should_cancel = false;
+    let mut should_save = false;
+
+    // Name field + action buttons
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Theme Editor").strong().size(13.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Cancel").clicked() {
+                should_cancel = true;
+            }
+            if ui.button("Save Theme").clicked() {
+                should_save = true;
+            }
+        });
+    });
+
+    if should_cancel {
+        *editing_theme = None;
+        return;
+    }
+
+    if should_save {
+        if let Some(theme) = editing_theme.as_mut() {
+            theme.name.clone_from(custom_theme_name);
+            if let Err(e) = theme.save_custom_theme() {
+                eprintln!("[Theme] Failed to save: {}", e);
+            } else {
+                edit_theme.clone_from(&theme.name);
+                // Refresh theme list
+                *custom_themes = Theme::load_custom_themes();
+                let mut themes: Vec<String> = Theme::available_themes()
+                    .iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                for ct in custom_themes.iter() {
+                    if !themes.contains(&ct.name) {
+                        themes.push(ct.name.clone());
+                    }
+                }
+                *available_themes = themes;
+                actions.push(ConfigAction::ThemeChanged(edit_theme.clone()));
+                *has_changes = true;
+            }
+        }
+        *editing_theme = None;
+        return;
+    }
+
+    ui.horizontal(|ui| {
+        ui.label("Name:");
+        ui.text_edit_singleline(custom_theme_name);
+    });
+
+    ui.add_space(4.0);
+
+    let Some(theme) = editing_theme.as_mut() else {
+        return;
+    };
+
+    // Terminal Colors
+    egui::CollapsingHeader::new(RichText::new("Terminal").strong())
+        .default_open(true)
+        .show(ui, |ui| {
+            changed |= color_row_rgb(ui, "Foreground", &mut theme.terminal.foreground);
+            changed |= color_row_rgb(ui, "Background", &mut theme.terminal.background);
+            changed |= color_row_rgb(ui, "Cursor", &mut theme.terminal.cursor);
+            changed |= color_row_rgba(ui, "Selection", &mut theme.terminal.selection);
+        });
+
+    // ANSI Colors
+    egui::CollapsingHeader::new(RichText::new("ANSI Colors").strong())
+        .default_open(false)
+        .show(ui, |ui| {
+            let names = [
+                "Black", "Red", "Green", "Yellow",
+                "Blue", "Magenta", "Cyan", "White",
+                "Bright Black", "Bright Red", "Bright Green", "Bright Yellow",
+                "Bright Blue", "Bright Magenta", "Bright Cyan", "Bright White",
+            ];
+            ui.label(RichText::new("Normal").size(11.0).color(Color32::from_rgb(160, 160, 160)));
+            egui::Grid::new("ansi_normal").num_columns(8).spacing([4.0, 2.0]).show(ui, |ui| {
+                for i in 0..8 {
+                    changed |= color_btn_rgb(ui, names[i], &mut theme.terminal.ansi_colors[i]);
+                }
+                ui.end_row();
+            });
+            ui.add_space(4.0);
+            ui.label(RichText::new("Bright").size(11.0).color(Color32::from_rgb(160, 160, 160)));
+            egui::Grid::new("ansi_bright").num_columns(8).spacing([4.0, 2.0]).show(ui, |ui| {
+                for i in 8..16 {
+                    changed |= color_btn_rgb(ui, names[i], &mut theme.terminal.ansi_colors[i]);
+                }
+                ui.end_row();
+            });
+        });
+
+    // UI Colors
+    egui::CollapsingHeader::new(RichText::new("UI").strong())
+        .default_open(false)
+        .show(ui, |ui| {
+            changed |= color_row_rgb(ui, "Window BG", &mut theme.ui.window_bg);
+            changed |= color_row_rgb(ui, "Panel BG", &mut theme.ui.panel_bg);
+            changed |= color_row_rgb(ui, "Border", &mut theme.ui.border);
+            changed |= color_row_rgb(ui, "Text", &mut theme.ui.text);
+            changed |= color_row_rgb(ui, "Text Disabled", &mut theme.ui.text_disabled);
+        });
+
+    // Tab Bar
+    egui::CollapsingHeader::new(RichText::new("Tab Bar").strong())
+        .default_open(false)
+        .show(ui, |ui| {
+            changed |= color_row_rgb(ui, "Background", &mut theme.tabbar.bg);
+            changed |= color_row_rgb(ui, "Border", &mut theme.tabbar.border);
+            changed |= color_row_rgb(ui, "Inactive Text", &mut theme.tabbar.inactive_text);
+            changed |= color_row_rgb(ui, "Active Text", &mut theme.tabbar.active_text);
+            changed |= color_row_rgb(ui, "Active Border", &mut theme.tabbar.active_border);
+            changed |= color_row_rgb(ui, "Close Btn", &mut theme.tabbar.close_btn_bg);
+            changed |= color_row_rgb(ui, "Close Hover", &mut theme.tabbar.close_btn_hover);
+        });
+
+    // Scrollbar
+    egui::CollapsingHeader::new(RichText::new("Scrollbar").strong())
+        .default_open(false)
+        .show(ui, |ui| {
+            changed |= color_row_rgba(ui, "Track Normal", &mut theme.scrollbar.track_normal);
+            changed |= color_row_rgba(ui, "Track Hover", &mut theme.scrollbar.track_hover);
+            changed |= color_row_rgba(ui, "Track Drag", &mut theme.scrollbar.track_drag);
+            changed |= color_row_rgba(ui, "Thumb Normal", &mut theme.scrollbar.thumb_normal);
+            changed |= color_row_rgba(ui, "Thumb Hover", &mut theme.scrollbar.thumb_hover);
+            changed |= color_row_rgba(ui, "Thumb Drag", &mut theme.scrollbar.thumb_drag);
+        });
+
+    // Search
+    egui::CollapsingHeader::new(RichText::new("Search").strong())
+        .default_open(false)
+        .show(ui, |ui| {
+            changed |= color_row_rgb(ui, "Background", &mut theme.search.bg);
+            changed |= color_row_rgb(ui, "Border", &mut theme.search.border);
+            changed |= color_row_rgb(ui, "Text", &mut theme.search.text);
+        });
+
+    // Command Palette
+    egui::CollapsingHeader::new(RichText::new("Command Palette").strong())
+        .default_open(false)
+        .show(ui, |ui| {
+            changed |= color_row_rgb(ui, "Session", &mut theme.palette.session_color);
+            changed |= color_row_rgb(ui, "Edit", &mut theme.palette.edit_color);
+            changed |= color_row_rgb(ui, "Search", &mut theme.palette.search_color);
+            changed |= color_row_rgb(ui, "Terminal", &mut theme.palette.terminal_color);
+            changed |= color_row_rgb(ui, "Window", &mut theme.palette.window_color);
+        });
+
+    // Live preview
+    if changed {
+        actions.push(ConfigAction::CustomThemeApplied(Box::new(theme.clone())));
+    }
+}
+
+impl ConfigPanel {
     fn render_advanced_tab(&mut self, ui: &mut egui::Ui, actions: &mut Vec<ConfigAction>) {
         ui.label(RichText::new("Advanced Settings").strong().size(14.0));
         ui.separator();
 
-        // Scrollback lines slider (logarithmic for large range)
         ui.horizontal(|ui| {
             ui.label("Scrollback Lines:");
             if ui
@@ -425,7 +700,6 @@ impl ConfigPanel {
 
         ui.separator();
 
-        // Restore session checkbox
         if ui
             .checkbox(&mut self.edit_restore_session, "Restore sessions on startup")
             .changed()
@@ -435,7 +709,6 @@ impl ConfigPanel {
 
         ui.separator();
 
-        // Debug overlay toggle
         if ui
             .checkbox(&mut self.edit_debug_overlay, "Show debug overlay (F12)")
             .changed()
@@ -445,3 +718,59 @@ impl ConfigPanel {
     }
 }
 
+// Helper: RGB color row with label + color picker
+fn color_row_rgb(ui: &mut egui::Ui, label: &str, color: &mut [u8; 3]) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(label).size(11.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.color_edit_button_srgb(color).changed() {
+                changed = true;
+            }
+            ui.label(
+                RichText::new(format!("#{:02X}{:02X}{:02X}", color[0], color[1], color[2]))
+                    .size(10.0)
+                    .monospace()
+                    .color(Color32::from_rgb(140, 140, 140)),
+            );
+        });
+    });
+    changed
+}
+
+// Helper: RGBA color row with label + color picker
+fn color_row_rgba(ui: &mut egui::Ui, label: &str, color: &mut [u8; 4]) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new(label).size(11.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let mut c32 = Color32::from_rgba_unmultiplied(color[0], color[1], color[2], color[3]);
+            if egui::widgets::color_picker::color_edit_button_srgba(
+                ui,
+                &mut c32,
+                egui::color_picker::Alpha::OnlyBlend,
+            )
+            .changed()
+            {
+                *color = [c32.r(), c32.g(), c32.b(), c32.a()];
+                changed = true;
+            }
+            ui.label(
+                RichText::new(format!(
+                    "#{:02X}{:02X}{:02X}{:02X}",
+                    color[0], color[1], color[2], color[3]
+                ))
+                .size(10.0)
+                .monospace()
+                .color(Color32::from_rgb(140, 140, 140)),
+            );
+        });
+    });
+    changed
+}
+
+// Helper: compact color button (for ANSI grid)
+fn color_btn_rgb(ui: &mut egui::Ui, tooltip: &str, color: &mut [u8; 3]) -> bool {
+    let changed = ui.color_edit_button_srgb(color).on_hover_text(tooltip).changed();
+    changed
+}

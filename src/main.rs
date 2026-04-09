@@ -702,7 +702,7 @@ impl TerminalApp {
         let keybindings = keybindings::KeyBindings::load().unwrap_or_default();
 
         // Load theme
-        let current_theme = theme::Theme::get_builtin(&cfg.theme)
+        let current_theme = theme::Theme::get_theme(&cfg.theme)
             .unwrap_or_default();
 
         let renderer = TerminalRenderer::new(
@@ -1654,9 +1654,9 @@ impl TerminalApp {
                     self.config.font_family = family;
                     self.schedule_config_save();
                 }
-                config_panel::ConfigAction::ThemeChanged(theme) => {
-                    self.config.theme = theme.clone();
-                    if let Some(t) = theme::Theme::get_builtin(&theme) {
+                config_panel::ConfigAction::ThemeChanged(theme_name) => {
+                    self.config.theme = theme_name.clone();
+                    if let Some(t) = theme::Theme::get_theme(&theme_name) {
                         self.current_theme = t.clone();
                         self.renderer.theme = t.clone();
                         for r in &mut self.pane_renderers {
@@ -1664,6 +1664,13 @@ impl TerminalApp {
                         }
                     }
                     self.schedule_config_save();
+                }
+                config_panel::ConfigAction::CustomThemeApplied(theme) => {
+                    self.current_theme = *theme.clone();
+                    self.renderer.theme = *theme.clone();
+                    for r in &mut self.pane_renderers {
+                        r.theme = *theme.clone();
+                    }
                 }
                 config_panel::ConfigAction::PaddingChanged(padding) => {
                     self.config.padding = padding;
