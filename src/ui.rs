@@ -265,18 +265,10 @@ impl TerminalRenderer {
     pub fn sync_font_metrics(&mut self, ctx: &egui::Context) {
         let font_id = FontId::monospace(self.font_size);
         let (char_width, line_height) = ctx.fonts_mut(|fonts| {
-            // Use max glyph width for monospace grid to prevent text overlap
-            let widths = ['M', 'W', 'i', ' ', '0', 'A', '(', ')']
-                .iter()
-                .map(|&c| fonts.glyph_width(&font_id, c))
-                .filter(|&w| w > 0.0)
-                .collect::<Vec<_>>();
-
-            let glyph_width = if widths.is_empty() {
-                fonts.glyph_width(&font_id, 'W')
-            } else {
-                widths.iter().cloned().fold(0.0f32, f32::max)
-            };
+            // For monospace fonts, measure a single representative character.
+            // We render each character at its exact grid position, so the advance
+            // width only determines the grid cell size, not the text layout.
+            let glyph_width = fonts.glyph_width(&font_id, '0');
 
             let row_height = fonts.row_height(&font_id);
             (glyph_width, row_height)
@@ -793,10 +785,10 @@ impl TerminalRenderer {
                 let has_strikethrough = cell.flags.strikethrough;
                 let is_wide = cell.wide;
 
-                // Start a text run from this cell
+                // Collect consecutive same-style cells for decoration spans,
+                // but render each character individually at its exact grid position
+                // to avoid cumulative drift from font advance vs grid cell width mismatch.
                 let run_start_col = col_idx;
-                let mut run_text = String::new();
-                run_text.push(cell.character);
 
                 // Collect decoration spans for this run: (col_start, col_end_exclusive)
                 let mut underline_spans: Vec<(usize, usize)> = Vec::new();
@@ -808,90 +800,99 @@ impl TerminalRenderer {
                     strikethrough_spans.push((col_idx, col_idx + if is_wide { 2 } else { 1 }));
                 }
 
-                col_idx += if is_wide { 2 } else { 1 };
-
-                // Extend run with consecutive same-style non-wide cells
-                if !is_wide {
-                    while col_idx < cols {
-                        let next = &grid[row_idx][col_idx];
-                        if next.wide_continuation || next.character == ' ' || next.wide {
-                            break;
-                        }
-                        // Compute next cell's fg
-                        let mut next_fg = if next.flags.inverse {
-                            resolve_background_color(next.background, &self.theme)
-                        } else {
-                            resolve_foreground_color(next.foreground, &self.theme)
-                        };
-                        let next_is_link = if links.is_empty() {
-                            false
-                        } else {
-                            let mut found = false;
-                            for link in links {
-                                if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
-                                    let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
-                                    next_fg = if is_hovered_link {
-                                        Color32::from_rgb(100, 200, 255)
-                                    } else {
-                                        Color32::from_rgb(50, 150, 255)
-                                    };
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            found
-                        };
-                        // Break run if style differs
-                        if next_fg != fg_color || next.flags.bold != bold {
-                            break;
-                        }
-                        run_text.push(next.character);
-                        let next_has_underline = next.flags.underline || next_is_link;
-                        let next_has_strikethrough = next.flags.strikethrough;
-                        if next_has_underline {
-                            // Try to extend last span or start new one
-                            if let Some(last) = underline_spans.last_mut() {
-                                if last.1 == col_idx {
-                                    last.1 = col_idx + 1;
-                                } else {
-                                    underline_spans.push((col_idx, col_idx + 1));
-                                }
-                            } else {
-                                underline_spans.push((col_idx, col_idx + 1));
-                            }
-                        }
-                        if next_has_strikethrough {
-                            if let Some(last) = strikethrough_spans.last_mut() {
-                                if last.1 == col_idx {
-                                    last.1 = col_idx + 1;
-                                } else {
-                                    strikethrough_spans.push((col_idx, col_idx + 1));
-                                }
-                            } else {
-                                strikethrough_spans.push((col_idx, col_idx + 1));
-                            }
-                        }
-                        col_idx += 1;
-                    }
-                }
-
-                // Render the batched run
+                // Render this character at its exact grid position
                 let mut font_id = FontId::monospace(self.font_size);
                 if bold {
                     font_id.size *= 1.1;
                 }
 
-                let galley = ui.painter().layout_no_wrap(
-                    run_text,
-                    font_id,
-                    fg_color,
-                );
-
-                let (run_x, _) = snapped_span(content_rect.left(), run_start_col, char_width);
+                let ch_str = if is_wide {
+                    cell.character.to_string()
+                } else {
+                    cell.character.to_string()
+                };
+                let galley = ui.painter().layout_no_wrap(ch_str, font_id.clone(), fg_color);
+                let (cx, cw) = snapped_span(content_rect.left(), col_idx, char_width);
                 let text_y = y + (snapped_height - galley.size().y) / 2.0;
-                painter.galley(egui::pos2(run_x, text_y), galley, fg_color);
+                // Center the glyph within the grid cell
+                let cell_width = if is_wide { cw + snapped_span(content_rect.left(), col_idx + 1, char_width).1 } else { cw };
+                let glyph_x = cx + (cell_width - galley.size().x) / 2.0;
+                painter.galley(egui::pos2(glyph_x, text_y), galley, fg_color);
+
+                col_idx += if is_wide { 2 } else { 1 };
+
+                // Extend decoration spans with consecutive same-style cells
+                // (characters are rendered individually above in next loop iterations)
+                let mut peek_idx = col_idx;
+                while peek_idx < cols {
+                    let next = &grid[row_idx][peek_idx];
+                    if next.wide_continuation || next.character == ' ' || next.wide {
+                        break;
+                    }
+                    let mut next_fg = if next.flags.inverse {
+                        resolve_background_color(next.background, &self.theme)
+                    } else {
+                        resolve_foreground_color(next.foreground, &self.theme)
+                    };
+                    let next_is_link = if links.is_empty() {
+                        false
+                    } else {
+                        let mut found = false;
+                        for link in links {
+                            if link.line == row_idx && peek_idx >= link.col_start && peek_idx < link.col_end {
+                                let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                                next_fg = if is_hovered_link {
+                                    Color32::from_rgb(100, 200, 255)
+                                } else {
+                                    Color32::from_rgb(50, 150, 255)
+                                };
+                                found = true;
+                                break;
+                            }
+                        }
+                        found
+                    };
+                    if next_fg != fg_color || next.flags.bold != bold {
+                        break;
+                    }
+                    // Render this character at its exact grid position
+                    let ch_galley = ui.painter().layout_no_wrap(
+                        next.character.to_string(), font_id.clone(), fg_color,
+                    );
+                    let (nx, nw) = snapped_span(content_rect.left(), peek_idx, char_width);
+                    let glyph_nx = nx + (nw - ch_galley.size().x) / 2.0;
+                    painter.galley(egui::pos2(glyph_nx, text_y), ch_galley, fg_color);
+
+                    let next_has_underline = next.flags.underline || next_is_link;
+                    let next_has_strikethrough = next.flags.strikethrough;
+                    if next_has_underline {
+                        if let Some(last) = underline_spans.last_mut() {
+                            if last.1 == peek_idx {
+                                last.1 = peek_idx + 1;
+                            } else {
+                                underline_spans.push((peek_idx, peek_idx + 1));
+                            }
+                        } else {
+                            underline_spans.push((peek_idx, peek_idx + 1));
+                        }
+                    }
+                    if next_has_strikethrough {
+                        if let Some(last) = strikethrough_spans.last_mut() {
+                            if last.1 == peek_idx {
+                                last.1 = peek_idx + 1;
+                            } else {
+                                strikethrough_spans.push((peek_idx, peek_idx + 1));
+                            }
+                        } else {
+                            strikethrough_spans.push((peek_idx, peek_idx + 1));
+                        }
+                    }
+                    peek_idx += 1;
+                }
+                col_idx = peek_idx;
 
                 // Draw decoration spans
+                let _ = run_start_col;
                 for (span_start, span_end) in &underline_spans {
                     let (sx, _) = snapped_span(content_rect.left(), *span_start, char_width);
                     let (ex, ew) = snapped_span(content_rect.left(), *span_end - 1, char_width);
