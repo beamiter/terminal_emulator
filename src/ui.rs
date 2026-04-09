@@ -519,6 +519,28 @@ impl TerminalRenderer {
             }
         }
 
+        // Double-click: select word at cursor position
+        if response.double_clicked() && !self.dragging_scrollbar {
+            if let Some(pos) = response.interact_pointer_pos() {
+                if pos.x < scrollbar_x {
+                    let clamped_x = (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
+                    let clamped_y = (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
+
+                    let col = if char_width > 0.0 {
+                        ((clamped_x / char_width) as usize).min(cols - 1)
+                    } else {
+                        0
+                    };
+                    let row = if line_height > 0.0 {
+                        ((clamped_y / line_height) as usize).min(rows - 1)
+                    } else {
+                        0
+                    };
+                    terminal.select_word_at(row, col);
+                }
+            }
+        }
+
         // Text selection: only when not interacting with scrollbar
         if response.drag_started() && !self.dragging_scrollbar {
             if let Some(pos) = response.interact_pointer_pos() {

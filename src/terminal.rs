@@ -2,6 +2,24 @@ use std::collections::VecDeque;
 use base64::Engine;
 use crate::kitty_graphics::KittyGraphicsState;
 
+/// Character class for word selection boundaries.
+#[derive(PartialEq)]
+enum CharClass {
+    Word,
+    Whitespace,
+    Symbol,
+}
+
+fn char_class(c: char) -> CharClass {
+    if c.is_alphanumeric() || c == '_' {
+        CharClass::Word
+    } else if c == ' ' || c == '\t' || c == '\0' {
+        CharClass::Whitespace
+    } else {
+        CharClass::Symbol
+    }
+}
+
 const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
 const SECONDARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[>1;7802;0c";
 const XTERM_VERSION_RESPONSE: &[u8] = b"\x1bP>|VTE(7802)\x1b\\";
@@ -2005,6 +2023,78 @@ impl TerminalState {
 
     pub fn select_text(&mut self, anchor: (usize, usize), active: (usize, usize)) {
         self.selection = Some(Selection { anchor, active });
+    }
+
+    /// Select the word at the given (row, col) position in the visible grid.
+    /// Word boundaries are determined by character class: alphanumeric/underscore,
+    /// whitespace, or punctuation/symbols.
+    pub fn select_word_at(&mut self, row: usize, col: usize) {
+        let visible = self.get_visible_cells();
+        if row >= visible.len() {
+            return;
+        }
+        let line = &visible[row];
+        let cols = line.len();
+        if col >= cols {
+            return;
+        }
+
+        // Skip wide_continuation to find the real character
+        let mut start_col = col;
+        if line[start_col].wide_continuation && start_col > 0 {
+            start_col -= 1;
+        }
+
+        let ch = line[start_col].character;
+        let class = char_class(ch);
+
+        // Expand left
+        let mut left = start_col;
+        while left > 0 {
+            let prev = left - 1;
+            let c = line[prev].character;
+            if line[prev].wide_continuation {
+                left = prev;
+                continue;
+            }
+            if char_class(c) != class {
+                break;
+            }
+            left = prev;
+        }
+
+        // Expand right
+        let mut right = start_col;
+        loop {
+            let next = if line[right].wide { right + 2 } else { right + 1 };
+            if next >= cols {
+                break;
+            }
+            if line[next].wide_continuation {
+                // shouldn't happen after a non-wide char, but skip
+                if next + 1 < cols {
+                    if char_class(line[next + 1].character) != class {
+                        break;
+                    }
+                    right = next + 1;
+                    continue;
+                }
+                break;
+            }
+            if char_class(line[next].character) != class {
+                break;
+            }
+            right = next;
+        }
+        // If the selected end is a wide char, include its continuation cell
+        if line[right].wide && right + 1 < cols {
+            right += 1;
+        }
+
+        self.selection = Some(Selection {
+            anchor: (row, left),
+            active: (row, right),
+        });
     }
 
     pub fn copy_selection(&self) -> Option<String> {
