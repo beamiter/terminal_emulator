@@ -913,9 +913,15 @@ impl Theme {
         Self::rgb_to_color32(self.terminal.cursor)
     }
 
-    /// 获取选择颜色
+    /// 获取选择背景色 - 基于前景色计算，确保与任意主题的高对比度
     pub fn selection_color(&self) -> Color32 {
-        Self::rgba_to_color32(self.terminal.selection)
+        let fg = self.terminal.foreground;
+        Color32::from_rgba_unmultiplied(fg[0], fg[1], fg[2], 90)
+    }
+
+    /// 获取选中文本的前景色 - 使用背景色确保与选择背景的对比度
+    pub fn selection_fg_color(&self) -> Color32 {
+        Self::rgb_to_color32(self.terminal.background)
     }
 
     /// 获取 ANSI 颜色

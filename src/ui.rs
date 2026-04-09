@@ -777,7 +777,10 @@ impl TerminalRenderer {
                 }
 
                 // Determine this cell's style
-                let mut fg_color = if cell.flags.inverse {
+                let is_selected = terminal.is_cell_selected(row_idx, col_idx);
+                let mut fg_color = if is_selected {
+                    self.theme.selection_fg_color()
+                } else if cell.flags.inverse {
                     resolve_background_color(cell.background, &self.theme)
                 } else {
                     resolve_foreground_color(cell.foreground, &self.theme)
