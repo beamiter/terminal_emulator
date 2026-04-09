@@ -333,7 +333,7 @@ impl TerminalRenderer {
         let usable_height = content_size.y;
 
         let cols = (usable_width / self.char_width).floor().max(1.0) as usize;
-        let rows = (usable_height / self.line_height).round().max(1.0) as usize;
+        let rows = (usable_height / self.line_height).floor().max(1.0) as usize;
 
         (cols, rows)
     }
