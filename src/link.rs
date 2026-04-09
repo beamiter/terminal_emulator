@@ -82,6 +82,11 @@ impl LinkDetector {
         }
     }
 
+    /// 将字节偏移转换为字符（列）偏移
+    fn byte_offset_to_char_offset(line: &str, byte_offset: usize) -> usize {
+        line[..byte_offset].chars().count()
+    }
+
     /// 在单行文本中检测所有链接
     pub fn detect_links_in_line(&self, line: &str, line_idx: usize) -> Vec<Link> {
         let mut links = Vec::new();
@@ -89,10 +94,12 @@ impl LinkDetector {
         // 检测 URL
         if self.config.detect_urls {
             for mat in self.url_regex.find_iter(line) {
+                let col_start = Self::byte_offset_to_char_offset(line, mat.start());
+                let col_end = Self::byte_offset_to_char_offset(line, mat.end());
                 links.push(Link {
                     line: line_idx,
-                    col_start: mat.start(),
-                    col_end: mat.end(),
+                    col_start,
+                    col_end,
                     link_type: LinkType::Url,
                     text: mat.as_str().to_string(),
                 });
@@ -102,14 +109,16 @@ impl LinkDetector {
         // 检测 IP 地址
         if self.config.detect_ip_addresses {
             for mat in self.ip_regex.find_iter(line) {
+                let col_start = Self::byte_offset_to_char_offset(line, mat.start());
+                let col_end = Self::byte_offset_to_char_offset(line, mat.end());
                 // 避免与 URL 重复
                 if !links.iter().any(|l| {
-                    l.col_start <= mat.start() && mat.end() <= l.col_end
+                    l.col_start <= col_start && col_end <= l.col_end
                 }) {
                     links.push(Link {
                         line: line_idx,
-                        col_start: mat.start(),
-                        col_end: mat.end(),
+                        col_start,
+                        col_end,
                         link_type: LinkType::IpAddress,
                         text: mat.as_str().to_string(),
                     });
@@ -121,15 +130,17 @@ impl LinkDetector {
         if self.config.detect_file_paths {
             for mat in self.file_path_regex.find_iter(line) {
                 let matched_text = mat.as_str().trim();
+                let col_start = Self::byte_offset_to_char_offset(line, mat.start());
+                let col_end = Self::byte_offset_to_char_offset(line, mat.end());
 
                 // 避免与 URL 重复
                 if !links.iter().any(|l| {
-                    l.col_start <= mat.start() && mat.end() <= l.col_end
+                    l.col_start <= col_start && col_end <= l.col_end
                 }) && Self::is_valid_file_path(matched_text) {
                     links.push(Link {
                         line: line_idx,
-                        col_start: mat.start(),
-                        col_end: mat.end(),
+                        col_start,
+                        col_end,
                         link_type: LinkType::FilePath,
                         text: matched_text.to_string(),
                     });

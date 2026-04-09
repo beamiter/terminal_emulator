@@ -777,6 +777,9 @@ impl TerminalApp {
         egui::CentralPanel::default()
             .frame(frame)
             .show(ctx, |ui| {
+                // 消除 tab 栏与终端之间的间距
+                ui.spacing_mut().item_spacing.y = 0.0;
+
                 // 渲染会话标签栏
                 let tab_height = 30.0;
                 let close_btn_size = 14.0;

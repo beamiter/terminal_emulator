@@ -265,8 +265,8 @@ impl TerminalRenderer {
     pub fn sync_font_metrics(&mut self, ctx: &egui::Context) {
         let font_id = FontId::monospace(self.font_size);
         let (char_width, line_height) = ctx.fonts_mut(|fonts| {
-            // Measure multiple characters to get accurate average width
-            let widths = ['M', 'W', 'i', ' ', '0', 'A']
+            // Use max glyph width for monospace grid to prevent text overlap
+            let widths = ['M', 'W', 'i', ' ', '0', 'A', '(', ')']
                 .iter()
                 .map(|&c| fonts.glyph_width(&font_id, c))
                 .filter(|&w| w > 0.0)
@@ -275,7 +275,7 @@ impl TerminalRenderer {
             let glyph_width = if widths.is_empty() {
                 fonts.glyph_width(&font_id, 'W')
             } else {
-                widths.iter().sum::<f32>() / widths.len() as f32
+                widths.iter().cloned().fold(0.0f32, f32::max)
             };
 
             let row_height = fonts.row_height(&font_id);
