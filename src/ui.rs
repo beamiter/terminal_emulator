@@ -667,42 +667,41 @@ impl TerminalRenderer {
         }
 
         // Render grid in two phases: first backgrounds, then characters
-        // Phase 1: Render all backgrounds
-        // NOTE: P0 dirty rectangle optimization temporarily disabled due to flickering issues
-        // TODO: Redesign dirty rectangle logic to properly handle all cases
+        // Phase 1: Render non-default backgrounds only (default bg already filled above)
+        let default_bg = color::defaults::BACKGROUND;
+        let has_search = !search_state.matches.is_empty() && !search_state.query.is_empty();
         for row_idx in 0..rows {
             for col_idx in 0..cols {
                 let cell = &grid[row_idx][col_idx];
 
-                // Skip rendering wide character continuations
                 if cell.wide_continuation {
                     continue;
                 }
 
-                // Position from rect top-left
-                let (x, snapped_width) = snapped_span(content_rect.left(), col_idx, char_width);
-                let (y, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
+                let is_selected = terminal.is_cell_selected(row_idx, col_idx);
+                let is_inverse = cell.flags.inverse;
 
-                let mut bg_color = if terminal.is_cell_selected(row_idx, col_idx) {
+                // Fast path: skip cells with default background and no special state
+                if !is_selected && !is_inverse && cell.background == crate::terminal::Color::Default && !has_search {
+                    continue;
+                }
+
+                let mut bg_color = if is_selected {
                     color::defaults::selection()
-                } else if cell.flags.inverse {
+                } else if is_inverse {
                     resolve_foreground_color(cell.foreground)
                 } else {
                     resolve_background_color(cell.background)
                 };
 
                 // Check if this cell is part of a search match (反色高亮)
-                if !search_state.matches.is_empty() && !search_state.query.is_empty() {
+                if has_search {
                     for (match_idx, m) in search_state.matches.iter().enumerate() {
                         if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
-                            // 反色高亮：交换前景和背景色
                             let orig_fg = resolve_foreground_color(cell.foreground);
-
                             bg_color = orig_fg;
 
-                            // 如果这是当前匹配项，加深颜色
                             if match_idx == search_state.current_match_index % search_state.matches.len() {
-                                // 让高亮更突出（降低 alpha 以加深）
                                 let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
                                 bg_color = Color32::from_rgba_unmultiplied(
                                     (r as u16 * 180 / 255) as u8,
@@ -714,8 +713,13 @@ impl TerminalRenderer {
                             break;
                         }
                     }
+                } else if bg_color == default_bg {
+                    // No search active and bg matches default — skip painting
+                    continue;
                 }
 
+                let (x, snapped_width) = snapped_span(content_rect.left(), col_idx, char_width);
+                let (y, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
                 let cell_width = if cell.wide {
                     let (_, next_width) = snapped_span(content_rect.left(), col_idx + 1, char_width);
                     snapped_width + next_width
@@ -727,38 +731,33 @@ impl TerminalRenderer {
                     Vec2::new(cell_width, snapped_height),
                 );
 
-                // Fill background
                 painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
             }
         }
 
-        // Phase 2: Render all characters
-        // NOTE: P0 dirty rectangle optimization temporarily disabled due to flickering issues
+        // Phase 2: Render characters with run-length batching
+        // Consecutive cells with the same style are merged into a single layout_no_wrap call
         for row_idx in 0..rows {
-            for col_idx in 0..cols {
+            let (_, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
+            let y = snapped_span(content_rect.top(), row_idx, line_height).0;
+
+            // Collect text runs: (start_col, text, fg_color, bold, decorations)
+            let mut col_idx = 0;
+            while col_idx < cols {
                 let cell = &grid[row_idx][col_idx];
 
-                // Skip rendering wide character continuations
-                if cell.wide_continuation {
+                if cell.wide_continuation || cell.character == ' ' {
+                    col_idx += 1;
                     continue;
                 }
 
-                // Skip spaces
-                if cell.character == ' ' {
-                    continue;
-                }
-
-                // Position from rect top-left
-                let (x, snapped_width) = snapped_span(content_rect.left(), col_idx, char_width);
-                let (y, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
-
+                // Determine this cell's style
                 let mut fg_color = if cell.flags.inverse {
                     resolve_background_color(cell.background)
                 } else {
                     resolve_foreground_color(cell.foreground)
                 };
 
-                // 检查是否是链接，修改颜色
                 let is_link = if links.is_empty() {
                     false
                 } else {
@@ -766,11 +765,10 @@ impl TerminalRenderer {
                     for link in links {
                         if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
                             let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
-                            // 链接颜色：蓝色或浅蓝色（悬停时）
                             fg_color = if is_hovered_link {
-                                Color32::from_rgb(100, 200, 255)  // 浅蓝
+                                Color32::from_rgb(100, 200, 255)
                             } else {
-                                Color32::from_rgb(50, 150, 255)   // 深蓝
+                                Color32::from_rgb(50, 150, 255)
                             };
                             found = true;
                             break;
@@ -779,76 +777,141 @@ impl TerminalRenderer {
                     found
                 };
 
-                let text = cell.character.to_string();
-                let mut font_id = FontId::monospace(self.font_size);
+                let bold = cell.flags.bold;
+                let has_underline = cell.flags.underline || is_link;
+                let has_strikethrough = cell.flags.strikethrough;
+                let is_wide = cell.wide;
 
-                if cell.flags.bold {
+                // Start a text run from this cell
+                let run_start_col = col_idx;
+                let mut run_text = String::new();
+                run_text.push(cell.character);
+
+                // Collect decoration spans for this run: (col_start, col_end_exclusive)
+                let mut underline_spans: Vec<(usize, usize)> = Vec::new();
+                let mut strikethrough_spans: Vec<(usize, usize)> = Vec::new();
+                if has_underline {
+                    underline_spans.push((col_idx, col_idx + if is_wide { 2 } else { 1 }));
+                }
+                if has_strikethrough {
+                    strikethrough_spans.push((col_idx, col_idx + if is_wide { 2 } else { 1 }));
+                }
+
+                col_idx += if is_wide { 2 } else { 1 };
+
+                // Extend run with consecutive same-style non-wide cells
+                if !is_wide {
+                    while col_idx < cols {
+                        let next = &grid[row_idx][col_idx];
+                        if next.wide_continuation || next.character == ' ' || next.wide {
+                            break;
+                        }
+                        // Compute next cell's fg
+                        let mut next_fg = if next.flags.inverse {
+                            resolve_background_color(next.background)
+                        } else {
+                            resolve_foreground_color(next.foreground)
+                        };
+                        let next_is_link = if links.is_empty() {
+                            false
+                        } else {
+                            let mut found = false;
+                            for link in links {
+                                if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
+                                    let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                                    next_fg = if is_hovered_link {
+                                        Color32::from_rgb(100, 200, 255)
+                                    } else {
+                                        Color32::from_rgb(50, 150, 255)
+                                    };
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            found
+                        };
+                        // Break run if style differs
+                        if next_fg != fg_color || next.flags.bold != bold {
+                            break;
+                        }
+                        run_text.push(next.character);
+                        let next_has_underline = next.flags.underline || next_is_link;
+                        let next_has_strikethrough = next.flags.strikethrough;
+                        if next_has_underline {
+                            // Try to extend last span or start new one
+                            if let Some(last) = underline_spans.last_mut() {
+                                if last.1 == col_idx {
+                                    last.1 = col_idx + 1;
+                                } else {
+                                    underline_spans.push((col_idx, col_idx + 1));
+                                }
+                            } else {
+                                underline_spans.push((col_idx, col_idx + 1));
+                            }
+                        }
+                        if next_has_strikethrough {
+                            if let Some(last) = strikethrough_spans.last_mut() {
+                                if last.1 == col_idx {
+                                    last.1 = col_idx + 1;
+                                } else {
+                                    strikethrough_spans.push((col_idx, col_idx + 1));
+                                }
+                            } else {
+                                strikethrough_spans.push((col_idx, col_idx + 1));
+                            }
+                        }
+                        col_idx += 1;
+                    }
+                }
+
+                // Render the batched run
+                let mut font_id = FontId::monospace(self.font_size);
+                if bold {
                     font_id.size *= 1.1;
                 }
 
                 let galley = ui.painter().layout_no_wrap(
-                    text.clone(),
+                    run_text,
                     font_id,
                     fg_color,
                 );
 
-                let text_x = x;
+                let (run_x, _) = snapped_span(content_rect.left(), run_start_col, char_width);
                 let text_y = y + (snapped_height - galley.size().y) / 2.0;
+                painter.galley(egui::pos2(run_x, text_y), galley, fg_color);
 
-                painter.galley(egui::pos2(text_x, text_y), galley, fg_color);
-
-                let cell_width = if cell.wide {
-                    let (_, next_width) = snapped_span(content_rect.left(), col_idx + 1, char_width);
-                    snapped_width + next_width
-                } else {
-                    snapped_width
-                };
-
-                // 链接显示下划线
-                if is_link {
+                // Draw decoration spans
+                for (span_start, span_end) in &underline_spans {
+                    let (sx, _) = snapped_span(content_rect.left(), *span_start, char_width);
+                    let (ex, ew) = snapped_span(content_rect.left(), *span_end - 1, char_width);
                     let underline_y = y + line_height - 1.0;
                     painter.line_segment(
-                        [egui::pos2(x, underline_y), egui::pos2(x + cell_width, underline_y)],
+                        [egui::pos2(sx, underline_y), egui::pos2(ex + ew, underline_y)],
                         egui::Stroke::new(1.0, fg_color),
                     );
                 }
-
-                if cell.flags.underline {
-                    let underline_y = y + line_height - 1.0;
-                    painter.line_segment(
-                        [egui::pos2(x, underline_y), egui::pos2(x + cell_width, underline_y)],
-                        egui::Stroke::new(1.0, fg_color),
-                    );
-                }
-
-                if cell.flags.strikethrough {
+                for (span_start, span_end) in &strikethrough_spans {
+                    let (sx, _) = snapped_span(content_rect.left(), *span_start, char_width);
+                    let (ex, ew) = snapped_span(content_rect.left(), *span_end - 1, char_width);
                     let strikethrough_y = y + line_height / 2.0;
                     painter.line_segment(
-                        [egui::pos2(x, strikethrough_y), egui::pos2(x + cell_width, strikethrough_y)],
+                        [egui::pos2(sx, strikethrough_y), egui::pos2(ex + ew, strikethrough_y)],
                         egui::Stroke::new(1.0, fg_color),
                     );
                 }
             }
         }
 
-        // Render cursor
-        for row_idx in 0..rows {
-            for col_idx in 0..cols {
-                let cell = &grid[row_idx][col_idx];
-
-                if cell.wide_continuation {
-                    continue;
-                }
-
-                if (row_idx, col_idx) != cursor_pos || !cursor_visible {
-                    continue;
-                }
-
-                let (x, snapped_width) = snapped_span(content_rect.left(), col_idx, char_width);
-                let (y, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
+        // Render cursor - direct O(1) positioning instead of full grid scan
+        if cursor_visible && cursor_pos.0 < rows && cursor_pos.1 < cols {
+            let (crow, ccol) = cursor_pos;
+            let cell = &grid[crow][ccol];
+            if !cell.wide_continuation {
+                let (x, snapped_width) = snapped_span(content_rect.left(), ccol, char_width);
+                let (y, snapped_height) = snapped_span(content_rect.top(), crow, line_height);
 
                 let cell_width = if cell.wide {
-                    let (_, next_width) = snapped_span(content_rect.left(), col_idx + 1, char_width);
+                    let (_, next_width) = snapped_span(content_rect.left(), ccol + 1, char_width);
                     snapped_width + next_width
                 } else {
                     snapped_width
@@ -860,7 +923,6 @@ impl TerminalRenderer {
 
                 match &terminal.cursor_shape {
                     crate::terminal::CursorShape::Block => {
-                        // Block cursor - filled rectangle
                         painter.rect_filled(
                             cell_rect,
                             egui::CornerRadius::ZERO,
@@ -874,7 +936,6 @@ impl TerminalRenderer {
                         );
                     }
                     crate::terminal::CursorShape::Underline => {
-                        // Underline cursor
                         let underline_y = y + line_height - 2.0;
                         painter.line_segment(
                             [egui::pos2(x, underline_y), egui::pos2(x + cell_width, underline_y)],
@@ -882,7 +943,6 @@ impl TerminalRenderer {
                         );
                     }
                     crate::terminal::CursorShape::Beam => {
-                        // Beam/vertical line cursor
                         painter.line_segment(
                             [egui::pos2(x + 1.0, y), egui::pos2(x + 1.0, y + line_height)],
                             egui::Stroke::new(1.5, color::defaults::CURSOR),

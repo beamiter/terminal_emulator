@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 use base64::Engine;
-use unicode_width::UnicodeWidthChar;
 use crate::kitty_graphics::KittyGraphicsState;
 
 const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
@@ -494,8 +493,8 @@ impl TerminalState {
             pending_paste_password: None,
             kitty_graphics: KittyGraphicsState::new(),
             dirty_region,
-            grid_version: 0,  // P4：初始化网格版本号
-            row_versions: vec![0; rows],  // P4：初始化每行版本号
+            grid_version: 1,  // P4：初始化网格版本号（1=所有行初始dirty）
+            row_versions: vec![1; rows],  // P4：初始化每行版本号（与grid_version同步）
         }
     }
 
@@ -589,7 +588,7 @@ impl TerminalState {
     fn put_char(&mut self, ch: char) {
         let _orig_ch = ch;
         let ch = self.translate_char(ch);
-        let width = UnicodeWidthChar::width(ch).unwrap_or(0);
+        let width = crate::char_width::cached_char_width(ch);
         if width == 0 {
             return; // Skip zero-width characters for now
         }
@@ -642,6 +641,7 @@ impl TerminalState {
         self.cursor_col += width;
         // Mark the row as dirty after writing character
         self.dirty_region.mark_row(self.cursor_row);
+        self.mark_row_dirty(self.cursor_row);
     }
 
     fn create_blank_cell(&self) -> TerminalCell {
@@ -700,6 +700,7 @@ impl TerminalState {
 
         // Mark the scrolled region as dirty
         self.dirty_region.mark_rows(top, bottom);
+        self.mark_rows_dirty(top, bottom);
 
         let is_full_screen_region = top == 0 && bottom + 1 == self.grid.rows();
         if is_full_screen_region {
@@ -1244,6 +1245,7 @@ impl TerminalState {
                         }
                         // Mark affected rows as dirty
                         self.dirty_region.mark_rows(self.cursor_row, self.grid.rows().saturating_sub(1));
+                        self.mark_rows_dirty(self.cursor_row, self.grid.rows().saturating_sub(1));
                     }
                     1 => {
                         // Clear from start to cursor
@@ -1259,6 +1261,7 @@ impl TerminalState {
                         }
                         // Mark affected rows as dirty
                         self.dirty_region.mark_rows(0, self.cursor_row);
+                        self.mark_rows_dirty(0, self.cursor_row);
                     }
                     2 => {
                         self.clear_screen();
@@ -1277,6 +1280,7 @@ impl TerminalState {
                         }
                         // Mark the line as dirty
                         self.dirty_region.mark_row(self.cursor_row);
+                        self.mark_row_dirty(self.cursor_row);
                     }
                     1 => {
                         // Clear from start of line to cursor
@@ -1285,6 +1289,7 @@ impl TerminalState {
                         }
                         // Mark the line as dirty
                         self.dirty_region.mark_row(self.cursor_row);
+                        self.mark_row_dirty(self.cursor_row);
                     }
                     2 => {
                         // Clear entire line
@@ -1293,6 +1298,7 @@ impl TerminalState {
                         }
                         // Mark the line as dirty
                         self.dirty_region.mark_row(self.cursor_row);
+                        self.mark_row_dirty(self.cursor_row);
                     }
                     _ => {}
                 }
@@ -1744,6 +1750,7 @@ impl TerminalState {
         self.cursor_col = 0;
         // Mark all rows as dirty
         self.dirty_region.mark_all(self.grid.rows());
+        self.mark_rows_dirty(0, self.grid.rows().saturating_sub(1));
     }
 
     fn set_mode(&mut self, mode: u16) {
@@ -1939,6 +1946,7 @@ impl TerminalState {
             self.push_scrollback_line(old_line);
             // Mark all rows as dirty after scrolling
             self.dirty_region.mark_all(self.grid.rows());
+            self.mark_rows_dirty(0, self.grid.rows().saturating_sub(1));
         }
     }
 

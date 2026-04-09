@@ -32,7 +32,7 @@ pub fn cached_char_width(ch: char) -> usize {
         }
 
         // 计算宽度
-        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1);
+        let w = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
 
         // 存入缓存
         c.put(ch, w);
