@@ -62,7 +62,7 @@ pub struct Config {
     #[serde(default = "default_theme")]
     pub theme: String,
 
-    #[serde(default)]
+    #[serde(default = "default_restore_session")]
     pub restore_session: bool,
 
     #[serde(default)]
@@ -139,6 +139,10 @@ fn default_theme() -> String {
     "dark".to_string()
 }
 
+fn default_restore_session() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -153,7 +157,7 @@ impl Default for Config {
             cols: default_cols(),
             rows: default_rows(),
             theme: default_theme(),
-            restore_session: false,
+            restore_session: default_restore_session(),
             session_history_file: None,
         }
     }

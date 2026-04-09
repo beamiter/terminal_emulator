@@ -385,6 +385,9 @@ struct TerminalApp {
     config: config::Config,
     config_save_pending: bool,
     config_save_deadline: std::time::Instant,
+    // Session persistence
+    session_save_pending: bool,
+    session_save_deadline: std::time::Instant,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -654,44 +657,41 @@ impl TerminalApp {
         let cols = cfg.cols;
         let rows = cfg.rows;
 
-        // 创建首个会话
+        // 尝试加载之前保存的会话快照
+        let saved_snapshots = if cfg.restore_session {
+            config::Config::session_history_path()
+                .ok()
+                .and_then(|path| session_persistence::SessionsSnapshot::load(&path).ok())
+                .filter(|s| !s.sessions.is_empty())
+                .map(|s| s.sessions)
+        } else {
+            None
+        };
+
+        // 创建首个会话，使用保存的 cwd（如果有）
+        let first_cwd = saved_snapshots.as_ref().and_then(|s| s.first()?.cwd.as_deref().map(String::from));
         let terminal = TerminalState::new(cols, rows);
 
-        // 尝试启动 shell
-        let (shell, _) = match ShellSession::new(cols, rows, repaint_ctx.clone()) {
+        let shell = match ShellSession::new_with_cwd(cols, rows, first_cwd.as_deref(), repaint_ctx.clone()) {
             Ok(session) => {
                 eprintln!("✓ Shell session started successfully");
-                (Some(session), Some(()))
+                session
             }
             Err(e) => {
-                eprintln!("✗ Failed to start shell: {}", e);
-                (None, None)
+                eprintln!("✗ Failed to start shell with saved cwd, falling back: {}", e);
+                ShellSession::new(cols, rows, repaint_ctx.clone()).unwrap_or_else(|e| {
+                    panic!("Cannot create shell session: {}", e)
+                })
             }
         };
 
-        let session = if let Some(shell) = shell {
-            Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), shell)
-        } else {
-            // 创建一个没有 shell 的 dummy session（应该很少见）
-            let dummy_shell = ShellSession::new(cols, rows, repaint_ctx.clone()).unwrap_or_else(|e| {
-                panic!("Cannot create even a dummy shell session: {}", e)
-            });
-            Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), dummy_shell)
-        };
-
+        let session = Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), shell);
         let mut session_manager = SessionManager::new(session, repaint_ctx);
 
-        // 尝试恢复之前的会话（如果启用了配置）
-        if cfg.restore_session {
-            if let Ok(session_history_path) = config::Config::session_history_path() {
-                if let Ok(snapshot) = session_persistence::SessionsSnapshot::load(&session_history_path) {
-                    if !snapshot.sessions.is_empty() {
-                        let metadata = snapshot.to_metadata();
-                        session_manager.restore_from_metadata(metadata);
-                        eprintln!("[SessionPersistence] Restored {} sessions", session_manager.len());
-                    }
-                }
-            }
+        // 恢复额外的会话
+        if let Some(snapshots) = saved_snapshots {
+            session_manager.restore_from_snapshots(snapshots);
+            eprintln!("[SessionPersistence] Restored {} sessions", session_manager.len());
         }
 
         let clipboard = ClipboardManager::new().ok();
@@ -756,6 +756,8 @@ impl TerminalApp {
             config: cfg.clone(),
             config_save_pending: false,
             config_save_deadline: std::time::Instant::now(),
+            session_save_pending: true, // 启动后立即保存一次（确保首次运行就有记录）
+            session_save_deadline: std::time::Instant::now() + std::time::Duration::from_secs(1),
         }
     }
 
@@ -877,6 +879,7 @@ impl TerminalApp {
                                         if close_btn_rect.contains(click_pos) {
                                             if self.session_manager.len() > 1 {
                                                 self.session_manager.close_session(idx);
+                                                self.schedule_session_save();
                                             } else {
                                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                                 return;
@@ -1262,6 +1265,7 @@ impl TerminalApp {
                                 let new_idx = self.session_manager.new_session(None, None);
                                 self.session_manager.switch_session(new_idx);
                                 self.force_resize_session = true;
+                                self.schedule_session_save();
                             }
                         }
                     }
@@ -1691,6 +1695,25 @@ impl TerminalApp {
             }
         }
     }
+
+    fn schedule_session_save(&mut self) {
+        self.session_save_pending = true;
+        self.session_save_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    }
+
+    fn flush_session_save(&mut self) {
+        if self.session_save_pending && std::time::Instant::now() >= self.session_save_deadline {
+            self.session_save_pending = false;
+            if let Ok(path) = config::Config::session_history_path() {
+                let _ = session_persistence::ensure_session_history_dir(&path);
+                let snapshots = self.session_manager.get_session_snapshots();
+                let snapshot = session_persistence::SessionsSnapshot::from_snapshots(snapshots);
+                if let Err(e) = snapshot.save(&path) {
+                    eprintln!("[SessionPersistence] Failed to save: {}", e);
+                }
+            }
+        }
+    }
 }
 
 impl eframe::App for TerminalApp {
@@ -1821,11 +1844,13 @@ impl eframe::App for TerminalApp {
                                             let new_idx = self.session_manager.new_session(None, None);
                                             self.session_manager.switch_session(new_idx);
                                             self.force_resize_session = true;
+                                            self.schedule_session_save();
                                         }
                                         keybindings::Command::SessionClose => {
                                             if self.session_manager.len() > 1 {
                                                 let active_idx = self.session_manager.active_index();
                                                 self.session_manager.close_session(active_idx);
+                                                self.schedule_session_save();
                                             } else {
                                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                                 return;
@@ -1866,12 +1891,14 @@ impl eframe::App for TerminalApp {
                                             let new_session_idx = self.session_manager.new_session(None, None);
                                             let _ = self.layout_manager.split(new_session_idx, false);
                                             self.status_message = "Split vertically".to_string();
+                                            self.schedule_session_save();
                                         }
                                         keybindings::Command::TerminalSplitHorizontal => {
                                             // 水平分割（上下）
                                             let new_session_idx = self.session_manager.new_session(None, None);
                                             let _ = self.layout_manager.split(new_session_idx, true);
                                             self.status_message = "Split horizontally".to_string();
+                                            self.schedule_session_save();
                                         }
                                         keybindings::Command::TerminalClosePane => {
                                             // 关闭当前窗格
@@ -1944,10 +1971,12 @@ impl eframe::App for TerminalApp {
                             let new_idx = self.session_manager.new_session(None, None);
                             self.session_manager.switch_session(new_idx);
                             self.force_resize_session = true;
+                            self.schedule_session_save();
                         }
                         keybindings::Command::SessionClose => {
                             if self.session_manager.len() > 1 {
                                 self.session_manager.close_session(active_session_idx);
+                                self.schedule_session_save();
                             } else {
                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                                 return;
@@ -2616,8 +2645,9 @@ impl eframe::App for TerminalApp {
             }
         }
 
-        // Debounce 保存配置
+        // Debounce 保存配置和会话
         self.flush_config_save();
+        self.flush_session_save();
 
         // Handle shell exit: close current session
         if shell_exited {
@@ -2625,6 +2655,7 @@ impl eframe::App for TerminalApp {
             if session_count_before > 1 {
                 // Close the current session if there are multiple sessions
                 self.session_manager.close_session(active_session_idx);
+                self.schedule_session_save();
                 crate::debug_log!("[SHELL EXIT] closed session, remaining: {}", self.session_manager.len());
             } else {
                 // Close the window if this is the only session
@@ -2644,18 +2675,12 @@ impl Drop for TerminalApp {
             }
         }
 
-        // 保存当前会话到持久化存储
+        // 保存当前会话到持久化存储（包含每个 session 的 cwd）
         if let Ok(session_history_path) = config::Config::session_history_path() {
             let _ = session_persistence::ensure_session_history_dir(&session_history_path);
 
-            // 收集所有会话的元数据
-            let mut metadata_list = Vec::new();
-            for session in self.session_manager.sessions() {
-                metadata_list.push((session.metadata.name.clone(), session.metadata.tags.clone()));
-            }
-
-            // 创建并保存快照
-            let snapshot = session_persistence::SessionsSnapshot::from_metadata(metadata_list);
+            let snapshots = self.session_manager.get_session_snapshots();
+            let snapshot = session_persistence::SessionsSnapshot::from_snapshots(snapshots);
             if let Err(e) = snapshot.save(&session_history_path) {
                 eprintln!("[SessionPersistence] Failed to save sessions: {}", e);
             }

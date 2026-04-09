@@ -6,7 +6,7 @@ use std::sync::Arc;
 use parking_lot::Mutex as ParkingMutex;
 
 /// 获取指定进程的工作目录
-fn get_process_cwd(pid: i32) -> Option<String> {
+pub fn get_process_cwd(pid: i32) -> Option<String> {
     // 从 /proc/[pid]/cwd 获取指定进程的工作目录
     std::fs::read_link(format!("/proc/{}/cwd", pid))
         .ok()
@@ -220,26 +220,44 @@ impl SessionManager {
         }
     }
 
-    /// 获取会话列表的元数据用于持久化
-    pub fn get_session_metadata(&self) -> Vec<(String, Vec<String>)> {
+    /// 获取会话列表的快照用于持久化（包含 cwd）
+    pub fn get_session_snapshots(&self) -> Vec<crate::session_persistence::SessionSnapshot> {
         self.sessions
             .iter()
-            .map(|s| (s.metadata.name.clone(), s.metadata.tags.clone()))
+            .map(|s| {
+                let cwd = get_process_cwd(s.get_shell_pid());
+                crate::session_persistence::SessionSnapshot {
+                    name: s.metadata.name.clone(),
+                    tags: s.metadata.tags.clone(),
+                    cwd,
+                }
+            })
             .collect()
     }
 
-    /// 从元数据恢复会话列表
-    pub fn restore_from_metadata(&mut self, metadata_list: Vec<(String, Vec<String>)>) {
-        // 清除现有会话（除了第一个）
-        while self.sessions.len() > 1 {
-            self.sessions.pop();
+    /// 从快照恢复额外的会话（第一个已经在外部创建好）
+    pub fn restore_from_snapshots(&mut self, snapshots: Vec<crate::session_persistence::SessionSnapshot>) {
+        // 用第一个快照的 name 更新已有的第一个 session
+        if let Some(first) = snapshots.first() {
+            if let Some(session) = self.sessions.get_mut(0) {
+                session.metadata.name = first.name.clone();
+                session.metadata.tags = first.tags.clone();
+            }
         }
 
-        // 为每个元数据创建新会话
-        for (name, tags) in metadata_list.into_iter().skip(1) {
-            let new_idx = self.new_session(Some(name), Some(tags));
-            if new_idx == 0 {
-                break; // 创建失败
+        // 为剩余快照创建新会话
+        for snap in snapshots.into_iter().skip(1) {
+            let index = self.sessions.len();
+            let cwd_ref = snap.cwd.as_deref();
+            match ShellSession::new_with_cwd(80, 24, cwd_ref, self.repaint_ctx.clone()) {
+                Ok(shell) => {
+                    let terminal = Arc::new(ParkingMutex::new(TerminalState::new(80, 24)));
+                    let session = Session::new(snap.name, snap.tags, terminal, shell);
+                    self.sessions.push(session);
+                }
+                Err(e) => {
+                    eprintln!("Failed to restore session {}: {}", index, e);
+                }
             }
         }
     }
