@@ -901,6 +901,7 @@ impl TerminalApp {
                                             break;
                                         } else if tab_rect_item.contains(click_pos) {
                                             self.session_manager.switch_session(idx);
+                                            self.force_resize_session = true;
                                             self.dragging_tab = None;
                                             self.drag_start_pos = None;
                                             break;
@@ -1929,13 +1930,16 @@ impl eframe::App for TerminalApp {
                                         }
                                         keybindings::Command::SessionNext => {
                                             self.session_manager.switch_to_next_session();
+                                            self.force_resize_session = true;
                                         }
                                         keybindings::Command::SessionPrev => {
                                             self.session_manager.switch_to_prev_session();
+                                            self.force_resize_session = true;
                                         }
                                         keybindings::Command::SessionJump(n) => {
                                             if n < 9 {
                                                 self.session_manager.switch_session(n);
+                                                self.force_resize_session = true;
                                             }
                                         }
                                         keybindings::Command::TerminalScrollUp => {
@@ -2056,13 +2060,16 @@ impl eframe::App for TerminalApp {
                         }
                         keybindings::Command::SessionNext => {
                             self.session_manager.switch_to_next_session();
+                            self.force_resize_session = true;
                         }
                         keybindings::Command::SessionPrev => {
                             self.session_manager.switch_to_prev_session();
+                            self.force_resize_session = true;
                         }
                         keybindings::Command::SessionJump(n) => {
                             if n < 9 {
                                 self.session_manager.switch_session(n);
+                                self.force_resize_session = true;
                             }
                         }
                         keybindings::Command::TerminalScrollUp => {
