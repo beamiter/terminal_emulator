@@ -1513,7 +1513,7 @@ impl TerminalApp {
             egui::Window::new("Command Palette")
                 .title_bar(false)
                 .resizable(false)
-                .movable(false)
+                .movable(true)
                 .default_pos(palette_pos)
                 .default_size([palette_width, palette_height])
                 .fixed_size([palette_width, palette_height])
@@ -1543,13 +1543,13 @@ impl TerminalApp {
 
                     // 命令列表
                     let results = self.command_palette.get_results();
-                    let max_visible = self.command_palette.max_visible_results();
+                    let selected_index = self.command_palette.selected_index;
 
                     egui::ScrollArea::vertical()
                         .max_height(palette_height - 100.0)
                         .show(ui, |ui| {
-                            for (idx, (cmd_info, _score)) in results.iter().take(max_visible).enumerate() {
-                                let is_selected = idx == self.command_palette.selected_index;
+                            for (idx, (cmd_info, _score)) in results.iter().enumerate() {
+                                let is_selected = idx == selected_index;
 
                                 let bg_color = if is_selected {
                                     egui::Color32::from_rgb(70, 70, 80)
@@ -1557,10 +1557,10 @@ impl TerminalApp {
                                     egui::Color32::TRANSPARENT
                                 };
 
-                                let item_rect = ui.available_rect_before_wrap();
-                                ui.painter().rect_filled(item_rect, 2.0, bg_color);
+                                let item_response = ui.horizontal(|ui| {
+                                    let item_rect = ui.available_rect_before_wrap();
+                                    ui.painter().rect_filled(item_rect, 2.0, bg_color);
 
-                                ui.horizontal(|ui| {
                                     // 分类标签
                                     let category_color = match cmd_info.category {
                                         command_palette::CommandCategory::Session => egui::Color32::from_rgb(100, 150, 255),
@@ -1608,6 +1608,11 @@ impl TerminalApp {
                                         },
                                     );
                                 });
+
+                                // Auto-scroll to keep selected item visible
+                                if is_selected {
+                                    item_response.response.scroll_to_me(Some(egui::Align::Center));
+                                }
 
                                 ui.separator();
                             }
