@@ -694,12 +694,6 @@ impl TerminalApp {
             }
         }
 
-        let renderer = TerminalRenderer::new(
-            cfg.font_size,
-            cfg.padding,
-            cfg.line_spacing,
-            cfg.scrollbar_visibility.clone(),
-        );
         let clipboard = ClipboardManager::new().ok();
 
         let keybindings = keybindings::KeyBindings::load().unwrap_or_default();
@@ -707,6 +701,14 @@ impl TerminalApp {
         // Load theme
         let current_theme = theme::Theme::get_builtin(&cfg.theme)
             .unwrap_or_default();
+
+        let renderer = TerminalRenderer::new(
+            cfg.font_size,
+            cfg.padding,
+            cfg.line_spacing,
+            cfg.scrollbar_visibility.clone(),
+            current_theme.clone(),
+        );
 
         // Initialize layout manager with first session
         let layout_manager = layout::LayoutManager::new(0);
@@ -719,6 +721,7 @@ impl TerminalApp {
                 cfg.padding,
                 cfg.line_spacing,
                 cfg.scrollbar_visibility.clone(),
+                current_theme.clone(),
             ));
         }
 
@@ -1519,6 +1522,10 @@ impl TerminalApp {
                         if search_response.changed() {
                             self.command_palette.update_search_results();
                         }
+                        if self.command_palette.needs_focus {
+                            search_response.request_focus();
+                            self.command_palette.needs_focus = false;
+                        }
                         if search_response.has_focus() && self.command_palette.search_query.is_empty() {
                             ui.label("Search commands...");
                         }
@@ -1640,7 +1647,14 @@ impl TerminalApp {
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::ThemeChanged(theme) => {
-                    self.config.theme = theme;
+                    self.config.theme = theme.clone();
+                    if let Some(t) = theme::Theme::get_builtin(&theme) {
+                        self.current_theme = t.clone();
+                        self.renderer.theme = t.clone();
+                        for r in &mut self.pane_renderers {
+                            r.theme = t.clone();
+                        }
+                    }
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::PaddingChanged(padding) => {

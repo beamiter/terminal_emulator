@@ -68,6 +68,8 @@ pub struct CommandPalette {
     pub selected_index: usize,
     /// 是否打开
     pub is_open: bool,
+    /// 是否需要聚焦搜索框
+    pub needs_focus: bool,
     /// 最近使用的命令
     recent_commands: VecDeque<crate::keybindings::Command>,
     /// 最大保存的最近使用命令数
@@ -87,6 +89,7 @@ impl CommandPalette {
             search_query: String::new(),
             selected_index: 0,
             is_open: false,
+            needs_focus: false,
             recent_commands: VecDeque::new(),
             max_recent: 10,
             matcher,
@@ -198,6 +201,7 @@ impl CommandPalette {
     /// 打开调色板
     pub fn open(&mut self) {
         self.is_open = true;
+        self.needs_focus = true;
         self.search_query.clear();
         self.selected_index = 0;
         self.update_search_results();

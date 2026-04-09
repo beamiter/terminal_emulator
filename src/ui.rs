@@ -2,16 +2,16 @@ use crate::color;
 use crate::terminal::TerminalState;
 use egui::{Color32, FontId, Response, Ui, Vec2};
 
-fn resolve_foreground_color(color_value: crate::terminal::Color) -> Color32 {
+fn resolve_foreground_color(color_value: crate::terminal::Color, theme: &crate::theme::Theme) -> Color32 {
     match color_value {
-        crate::terminal::Color::Default => color::defaults::FOREGROUND,
+        crate::terminal::Color::Default => theme.terminal_foreground(),
         _ => color::to_egui_color32(color_value),
     }
 }
 
-fn resolve_background_color(color_value: crate::terminal::Color) -> Color32 {
+fn resolve_background_color(color_value: crate::terminal::Color, theme: &crate::theme::Theme) -> Color32 {
     match color_value {
-        crate::terminal::Color::Default => color::defaults::BACKGROUND,
+        crate::terminal::Color::Default => theme.terminal_background(),
         _ => color::to_egui_color32(color_value),
     }
 }
@@ -215,6 +215,7 @@ pub struct TerminalRenderer {
     pub line_spacing: f32,
     pub dragging_scrollbar: bool,
     pub scrollbar_visibility: crate::config::ScrollbarVisibility,
+    pub theme: crate::theme::Theme,
     requested_initial_focus: bool,
     ime_enabled: bool,
     last_ime_rect: Option<egui::Rect>,
@@ -233,6 +234,7 @@ impl TerminalRenderer {
         padding: f32,
         line_spacing: f32,
         scrollbar_visibility: crate::config::ScrollbarVisibility,
+        theme: crate::theme::Theme,
     ) -> Self {
         // For monospace fonts, approximate char_width is around 0.5x font_size
         // This is an initial estimate before sync_font_metrics is called
@@ -247,6 +249,7 @@ impl TerminalRenderer {
             line_spacing,
             dragging_scrollbar: false,
             scrollbar_visibility,
+            theme,
             requested_initial_focus: false,
             ime_enabled: false,
             last_ime_rect: None,
@@ -394,7 +397,7 @@ impl TerminalRenderer {
         // eprintln!("[UI] Rect: {:?}", rect);
 
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, egui::CornerRadius::ZERO, color::defaults::BACKGROUND);
+        painter.rect_filled(rect, egui::CornerRadius::ZERO, self.theme.terminal_background());
 
         let (content_rect, scrollbar_rect) = self.layout_rects(rect);
         let cursor_pos = terminal.get_cursor_pos();
@@ -668,7 +671,7 @@ impl TerminalRenderer {
 
         // Render grid in two phases: first backgrounds, then characters
         // Phase 1: Render non-default backgrounds only (default bg already filled above)
-        let default_bg = color::defaults::BACKGROUND;
+        let default_bg = self.theme.terminal_background();
         let has_search = !search_state.matches.is_empty() && !search_state.query.is_empty();
         for row_idx in 0..rows {
             for col_idx in 0..cols {
@@ -687,18 +690,18 @@ impl TerminalRenderer {
                 }
 
                 let mut bg_color = if is_selected {
-                    color::defaults::selection()
+                    self.theme.selection_color()
                 } else if is_inverse {
-                    resolve_foreground_color(cell.foreground)
+                    resolve_foreground_color(cell.foreground, &self.theme)
                 } else {
-                    resolve_background_color(cell.background)
+                    resolve_background_color(cell.background, &self.theme)
                 };
 
                 // Check if this cell is part of a search match (反色高亮)
                 if has_search {
                     for (match_idx, m) in search_state.matches.iter().enumerate() {
                         if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
-                            let orig_fg = resolve_foreground_color(cell.foreground);
+                            let orig_fg = resolve_foreground_color(cell.foreground, &self.theme);
                             bg_color = orig_fg;
 
                             if match_idx == search_state.current_match_index % search_state.matches.len() {
@@ -753,9 +756,9 @@ impl TerminalRenderer {
 
                 // Determine this cell's style
                 let mut fg_color = if cell.flags.inverse {
-                    resolve_background_color(cell.background)
+                    resolve_background_color(cell.background, &self.theme)
                 } else {
-                    resolve_foreground_color(cell.foreground)
+                    resolve_foreground_color(cell.foreground, &self.theme)
                 };
 
                 let is_link = if links.is_empty() {
@@ -808,9 +811,9 @@ impl TerminalRenderer {
                         }
                         // Compute next cell's fg
                         let mut next_fg = if next.flags.inverse {
-                            resolve_background_color(next.background)
+                            resolve_background_color(next.background, &self.theme)
                         } else {
-                            resolve_foreground_color(next.foreground)
+                            resolve_foreground_color(next.foreground, &self.theme)
                         };
                         let next_is_link = if links.is_empty() {
                             false
@@ -923,15 +926,17 @@ impl TerminalRenderer {
 
                 match &terminal.cursor_shape {
                     crate::terminal::CursorShape::Block => {
+                        let cursor_c = self.theme.cursor_color();
+                        let [r, g, b, _] = cursor_c.to_srgba_unmultiplied();
                         painter.rect_filled(
                             cell_rect,
                             egui::CornerRadius::ZERO,
-                            Color32::from_rgba_unmultiplied(80, 80, 80, 100),
+                            Color32::from_rgba_unmultiplied(r, g, b, 100),
                         );
                         painter.rect_stroke(
                             cell_rect,
                             egui::CornerRadius::ZERO,
-                            egui::Stroke::new(1.5, color::defaults::CURSOR),
+                            egui::Stroke::new(1.5, cursor_c),
                             egui::StrokeKind::Middle,
                         );
                     }
@@ -939,13 +944,13 @@ impl TerminalRenderer {
                         let underline_y = y + line_height - 2.0;
                         painter.line_segment(
                             [egui::pos2(x, underline_y), egui::pos2(x + cell_width, underline_y)],
-                            egui::Stroke::new(2.0, color::defaults::CURSOR),
+                            egui::Stroke::new(2.0, self.theme.cursor_color()),
                         );
                     }
                     crate::terminal::CursorShape::Beam => {
                         painter.line_segment(
                             [egui::pos2(x + 1.0, y), egui::pos2(x + 1.0, y + line_height)],
-                            egui::Stroke::new(1.5, color::defaults::CURSOR),
+                            egui::Stroke::new(1.5, self.theme.cursor_color()),
                         );
                     }
                 }

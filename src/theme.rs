@@ -83,7 +83,7 @@ impl Theme {
             terminal: TerminalColors {
                 foreground: [220, 220, 220],
                 background: [29, 29, 29],
-                cursor: [80, 80, 80],
+                cursor: [200, 200, 200],
                 selection: [200, 200, 200, 100],
                 ansi_colors: [
                     [0, 0, 0],           // Black
@@ -150,7 +150,7 @@ impl Theme {
             terminal: TerminalColors {
                 foreground: [20, 20, 20],
                 background: [250, 250, 250],
-                cursor: [100, 100, 100],
+                cursor: [50, 50, 50],
                 selection: [200, 220, 255, 150],
                 ansi_colors: [
                     [0, 0, 0],
