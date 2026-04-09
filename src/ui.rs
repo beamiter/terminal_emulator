@@ -221,6 +221,8 @@ pub struct TerminalRenderer {
     last_ime_rect: Option<egui::Rect>,
     // Kitty graphics texture cache: image_id -> (texture_handle, width, height)
     texture_cache: std::collections::HashMap<u32, (egui::TextureHandle, u32, u32)>,
+    /// The content rect from the last render, used for mouse-to-grid coordinate conversion
+    pub last_content_rect: Option<egui::Rect>,
 }
 
 impl TerminalRenderer {
@@ -252,6 +254,7 @@ impl TerminalRenderer {
             theme,
             requested_initial_focus: false,
             ime_enabled: false,
+            last_content_rect: None,
             last_ime_rect: None,
             texture_cache: std::collections::HashMap::new(),
         }
@@ -400,6 +403,7 @@ impl TerminalRenderer {
         painter.rect_filled(rect, egui::CornerRadius::ZERO, self.theme.terminal_background());
 
         let (content_rect, scrollbar_rect) = self.layout_rects(rect);
+        self.last_content_rect = Some(content_rect);
         let cursor_pos = terminal.get_cursor_pos();
         let ime_rect = cursor_rect(content_rect, cursor_pos.0, cursor_pos.1, char_width, line_height);
 

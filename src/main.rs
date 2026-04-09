@@ -2612,31 +2612,34 @@ impl eframe::App for TerminalApp {
             // 检测悬停的链接
             self.hovered_link = None;
             if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
-                let screen_rect = ctx.viewport_rect();
-                let char_width = self.renderer.char_width;
-                let line_height = self.renderer.line_height;
+                if let Some(content_rect) = self.renderer.last_content_rect {
+                    let char_width = self.renderer.char_width;
+                    let line_height = self.renderer.line_height;
 
-                let clamped_x = (pos.x - screen_rect.left()).max(0.0);
-                let clamped_y = (pos.y - screen_rect.top()).max(0.0);
+                    let clamped_x = (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
+                    let clamped_y = (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
 
-                let col = if char_width > 0.0 {
-                    ((clamped_x / char_width) as usize).min(self.cols - 1)
-                } else {
-                    0
-                };
-                let row = if line_height > 0.0 {
-                    ((clamped_y / line_height) as usize).min(self.rows - 1)
-                } else {
-                    0
-                };
+                    let col = if char_width > 0.0 {
+                        ((clamped_x / char_width) as usize).min(self.cols - 1)
+                    } else {
+                        0
+                    };
+                    let row = if line_height > 0.0 {
+                        ((clamped_y / line_height) as usize).min(self.rows - 1)
+                    } else {
+                        0
+                    };
 
-                // 查找当前位置是否有链接
-                for link in &links {
-                    if link.line == row && col >= link.col_start && col < link.col_end {
-                        self.hovered_link = Some(link.clone());
-                        // 设置鼠标光标为手型
-                        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-                        break;
+                    // 查找当前位置是否有链接
+                    if content_rect.contains(pos) {
+                        for link in &links {
+                            if link.line == row && col >= link.col_start && col < link.col_end {
+                                self.hovered_link = Some(link.clone());
+                                // 设置鼠标光标为手型
+                                ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+                                break;
+                            }
+                        }
                     }
                 }
             }
