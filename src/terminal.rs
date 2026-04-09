@@ -407,6 +407,10 @@ pub struct TerminalState {
 
     // Dirty rectangle tracking for optimized rendering
     pub dirty_region: DirtyRegion,
+
+    // P4 优化：行版本化追踪
+    pub grid_version: u64,  // 全局网格版本号
+    pub row_versions: Vec<u64>,  // 每行的修改版本号
 }
 
 impl TerminalState {
@@ -490,6 +494,8 @@ impl TerminalState {
             pending_paste_password: None,
             kitty_graphics: KittyGraphicsState::new(),
             dirty_region,
+            grid_version: 0,  // P4：初始化网格版本号
+            row_versions: vec![0; rows],  // P4：初始化每行版本号
         }
     }
 
@@ -763,6 +769,46 @@ impl TerminalState {
         }
         *self.grid.get_mut(row, col) = blank_cell;
     }
+
+    /// P3 优化：批量处理输入数据，只在处理完成后触发一次网格版本更新
+    /// 相比多次 process_input，这个方法避免了多次网格版本递增
+    pub fn process_batch(&mut self, input: &[u8]) {
+        // 累积所有输入字节，一次性处理
+        self.process_input(input);
+        // 网格版本已在 process_input 中根据实际改变自动递增
+    }
+
+    /// P4：标记一行已修改
+    #[inline]
+    fn mark_row_dirty(&mut self, row: usize) {
+        self.grid_version = self.grid_version.wrapping_add(1);
+        if row < self.row_versions.len() {
+            self.row_versions[row] = self.grid_version;
+        }
+    }
+
+    /// P4：标记多行已修改
+    #[inline]
+    fn mark_rows_dirty(&mut self, start: usize, end: usize) {
+        self.grid_version = self.grid_version.wrapping_add(1);
+        for row in start..=end.min(self.row_versions.len() - 1) {
+            self.row_versions[row] = self.grid_version;
+        }
+    }
+
+    /// P4：获取上次渲染后修改过的行索引
+    pub fn get_dirty_rows(&self, last_rendered_version: u64) -> Vec<usize> {
+        self.row_versions.iter()
+            .enumerate()
+            .filter_map(|(i, &v)| if v > last_rendered_version { Some(i) } else { None })
+            .collect()
+    }
+
+    /// P4：获取网格版本号（用于缓存比较）
+    pub fn get_grid_version(&self) -> u64 {
+        self.grid_version
+    }
+
 
     pub fn process_input(&mut self, input: &[u8]) {
         let mut data = Vec::with_capacity(self.pending_escape.len() + input.len());

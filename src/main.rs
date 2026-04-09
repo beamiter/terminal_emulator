@@ -24,6 +24,8 @@ mod help;
 mod config_panel;
 mod kitty_graphics;
 mod image_cache;
+mod char_width;  // P5：字符宽度缓存
+mod glyph_cache;  // P2：字形缓存
 
 use base64::Engine;
 use eframe::egui;
@@ -2262,25 +2264,43 @@ impl eframe::App for TerminalApp {
 
         // Step 6: 处理 shell 事件
         let mut has_new_output = false;
-        while let Ok(event) = session.shell.events().try_recv() {
-            match event {
-                ShellEvent::Output(data) => {
-                    let mut terminal = session.terminal.lock();
-                    terminal.process_input(&data);
-                    self.status_message.clear();
+        // P3 优化：批量收集本帧的所有事件，然后一次性处理
+        let mut accumulated_data = Vec::new();
+        const MAX_EVENTS_PER_FRAME: usize = 128;
+        let mut event_count = 0;
+
+        while event_count < MAX_EVENTS_PER_FRAME {
+            match session.shell.events().try_recv() {
+                Ok(ShellEvent::Output(data)) => {
+                    accumulated_data.extend(data);
+                    event_count += 1;
                     has_new_output = true;
                 }
-                ShellEvent::Exit(code) => {
+                Ok(ShellEvent::Exit(code)) => {
                     crate::debug_log!("[SHELL EXIT] shell exited with code: {}", code);
                     self.status_message = format!("Shell exited with code: {}", code);
                     has_new_output = true;
                     shell_exited = true;
+                    break;
                 }
-                ShellEvent::Error(e) => {
+                Ok(ShellEvent::Error(e)) => {
                     self.status_message = format!("Error: {}", e);
                     has_new_output = true;
+                    break;
+                }
+                Err(crossbeam::channel::TryRecvError::Empty) => break,
+                Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                    shell_exited = true;
+                    break;
                 }
             }
+        }
+
+        // 一次性处理所有累积的数据
+        if !accumulated_data.is_empty() {
+            let mut terminal = session.terminal.lock();
+            terminal.process_batch(&accumulated_data);
+            self.status_message.clear();
         }
 
         // Step 7: 发送终端输出回 shell（DSR 响应等）
