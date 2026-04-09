@@ -519,6 +519,11 @@ impl TerminalRenderer {
             }
         }
 
+        // Single click: clear existing selection
+        if response.clicked() && !response.double_clicked() {
+            terminal.selection = None;
+        }
+
         // Double-click: select word at cursor position
         if response.double_clicked() && !self.dragging_scrollbar {
             if let Some(pos) = response.interact_pointer_pos() {
@@ -854,7 +859,10 @@ impl TerminalRenderer {
                     if next.wide_continuation || next.character == ' ' || next.wide {
                         break;
                     }
-                    let mut next_fg = if next.flags.inverse {
+                    let next_is_selected = terminal.is_cell_selected(row_idx, peek_idx);
+                    let mut next_fg = if next_is_selected {
+                        self.theme.selection_fg_color()
+                    } else if next.flags.inverse {
                         resolve_background_color(next.background, &self.theme)
                     } else {
                         resolve_foreground_color(next.foreground, &self.theme)
