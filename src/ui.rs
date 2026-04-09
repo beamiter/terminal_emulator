@@ -223,6 +223,7 @@ pub struct TerminalRenderer {
     texture_cache: std::collections::HashMap<u32, (egui::TextureHandle, u32, u32)>,
     /// The content rect from the last render, used for mouse-to-grid coordinate conversion
     pub last_content_rect: Option<egui::Rect>,
+    pub opacity: f32,
 }
 
 impl TerminalRenderer {
@@ -256,6 +257,7 @@ impl TerminalRenderer {
             ime_enabled: false,
             last_content_rect: None,
             last_ime_rect: None,
+            opacity: 1.0,
             texture_cache: std::collections::HashMap::new(),
         }
     }
@@ -400,7 +402,9 @@ impl TerminalRenderer {
         // eprintln!("[UI] Rect: {:?}", rect);
 
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, egui::CornerRadius::ZERO, self.theme.terminal_background());
+        let bg = self.theme.terminal_background();
+        let bg_with_opacity = egui::Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), (self.opacity * 255.0) as u8);
+        painter.rect_filled(rect, egui::CornerRadius::ZERO, bg_with_opacity);
 
         let (content_rect, scrollbar_rect) = self.layout_rects(rect);
         self.last_content_rect = Some(content_rect);

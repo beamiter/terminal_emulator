@@ -257,7 +257,8 @@ fn main() -> Result<(), eframe::Error> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([cfg.initial_width, cfg.initial_height]),
+            .with_inner_size([cfg.initial_width, cfg.initial_height])
+            .with_transparent(true),
         ..Default::default()
     };
 
@@ -705,13 +706,14 @@ impl TerminalApp {
         let current_theme = theme::Theme::get_theme(&cfg.theme)
             .unwrap_or_default();
 
-        let renderer = TerminalRenderer::new(
+        let mut renderer = TerminalRenderer::new(
             cfg.font_size,
             cfg.padding,
             cfg.line_spacing,
             cfg.scrollbar_visibility.clone(),
             current_theme.clone(),
         );
+        renderer.opacity = cfg.opacity;
 
         // Initialize layout manager with first session
         let layout_manager = layout::LayoutManager::new(0);
@@ -719,13 +721,15 @@ impl TerminalApp {
         // Create additional renderers for multi-pane support (start with empty)
         let mut pane_renderers = Vec::new();
         for _ in 0..4 {
-            pane_renderers.push(TerminalRenderer::new(
+            let mut pr = TerminalRenderer::new(
                 cfg.font_size,
                 cfg.padding,
                 cfg.line_spacing,
                 cfg.scrollbar_visibility.clone(),
                 current_theme.clone(),
-            ));
+            );
+            pr.opacity = cfg.opacity;
+            pane_renderers.push(pr);
         }
 
         TerminalApp {
@@ -787,7 +791,8 @@ impl TerminalApp {
                     let painter = ui.painter();
 
                     // 背景
-                    painter.rect_filled(tab_rect, 0.0, egui::Color32::from_rgb(40, 40, 40));
+                    let tab_alpha = (self.renderer.opacity * 255.0) as u8;
+                    painter.rect_filled(tab_rect, 0.0, egui::Color32::from_rgba_unmultiplied(40, 40, 40, tab_alpha));
 
                     // 检测悬停位置（在绘制之前）
                     let hover_pos = ctx.input(|i| i.pointer.hover_pos());
@@ -1685,6 +1690,14 @@ impl TerminalApp {
                     self.config.scrollback_lines = lines;
                     self.schedule_config_save();
                 }
+                config_panel::ConfigAction::OpacityChanged(opacity) => {
+                    self.config.opacity = opacity;
+                    self.renderer.opacity = opacity;
+                    for pr in &mut self.pane_renderers {
+                        pr.opacity = opacity;
+                    }
+                    self.schedule_config_save();
+                }
                 config_panel::ConfigAction::SaveRequested => {
                     self.config.save().ok();
                 }
@@ -1756,6 +1769,11 @@ impl TerminalApp {
 }
 
 impl eframe::App for TerminalApp {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // Fully transparent clear color to support window-level opacity
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn ui(&mut self, _ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // UI handled in update()
     }

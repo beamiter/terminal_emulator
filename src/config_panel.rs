@@ -19,6 +19,7 @@ pub enum ConfigAction {
     PaddingChanged(f32),
     ScrollbackLinesChanged(usize),
     DebugPanelToggled(bool),
+    OpacityChanged(f32),
     SaveRequested,
     ResetToDefaults,
 }
@@ -34,6 +35,7 @@ pub struct ConfigPanel {
     edit_font_family: String,
     edit_theme: String,
     edit_restore_session: bool,
+    edit_opacity: f32,
     pub edit_debug_overlay: bool,
     // 系统字体缓存
     monospace_fonts: Vec<String>,
@@ -57,6 +59,7 @@ impl ConfigPanel {
         Self {
             is_open: false,
             active_tab: ConfigTab::Font,
+            edit_opacity: 1.0,
             edit_font_size: 14.0,
             edit_line_spacing: 1.3,
             edit_padding: 2.0,
@@ -103,6 +106,7 @@ impl ConfigPanel {
         self.edit_font_family = config.font_family.clone();
         self.edit_theme = config.theme.clone();
         self.edit_restore_session = config.restore_session;
+        self.edit_opacity = config.opacity;
 
         if !self.fonts_loaded {
             self.monospace_fonts = Config::get_monospace_fonts();
@@ -477,6 +481,22 @@ impl ConfigPanel {
                 self.has_changes = true;
             }
             ui.label("px");
+        });
+
+        // Opacity slider
+        ui.horizontal(|ui| {
+            ui.label("Opacity:");
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.edit_opacity, 0.05..=1.0)
+                        .step_by(0.05)
+                        .show_value(true),
+                )
+                .changed()
+            {
+                actions.push(ConfigAction::OpacityChanged(self.edit_opacity));
+                self.has_changes = true;
+            }
         });
 
         // Theme editor (inline)

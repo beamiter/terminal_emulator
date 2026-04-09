@@ -67,6 +67,9 @@ pub struct Config {
 
     #[serde(default)]
     pub session_history_file: Option<PathBuf>,
+
+    #[serde(default = "default_opacity")]
+    pub opacity: f32,
 }
 
 fn default_font_size() -> f32 {
@@ -160,6 +163,10 @@ fn default_restore_session() -> bool {
     true
 }
 
+fn default_opacity() -> f32 {
+    1.0
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -176,6 +183,7 @@ impl Default for Config {
             theme: default_theme(),
             restore_session: default_restore_session(),
             session_history_file: None,
+            opacity: default_opacity(),
         }
     }
 }
@@ -248,6 +256,10 @@ impl Config {
 
     pub fn clamp_scrollback_lines(lines: usize) -> usize {
         lines.clamp(100, 100_000)
+    }
+
+    pub fn clamp_opacity(opacity: f32) -> f32 {
+        opacity.clamp(0.05, 1.0)
     }
 
     pub fn get_monospace_fonts() -> Vec<String> {
