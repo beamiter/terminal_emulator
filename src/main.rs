@@ -392,6 +392,8 @@ struct TerminalApp {
     // Session persistence
     session_save_pending: bool,
     session_save_deadline: std::time::Instant,
+    // Lock file to detect running instances
+    _lock_file: Option<std::fs::File>,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -661,14 +663,21 @@ impl TerminalApp {
         let cols = cfg.cols;
         let rows = cfg.rows;
 
-        // 尝试加载之前保存的会话快照
-        let saved_snapshots = if cfg.restore_session {
+        // 尝试获取实例锁，成功表示没有其他实例在运行
+        let lock_file = session_persistence::try_acquire_instance_lock();
+        let is_first_instance = lock_file.is_some();
+
+        // 仅在首个实例且配置允许时恢复会话
+        let saved_snapshots = if cfg.restore_session && is_first_instance {
             config::Config::session_history_path()
                 .ok()
                 .and_then(|path| session_persistence::SessionsSnapshot::load(&path).ok())
                 .filter(|s| !s.sessions.is_empty())
                 .map(|s| s.sessions)
         } else {
+            if !is_first_instance {
+                eprintln!("[SessionPersistence] Another instance is running, starting fresh");
+            }
             None
         };
 
@@ -766,6 +775,7 @@ impl TerminalApp {
             config_save_deadline: std::time::Instant::now(),
             session_save_pending: true, // 启动后立即保存一次（确保首次运行就有记录）
             session_save_deadline: std::time::Instant::now() + std::time::Duration::from_secs(1),
+            _lock_file: lock_file,
         }
     }
 

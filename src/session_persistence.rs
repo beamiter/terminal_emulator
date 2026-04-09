@@ -49,6 +49,38 @@ impl SessionsSnapshot {
     }
 }
 
+/// 尝试获取实例锁文件。成功返回 Some(File)（持有锁），失败表示已有实例在运行。
+pub fn try_acquire_instance_lock() -> Option<std::fs::File> {
+    let lock_path = dirs::config_dir()?
+        .join("terminal_emulator")
+        .join("instance.lock");
+    if let Some(parent) = lock_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+    // 尝试以排他锁方式打开文件
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&lock_path)
+        .ok()?;
+
+    use std::os::unix::io::AsRawFd;
+    let fd = file.as_raw_fd();
+    // LOCK_EX | LOCK_NB: 非阻塞排他锁
+    let ret = unsafe { libc::flock(fd, libc::LOCK_EX | libc::LOCK_NB) };
+    if ret == 0 {
+        // 写入 PID 方便调试
+        use std::io::Write;
+        let mut f = &file;
+        let _ = write!(f, "{}", std::process::id());
+        Some(file)
+    } else {
+        None // 已有实例持有锁
+    }
+}
+
 /// 确保会话历史目录存在
 pub fn ensure_session_history_dir(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
