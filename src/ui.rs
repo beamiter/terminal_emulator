@@ -562,7 +562,7 @@ impl TerminalRenderer {
                         0
                     };
                     if let Some(sel) = terminal.selection {
-                        terminal.select_text(sel.start, (row, col));
+                        terminal.select_text(sel.anchor, (row, col));
                     }
                 }
             }

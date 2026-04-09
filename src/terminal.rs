@@ -318,8 +318,10 @@ impl DirtyRegion {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Selection {
-    pub start: (usize, usize),
-    pub end: (usize, usize),
+    /// 鼠标按下时的锚点（不排序，保持原始位置）
+    pub anchor: (usize, usize),
+    /// 鼠标当前位置
+    pub active: (usize, usize),
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1997,28 +1999,32 @@ impl TerminalState {
         std::mem::take(&mut self.output_buffer)
     }
 
-    pub fn select_text(&mut self, start: (usize, usize), end: (usize, usize)) {
-        let (start, end) = if start < end { (start, end) } else { (end, start) };
-        self.selection = Some(Selection { start, end });
+    pub fn select_text(&mut self, anchor: (usize, usize), active: (usize, usize)) {
+        self.selection = Some(Selection { anchor, active });
     }
 
     pub fn copy_selection(&self) -> Option<String> {
         self.selection.map(|sel| {
+            let (start, end) = if sel.anchor <= sel.active {
+                (sel.anchor, sel.active)
+            } else {
+                (sel.active, sel.anchor)
+            };
             let mut result = String::new();
             let cols = self.grid.row_len();
 
-            if sel.start.0 == sel.end.0 {
-                for col in sel.start.1..=sel.end.1.min(cols - 1) {
-                    let cell = self.grid.get(sel.start.0, col);
+            if start.0 == end.0 {
+                for col in start.1..=end.1.min(cols - 1) {
+                    let cell = self.grid.get(start.0, col);
                     if !cell.wide_continuation {
                         result.push(cell.character);
                     }
                 }
             } else {
-                for row in sel.start.0..=sel.end.0.min(self.grid.rows() - 1) {
-                    let start_col = if row == sel.start.0 { sel.start.1 } else { 0 };
-                    let end_col = if row == sel.end.0 {
-                        sel.end.1.min(cols - 1)
+                for row in start.0..=end.0.min(self.grid.rows() - 1) {
+                    let start_col = if row == start.0 { start.1 } else { 0 };
+                    let end_col = if row == end.0 {
+                        end.1.min(cols - 1)
                     } else {
                         cols - 1
                     };
@@ -2030,7 +2036,7 @@ impl TerminalState {
                         }
                     }
 
-                    if row < sel.end.0 {
+                    if row < end.0 {
                         result.push('\n');
                     }
                 }
@@ -2111,10 +2117,10 @@ impl TerminalState {
 
     pub fn is_cell_selected(&self, row: usize, col: usize) -> bool {
         if let Some(sel) = self.selection {
-            let (start, end) = if sel.start <= sel.end {
-                (sel.start, sel.end)
+            let (start, end) = if sel.anchor <= sel.active {
+                (sel.anchor, sel.active)
             } else {
-                (sel.end, sel.start)
+                (sel.active, sel.anchor)
             };
 
             if row < start.0 || row > end.0 {
