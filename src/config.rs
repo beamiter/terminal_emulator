@@ -77,22 +77,39 @@ fn default_line_spacing() -> f32 {
     1.3
 }
 
-fn detect_available_fonts() -> Vec<String> {
-    // Try to get installed fonts using fc-list
-    if let Ok(output) = Command::new("fc-list")
-        .args(&[":", "family,style"])
-        .output()
-    {
+fn detect_fonts_by_query(extra_args: &[&str]) -> Vec<String> {
+    let mut args = Vec::from(extra_args);
+    args.push("family");
+    if let Ok(output) = Command::new("fc-list").args(&args).output() {
         if let Ok(stdout) = String::from_utf8(output.stdout) {
-            return stdout
+            let mut seen = std::collections::HashSet::new();
+            let mut families: Vec<String> = stdout
                 .lines()
                 .filter_map(|line| {
-                    line.split(',').next().map(|s| s.trim().to_string())
+                    let family = line.split(',').next()?.trim();
+                    if family.is_empty() {
+                        return None;
+                    }
+                    if seen.insert(family.to_lowercase()) {
+                        Some(family.to_string())
+                    } else {
+                        None
+                    }
                 })
                 .collect();
+            families.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+            return families;
         }
     }
     Vec::new()
+}
+
+fn detect_available_fonts() -> Vec<String> {
+    detect_fonts_by_query(&[":"])
+}
+
+fn detect_monospace_fonts() -> Vec<String> {
+    detect_fonts_by_query(&[":spacing=100"])
 }
 
 fn default_font_family() -> String {
@@ -233,8 +250,11 @@ impl Config {
         lines.clamp(100, 100_000)
     }
 
-    // 获取系统中可用的等宽字体
-    pub fn get_available_monospace_fonts() -> Vec<String> {
+    pub fn get_monospace_fonts() -> Vec<String> {
+        detect_monospace_fonts()
+    }
+
+    pub fn get_all_fonts() -> Vec<String> {
         detect_available_fonts()
     }
 }

@@ -16,6 +16,7 @@ pub enum ConfigAction {
     ThemeChanged(String),
     PaddingChanged(f32),
     ScrollbackLinesChanged(usize),
+    DebugPanelToggled(bool),
     SaveRequested,
     ResetToDefaults,
 }
@@ -31,10 +32,15 @@ pub struct ConfigPanel {
     edit_font_family: String,
     edit_theme: String,
     edit_restore_session: bool,
+    pub edit_debug_overlay: bool,
     // 系统字体缓存
-    available_fonts: Vec<String>,
+    monospace_fonts: Vec<String>,
+    all_fonts: Vec<String>,
     available_themes: Vec<String>,
     fonts_loaded: bool,
+    // Font filter
+    font_filter: String,
+    show_all_fonts: bool,
     // 保存编辑状态
     has_changes: bool,
 }
@@ -51,13 +57,16 @@ impl ConfigPanel {
             edit_font_family: String::new(),
             edit_theme: "dark".to_string(),
             edit_restore_session: false,
-            available_fonts: Vec::new(),
-            available_themes: vec![
-                "dark".to_string(),
-                "light".to_string(),
-                "solarized-dark".to_string(),
-            ],
+            edit_debug_overlay: false,
+            monospace_fonts: Vec::new(),
+            all_fonts: Vec::new(),
+            available_themes: crate::theme::Theme::available_themes()
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
             fonts_loaded: false,
+            font_filter: String::new(),
+            show_all_fonts: false,
             has_changes: false,
         }
     }
@@ -76,10 +85,10 @@ impl ConfigPanel {
 
         // 缓存系统字体列表（只加载一次）
         if !self.fonts_loaded {
-            self.available_fonts = Config::get_available_monospace_fonts();
-            if self.available_fonts.is_empty() {
-                // 如果没有检测到字体，提供默认列表
-                self.available_fonts = vec![
+            self.monospace_fonts = Config::get_monospace_fonts();
+            self.all_fonts = Config::get_all_fonts();
+            if self.monospace_fonts.is_empty() {
+                self.monospace_fonts = vec![
                     "SauceCodePro Nerd Font".to_string(),
                     "JetBrains Mono".to_string(),
                     "Fira Code".to_string(),
@@ -88,6 +97,7 @@ impl ConfigPanel {
             }
             self.fonts_loaded = true;
         }
+        self.font_filter.clear();
     }
 
     pub fn close(&mut self) {
@@ -231,37 +241,120 @@ impl ConfigPanel {
 
         ui.separator();
 
-        // Font Family ComboBox
+        // Current font display
+        let current_display = if self.edit_font_family.is_empty() {
+            "Default".to_string()
+        } else {
+            self.edit_font_family.clone()
+        };
         ui.horizontal(|ui| {
-            ui.label("Family:");
-            let combo_text = if self.edit_font_family.is_empty() {
-                "Default".to_string()
-            } else {
-                self.edit_font_family.clone()
-            };
-            if egui::ComboBox::from_label("")
-                .selected_text(combo_text)
-                .show_ui(ui, |ui| {
-                    let mut changed = false;
-                    ui.selectable_value(&mut self.edit_font_family, String::new(), "Default");
-                    for font in &self.available_fonts {
-                        if ui.selectable_value(&mut self.edit_font_family, font.clone(), font).changed() {
-                            changed = true;
-                        }
-                    }
-                    changed
-                })
-                .inner
-                .unwrap_or(false)
-            {
-                actions.push(ConfigAction::FontFamilyChanged(self.edit_font_family.clone()));
-                self.has_changes = true;
+            ui.label("Current:");
+            ui.label(RichText::new(&current_display).strong().color(Color32::from_rgb(100, 200, 255)));
+        });
+
+        ui.add_space(4.0);
+
+        // Search / filter input
+        ui.horizontal(|ui| {
+            ui.label("Search:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.font_filter)
+                    .desired_width(200.0)
+                    .hint_text("Filter fonts..."),
+            );
+            if !self.font_filter.is_empty() {
+                if ui.small_button("x").clicked() {
+                    self.font_filter.clear();
+                }
             }
         });
 
-        if !self.available_fonts.iter().any(|f| f == &self.edit_font_family) && !self.edit_font_family.is_empty() {
-            ui.colored_label(Color32::YELLOW, "⚠ Font not found in system (requires restart)");
+        // Toggle: show all fonts vs monospace only
+        ui.horizontal(|ui| {
+            ui.checkbox(&mut self.show_all_fonts, "Show all fonts");
+            let count = if self.show_all_fonts {
+                self.all_fonts.len()
+            } else {
+                self.monospace_fonts.len()
+            };
+            ui.label(
+                RichText::new(format!("({} fonts)", count))
+                    .size(11.0)
+                    .color(Color32::from_rgb(140, 140, 140)),
+            );
+        });
+
+        ui.add_space(4.0);
+
+        // Font list
+        let filter_lower = self.font_filter.to_lowercase();
+        let fonts: &Vec<String> = if self.show_all_fonts {
+            &self.all_fonts
+        } else {
+            &self.monospace_fonts
+        };
+
+        // "Default" option at top
+        let show_default = self.font_filter.is_empty() || "default".contains(&filter_lower);
+        let matched_fonts: Vec<&String> = fonts
+            .iter()
+            .filter(|f| filter_lower.is_empty() || f.to_lowercase().contains(&filter_lower))
+            .collect();
+
+        let total = matched_fonts.len() + if show_default { 1 } else { 0 };
+
+        if total == 0 {
+            ui.label(
+                RichText::new("No matching fonts")
+                    .italics()
+                    .color(Color32::from_rgb(140, 140, 140)),
+            );
+        } else {
+            let row_height = 22.0;
+            egui::ScrollArea::vertical()
+                .max_height(200.0)
+                .auto_shrink([false; 2])
+                .show_rows(ui, row_height, total, |ui, row_range| {
+                    for row_idx in row_range {
+                        if row_idx == 0 && show_default {
+                            let is_selected = self.edit_font_family.is_empty();
+                            let resp = ui.selectable_label(is_selected, "Default");
+                            if resp.clicked() && !is_selected {
+                                self.edit_font_family.clear();
+                                actions.push(ConfigAction::FontFamilyChanged(String::new()));
+                                self.has_changes = true;
+                            }
+                            continue;
+                        }
+                        let font_idx = if show_default { row_idx - 1 } else { row_idx };
+                        if let Some(font_name) = matched_fonts.get(font_idx) {
+                            let is_selected = self.edit_font_family == **font_name;
+                            let label = RichText::new(font_name.as_str());
+                            let resp = ui.selectable_label(is_selected, label);
+                            if resp.clicked() && !is_selected {
+                                self.edit_font_family = (*font_name).clone();
+                                actions.push(ConfigAction::FontFamilyChanged(self.edit_font_family.clone()));
+                                self.has_changes = true;
+                            }
+                        }
+                    }
+                });
         }
+
+        // Warning if font not found
+        if !self.edit_font_family.is_empty()
+            && !self.monospace_fonts.iter().any(|f| f == &self.edit_font_family)
+            && !self.all_fonts.iter().any(|f| f == &self.edit_font_family)
+        {
+            ui.colored_label(Color32::YELLOW, "⚠ Font not found in system");
+        }
+
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new("Note: font change requires restart")
+                .size(10.0)
+                .color(Color32::from_rgb(140, 140, 140)),
+        );
     }
 
     fn render_appearance_tab(&mut self, ui: &mut egui::Ui, actions: &mut Vec<ConfigAction>) {
@@ -338,6 +431,16 @@ impl ConfigPanel {
             .changed()
         {
             self.has_changes = true;
+        }
+
+        ui.separator();
+
+        // Debug overlay toggle
+        if ui
+            .checkbox(&mut self.edit_debug_overlay, "Show debug overlay (F12)")
+            .changed()
+        {
+            actions.push(ConfigAction::DebugPanelToggled(self.edit_debug_overlay));
         }
     }
 }

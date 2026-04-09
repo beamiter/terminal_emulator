@@ -22,6 +22,7 @@ mod ansi_advanced;
 mod windows_compat;
 mod help;
 mod config_panel;
+mod debug_panel;
 mod kitty_graphics;
 mod image_cache;
 mod char_width;  // P5：字符宽度缓存
@@ -381,6 +382,8 @@ struct TerminalApp {
     help_panel: help::HelpPanel,
     // Config panel
     config_panel: config_panel::ConfigPanel,
+    // Debug overlay panel
+    debug_panel: debug_panel::DebugPanel,
     // Config system
     config: config::Config,
     config_save_pending: bool,
@@ -753,6 +756,7 @@ impl TerminalApp {
             dragging_divider: false,
             help_panel: help::HelpPanel::new(),
             config_panel: config_panel::ConfigPanel::new(),
+            debug_panel: debug_panel::DebugPanel::new(),
             config: cfg.clone(),
             config_save_pending: false,
             config_save_deadline: std::time::Instant::now(),
@@ -1676,8 +1680,31 @@ impl TerminalApp {
                     self.config = config::Config::default();
                     self.schedule_config_save();
                 }
+                config_panel::ConfigAction::DebugPanelToggled(open) => {
+                    self.debug_panel.is_open = open;
+                }
                 config_panel::ConfigAction::None => {}
             }
+        }
+
+        // Debug overlay panel
+        {
+            let session = self.session_manager.get_active_session_mut();
+            let terminal = session.terminal.lock();
+            let grid_cols = terminal.grid.cols();
+            let grid_rows = terminal.grid.rows();
+            let scrollback_used = terminal.scrollback.len();
+            let scrollback_max = terminal.max_scrollback();
+            drop(terminal);
+            let session_count = self.session_manager.len();
+            self.debug_panel.show(
+                ctx,
+                grid_cols,
+                grid_rows,
+                session_count,
+                scrollback_used,
+                scrollback_max,
+            );
         }
     }
 
@@ -1746,6 +1773,8 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.debug_panel.record_frame();
+
         let active_session_idx = self.session_manager.active_index();
         let session = self.session_manager.get_active_session_mut();
 
@@ -1809,6 +1838,11 @@ impl eframe::App for TerminalApp {
         // 帮助面板快捷键 (Ctrl+?)
         if ctx.input(|i| i.key_pressed(egui::Key::Slash) && i.modifiers.ctrl) {
             self.help_panel.toggle();
+        }
+
+        // Debug overlay 快捷键 (F12)
+        if ctx.input(|i| i.key_pressed(egui::Key::F12)) {
+            self.debug_panel.toggle();
         }
 
         // 当命令调色板打开时，处理其事件
@@ -1916,6 +1950,7 @@ impl eframe::App for TerminalApp {
                                         }
                                         keybindings::Command::ConfigOpen => {
                                             self.config_panel.open(&self.config);
+                                            self.config_panel.edit_debug_overlay = self.debug_panel.is_open;
                                         }
                                         keybindings::Command::ConfigClose => {
                                             self.config_panel.close();
@@ -2013,6 +2048,7 @@ impl eframe::App for TerminalApp {
                         }
                         keybindings::Command::ConfigOpen => {
                             self.config_panel.open(&self.config);
+                                            self.config_panel.edit_debug_overlay = self.debug_panel.is_open;
                         }
                         keybindings::Command::ConfigClose => {
                             self.config_panel.close();
@@ -2621,7 +2657,8 @@ impl eframe::App for TerminalApp {
         let should_repaint = has_new_output
             || cursor_state_changed
             || has_keyboard_input
-            || has_mouse_input;
+            || has_mouse_input
+            || self.debug_panel.is_open;
 
         if should_repaint {
             if cursor_state_changed {
