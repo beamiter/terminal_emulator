@@ -808,6 +808,94 @@ impl TerminalApp {
                     let tab_alpha = (self.renderer.opacity * 255.0) as u8;
                     painter.rect_filled(tab_rect, 0.0, egui::Color32::from_rgba_unmultiplied(40, 40, 40, tab_alpha));
 
+                    // 预先收集会话信息（CWD动态标题 + 缩略 + 宽度），供交互和渲染共用
+                    let max_tab_text_width = 150.0;
+                    let tab_infos: Vec<(usize, String, f32)> = {
+                        let measure = |p: &egui::Painter, text: &str| -> f32 {
+                            p.layout_no_wrap(
+                                text.to_string(),
+                                egui::FontId::monospace(12.0),
+                                egui::Color32::WHITE,
+                            ).rect.width()
+                        };
+                        self.session_manager.sessions()
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, session)| {
+                                let pid = session.get_shell_pid();
+                                let tab_title = crate::session_manager::get_process_cwd(pid)
+                                    .map(|cwd| {
+                                        if let Ok(home) = std::env::var("HOME") {
+                                            if cwd == home {
+                                                "~".to_string()
+                                            } else if let Some(rest) = cwd.strip_prefix(&home) {
+                                                format!("~{}", rest)
+                                            } else {
+                                                cwd
+                                            }
+                                        } else {
+                                            cwd
+                                        }
+                                    })
+                                    .unwrap_or_else(|| session.metadata.name.clone());
+
+                                // 路径缩略
+                                let display_text = if measure(&painter, &tab_title) <= max_tab_text_width {
+                                    tab_title.clone()
+                                } else {
+                                    let (prefix, path_part) = if let Some(rest) = tab_title.strip_prefix("~/") {
+                                        ("~/", rest)
+                                    } else if let Some(rest) = tab_title.strip_prefix('/') {
+                                        ("/", rest)
+                                    } else {
+                                        ("", tab_title.as_str())
+                                    };
+
+                                    let parts: Vec<&str> = path_part.split('/').collect();
+                                    if parts.len() <= 1 {
+                                        let ellipsis = "...";
+                                        let mut truncated = String::new();
+                                        for ch in tab_title.chars() {
+                                            let test = format!("{}{}{}", truncated, ch, ellipsis);
+                                            if measure(&painter, &test) > max_tab_text_width {
+                                                break;
+                                            }
+                                            truncated.push(ch);
+                                        }
+                                        format!("{}{}", truncated, ellipsis)
+                                    } else {
+                                        let last = parts[parts.len() - 1];
+                                        let abbreviated_middle: Vec<String> = parts[..parts.len() - 1]
+                                            .iter()
+                                            .map(|p| p.chars().next().map(|c| c.to_string()).unwrap_or_default())
+                                            .collect();
+                                        let short_path = format!("{}{}/{}", prefix, abbreviated_middle.join("/"), last);
+
+                                        if measure(&painter, &short_path) <= max_tab_text_width {
+                                            short_path
+                                        } else {
+                                            let short_prefix = format!("{}{}/", prefix, abbreviated_middle.join("/"));
+                                            let ellipsis = "...";
+                                            let mut truncated = short_prefix.clone();
+                                            for ch in last.chars() {
+                                                let test = format!("{}{}{}", truncated, ch, ellipsis);
+                                                if measure(&painter, &test) > max_tab_text_width {
+                                                    break;
+                                                }
+                                                truncated.push(ch);
+                                            }
+                                            format!("{}{}", truncated, ellipsis)
+                                        }
+                                    }
+                                };
+
+                                let text_width = measure(&painter, &display_text);
+                                let tab_width = text_width + 20.0 + close_btn_size + 4.0;
+                                (idx, display_text, tab_width)
+                            })
+                            .collect()
+                    };
+
                     // 检测悬停位置（在绘制之前）
                     let hover_pos = ctx.input(|i| i.pointer.hover_pos());
                     self.hovered_tab_index = None;
@@ -842,18 +930,9 @@ impl TerminalApp {
                                     if tab_rect.contains(hover_pos) {
                                         let relative_x = hover_pos.x - tab_rect.left();
                                         let mut x_offset = 5.0;
-                                        let sessions_count = self.session_manager.sessions().len();
                                         let mut target_idx = from_idx;
 
-                                        for idx in 0..sessions_count {
-                                            let session = &self.session_manager.sessions()[idx];
-                                            let galley = painter.layout_no_wrap(
-                                                session.metadata.name.clone(),
-                                                egui::FontId::monospace(12.0),
-                                                egui::Color32::WHITE,
-                                            );
-                                            let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
-
+                                        for &(idx, _, tab_width) in &tab_infos {
                                             if relative_x >= x_offset && relative_x < x_offset + tab_width {
                                                 target_idx = idx;
                                                 break;
@@ -879,13 +958,7 @@ impl TerminalApp {
                             if let Some(click_pos) = hover_pos.or_else(|| ctx.input(|i| i.pointer.latest_pos())) {
                                 if tab_rect.contains(click_pos) {
                                     let mut x_offset = tab_rect.left() + 5.0;
-                                    for (idx, session) in self.session_manager.sessions().iter().enumerate() {
-                                        let galley = painter.layout_no_wrap(
-                                            session.metadata.name.clone(),
-                                            egui::FontId::monospace(12.0),
-                                            egui::Color32::WHITE,
-                                        );
-                                        let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
+                                    for &(idx, _, tab_width) in &tab_infos {
                                         let tab_rect_item = egui::Rect::from_min_size(
                                             egui::pos2(x_offset, tab_rect.top() + 5.0),
                                             egui::vec2(tab_width, tab_height - 10.0),
@@ -939,13 +1012,7 @@ impl TerminalApp {
                             if self.dragging_tab.is_none() {
                                 // 检查是否在某个Tab上按下
                                 let mut x_offset = tab_rect.left() + 5.0;
-                                for (idx, session) in self.session_manager.sessions().iter().enumerate() {
-                                    let galley = painter.layout_no_wrap(
-                                        session.metadata.name.clone(),
-                                        egui::FontId::monospace(12.0),
-                                        egui::Color32::WHITE,
-                                    );
-                                    let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
+                                for &(idx, _, tab_width) in &tab_infos {
                                     let tab_rect_item = egui::Rect::from_min_size(
                                         egui::pos2(x_offset, tab_rect.top() + 5.0),
                                         egui::vec2(tab_width, tab_height - 10.0),
@@ -982,17 +1049,8 @@ impl TerminalApp {
                             if let Some(_from_idx) = self.dragging_tab {
                                 let relative_x = hover_pos.x - tab_rect.left();
                                 let mut x_offset = 5.0;
-                                let sessions_count = self.session_manager.sessions().len();
 
-                                for idx in 0..sessions_count {
-                                    let session = &self.session_manager.sessions()[idx];
-                                    let galley = painter.layout_no_wrap(
-                                        session.metadata.name.clone(),
-                                        egui::FontId::monospace(12.0),
-                                        egui::Color32::WHITE,
-                                    );
-                                    let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
-
+                                for &(idx, _, tab_width) in &tab_infos {
                                     if relative_x >= x_offset && relative_x < x_offset + tab_width {
                                         drag_target_idx = Some(idx);
                                         break;
@@ -1012,118 +1070,18 @@ impl TerminalApp {
                     let mut x_offset = tab_rect.left() + 5.0;
                     let active_idx = self.session_manager.active_index();
 
-                    // 预先收集会话信息，避免借用冲突
-                    // 使用当前工作目录作为动态标签标题
-                    let sessions_info: Vec<_> = self.session_manager.sessions()
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, session)| {
-                            let pid = session.get_shell_pid();
-                            let tab_title = crate::session_manager::get_process_cwd(pid)
-                                .map(|cwd| {
-                                    // 将 home 目录替换为 ~
-                                    if let Ok(home) = std::env::var("HOME") {
-                                        if cwd == home {
-                                            "~".to_string()
-                                        } else if let Some(rest) = cwd.strip_prefix(&home) {
-                                            format!("~{}", rest)
-                                        } else {
-                                            cwd
-                                        }
-                                    } else {
-                                        cwd
-                                    }
-                                })
-                                .unwrap_or_else(|| session.metadata.name.clone());
-                            (idx, tab_title)
-                        })
-                        .collect();
-
-                    // Tab 最大宽度限制
-                    let max_tab_text_width = 150.0;
-
-                    // 绘制每个标签
-                    for (idx, tab_text) in &sessions_info {
-                        // 路径缩略：中间目录取首字母，保留最后一级完整
-                        // 例如 ~/projects/terminal_emulator → ~/p/terminal_emulator
-                        let display_text = {
-                            let measure = |text: &str| -> f32 {
-                                painter.layout_no_wrap(
-                                    text.to_string(),
-                                    egui::FontId::monospace(12.0),
-                                    egui::Color32::WHITE,
-                                ).rect.width()
-                            };
-
-                            if measure(tab_text) <= max_tab_text_width {
-                                tab_text.clone()
-                            } else {
-                                // 拆分路径组件，缩写中间部分
-                                let (prefix, path_part) = if let Some(rest) = tab_text.strip_prefix("~/") {
-                                    ("~/", rest)
-                                } else if let Some(rest) = tab_text.strip_prefix('/') {
-                                    ("/", rest)
-                                } else {
-                                    ("", tab_text.as_str())
-                                };
-
-                                let parts: Vec<&str> = path_part.split('/').collect();
-                                if parts.len() <= 1 {
-                                    // 只有一级目录，直接截断
-                                    let ellipsis = "...";
-                                    let mut truncated = String::new();
-                                    for ch in tab_text.chars() {
-                                        let test = format!("{}{}{}", truncated, ch, ellipsis);
-                                        if measure(&test) > max_tab_text_width {
-                                            break;
-                                        }
-                                        truncated.push(ch);
-                                    }
-                                    format!("{}{}", truncated, ellipsis)
-                                } else {
-                                    // 中间目录缩写为首字符
-                                    let last = parts[parts.len() - 1];
-                                    let abbreviated_middle: Vec<String> = parts[..parts.len() - 1]
-                                        .iter()
-                                        .map(|p| p.chars().next().map(|c| c.to_string()).unwrap_or_default())
-                                        .collect();
-                                    let short_path = format!("{}{}/{}", prefix, abbreviated_middle.join("/"), last);
-
-                                    if measure(&short_path) <= max_tab_text_width {
-                                        short_path
-                                    } else {
-                                        // 缩写后仍然过长，截断最后一级目录名
-                                        let short_prefix = format!("{}{}/", prefix, abbreviated_middle.join("/"));
-                                        let ellipsis = "...";
-                                        let mut truncated = short_prefix.clone();
-                                        for ch in last.chars() {
-                                            let test = format!("{}{}{}", truncated, ch, ellipsis);
-                                            if measure(&test) > max_tab_text_width {
-                                                break;
-                                            }
-                                            truncated.push(ch);
-                                        }
-                                        format!("{}{}", truncated, ellipsis)
-                                    }
-                                }
-                            }
-                        };
-
-                        let galley = painter.layout_no_wrap(
-                            display_text.clone(),
-                            egui::FontId::monospace(12.0),
-                            egui::Color32::WHITE,
-                        );
-
-                        let tab_width = galley.rect.width() + 20.0 + close_btn_size + 4.0;
+                    // 绘制每个标签（复用预计算的 tab_infos）
+                    for (idx, display_text, tab_width) in &tab_infos {
+                        let idx = *idx;
+                        let tab_width = *tab_width;
                         let mut tab_rect_item = egui::Rect::from_min_size(
                             egui::pos2(x_offset, tab_rect.top() + 5.0),
                             egui::vec2(tab_width, tab_height - 10.0),
                         );
 
-                        let is_active = *idx == active_idx;
-                        let is_dragging = self.dragging_tab == Some(*idx);
-                        let is_drag_target = drag_target_idx == Some(*idx);
+                        let is_active = idx == active_idx;
+                        let is_dragging = self.dragging_tab == Some(idx);
+                        let is_drag_target = drag_target_idx == Some(idx);
 
                         // 计算拖拽过程中的动画位移
                         if is_actually_dragging {
@@ -1140,13 +1098,13 @@ impl TerminalApp {
 
                                 if drag_to_left {
                                     // 目标在左边，右侧的tabs应该向右推移
-                                    if *idx > from_idx {
+                                    if idx > from_idx {
                                         let push_offset = tab_width + 2.0;
                                         tab_rect_item = tab_rect_item.translate(egui::vec2(push_offset, 0.0));
                                     }
                                 } else if drag_to_right {
                                     // 目标在右边，左侧的tabs应该向左推移
-                                    if *idx < from_idx {
+                                    if idx < from_idx {
                                         let push_offset = -(tab_width + 2.0);
                                         tab_rect_item = tab_rect_item.translate(egui::vec2(push_offset, 0.0));
                                     }
@@ -1162,7 +1120,7 @@ impl TerminalApp {
                         };
 
                         if is_hovered && !is_actually_dragging {
-                            self.hovered_tab_index = Some(*idx);
+                            self.hovered_tab_index = Some(idx);
                         }
 
                         // 背景色：激活、拖拽中或悬停时改变
