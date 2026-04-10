@@ -790,12 +790,13 @@ impl TerminalApp {
                 // 消除 tab 栏与终端之间的间距
                 ui.spacing_mut().item_spacing.y = 0.0;
 
-                // 渲染会话标签栏
-                let tab_height = 30.0;
-                let close_btn_size = 14.0;
+                // 渲染会话标签栏（仅在多会话时显示，单会话进入 zen 模式）
+                let show_tab_bar = self.session_manager.sessions().len() > 1;
 
                 // Tab 栏 - 绘制标签和按钮
-                {
+                if show_tab_bar {
+                    let tab_height = 30.0;
+                    let close_btn_size = 14.0;
                     let tab_rect = egui::Rect::from_min_size(
                         ui.cursor().left_top(),
                         egui::vec2(ui.available_width(), tab_height),
@@ -1225,9 +1226,9 @@ impl TerminalApp {
                         }
                     }
 
-                    // "+" 按钮 - 新建会话
+                    // "+" 按钮 - 新建会话（紧跟最后一个 Tab）
                     let plus_btn_rect = egui::Rect::from_min_size(
-                        egui::pos2(tab_rect.right() - 30.0, tab_rect.top() + 5.0),
+                        egui::pos2(tab_rect.left() + x_offset + 4.0, tab_rect.top() + 5.0),
                         egui::vec2(25.0, tab_height - 10.0),
                     );
 
@@ -1245,27 +1246,11 @@ impl TerminalApp {
                     };
 
                     painter.rect_filled(plus_btn_rect, 1.0, plus_btn_color);
-                    // 绘制边框
-                    painter.hline(
-                        plus_btn_rect.left()..=plus_btn_rect.right(),
-                        plus_btn_rect.top(),
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                    );
-                    painter.hline(
-                        plus_btn_rect.left()..=plus_btn_rect.right(),
-                        plus_btn_rect.bottom(),
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                    );
-                    painter.vline(
-                        plus_btn_rect.left(),
-                        plus_btn_rect.top()..=plus_btn_rect.bottom(),
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                    );
-                    painter.vline(
-                        plus_btn_rect.right(),
-                        plus_btn_rect.top()..=plus_btn_rect.bottom(),
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                    );
+                    let btn_border = egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130));
+                    painter.hline(plus_btn_rect.left()..=plus_btn_rect.right(), plus_btn_rect.top(), btn_border);
+                    painter.hline(plus_btn_rect.left()..=plus_btn_rect.right(), plus_btn_rect.bottom(), btn_border);
+                    painter.vline(plus_btn_rect.left(), plus_btn_rect.top()..=plus_btn_rect.bottom(), btn_border);
+                    painter.vline(plus_btn_rect.right(), plus_btn_rect.top()..=plus_btn_rect.bottom(), btn_border);
 
                     let plus_text_color = if plus_btn_hovered {
                         egui::Color32::from_rgb(220, 220, 220)
@@ -1289,6 +1274,60 @@ impl TerminalApp {
                                 self.session_manager.switch_session(new_idx);
                                 self.force_resize_session = true;
                                 self.schedule_session_save();
+                            }
+                        }
+                    }
+
+                    // 关闭窗口按钮（最右侧）
+                    let close_win_size = 25.0;
+                    let close_win_rect = egui::Rect::from_min_size(
+                        egui::pos2(tab_rect.right() - close_win_size - 5.0, tab_rect.top() + 5.0),
+                        egui::vec2(close_win_size, tab_height - 10.0),
+                    );
+
+                    let close_win_hovered = if let Some(hover_pos) = hover_pos {
+                        close_win_rect.contains(hover_pos)
+                    } else {
+                        false
+                    };
+
+                    let close_win_bg = if close_win_hovered {
+                        egui::Color32::from_rgb(180, 50, 50)
+                    } else {
+                        egui::Color32::from_rgb(50, 50, 60)
+                    };
+
+                    painter.rect_filled(close_win_rect, 1.0, close_win_bg);
+                    let close_border = egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130));
+                    painter.hline(close_win_rect.left()..=close_win_rect.right(), close_win_rect.top(), close_border);
+                    painter.hline(close_win_rect.left()..=close_win_rect.right(), close_win_rect.bottom(), close_border);
+                    painter.vline(close_win_rect.left(), close_win_rect.top()..=close_win_rect.bottom(), close_border);
+                    painter.vline(close_win_rect.right(), close_win_rect.top()..=close_win_rect.bottom(), close_border);
+
+                    // 绘制 X 符号
+                    let cw_cross = 5.0;
+                    let cw_center = close_win_rect.center();
+                    let cw_x_color = if close_win_hovered {
+                        egui::Color32::WHITE
+                    } else {
+                        egui::Color32::from_rgb(180, 180, 190)
+                    };
+                    painter.line_segment(
+                        [egui::pos2(cw_center.x - cw_cross, cw_center.y - cw_cross),
+                         egui::pos2(cw_center.x + cw_cross, cw_center.y + cw_cross)],
+                        egui::Stroke::new(1.5, cw_x_color),
+                    );
+                    painter.line_segment(
+                        [egui::pos2(cw_center.x + cw_cross, cw_center.y - cw_cross),
+                         egui::pos2(cw_center.x - cw_cross, cw_center.y + cw_cross)],
+                        egui::Stroke::new(1.5, cw_x_color),
+                    );
+
+                    // 检测关闭窗口按钮点击
+                    if mouse_released {
+                        if let Some(click_pos) = ctx.input(|i| i.pointer.latest_pos()) {
+                            if close_win_rect.contains(click_pos) {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                             }
                         }
                     }
