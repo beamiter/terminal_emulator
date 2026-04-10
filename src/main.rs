@@ -1013,16 +1013,104 @@ impl TerminalApp {
                     let active_idx = self.session_manager.active_index();
 
                     // 预先收集会话信息，避免借用冲突
+                    // 使用当前工作目录作为动态标签标题
                     let sessions_info: Vec<_> = self.session_manager.sessions()
                         .iter()
                         .enumerate()
-                        .map(|(idx, session)| (idx, session.metadata.name.clone()))
+                        .map(|(idx, session)| {
+                            let pid = session.get_shell_pid();
+                            let tab_title = crate::session_manager::get_process_cwd(pid)
+                                .map(|cwd| {
+                                    // 将 home 目录替换为 ~
+                                    if let Ok(home) = std::env::var("HOME") {
+                                        if cwd == home {
+                                            "~".to_string()
+                                        } else if let Some(rest) = cwd.strip_prefix(&home) {
+                                            format!("~{}", rest)
+                                        } else {
+                                            cwd
+                                        }
+                                    } else {
+                                        cwd
+                                    }
+                                })
+                                .unwrap_or_else(|| session.metadata.name.clone());
+                            (idx, tab_title)
+                        })
                         .collect();
+
+                    // Tab 最大宽度限制
+                    let max_tab_text_width = 150.0;
 
                     // 绘制每个标签
                     for (idx, tab_text) in &sessions_info {
+                        // 路径缩略：中间目录取首字母，保留最后一级完整
+                        // 例如 ~/projects/terminal_emulator → ~/p/terminal_emulator
+                        let display_text = {
+                            let measure = |text: &str| -> f32 {
+                                painter.layout_no_wrap(
+                                    text.to_string(),
+                                    egui::FontId::monospace(12.0),
+                                    egui::Color32::WHITE,
+                                ).rect.width()
+                            };
+
+                            if measure(tab_text) <= max_tab_text_width {
+                                tab_text.clone()
+                            } else {
+                                // 拆分路径组件，缩写中间部分
+                                let (prefix, path_part) = if let Some(rest) = tab_text.strip_prefix("~/") {
+                                    ("~/", rest)
+                                } else if let Some(rest) = tab_text.strip_prefix('/') {
+                                    ("/", rest)
+                                } else {
+                                    ("", tab_text.as_str())
+                                };
+
+                                let parts: Vec<&str> = path_part.split('/').collect();
+                                if parts.len() <= 1 {
+                                    // 只有一级目录，直接截断
+                                    let ellipsis = "...";
+                                    let mut truncated = String::new();
+                                    for ch in tab_text.chars() {
+                                        let test = format!("{}{}{}", truncated, ch, ellipsis);
+                                        if measure(&test) > max_tab_text_width {
+                                            break;
+                                        }
+                                        truncated.push(ch);
+                                    }
+                                    format!("{}{}", truncated, ellipsis)
+                                } else {
+                                    // 中间目录缩写为首字符
+                                    let last = parts[parts.len() - 1];
+                                    let abbreviated_middle: Vec<String> = parts[..parts.len() - 1]
+                                        .iter()
+                                        .map(|p| p.chars().next().map(|c| c.to_string()).unwrap_or_default())
+                                        .collect();
+                                    let short_path = format!("{}{}/{}", prefix, abbreviated_middle.join("/"), last);
+
+                                    if measure(&short_path) <= max_tab_text_width {
+                                        short_path
+                                    } else {
+                                        // 缩写后仍然过长，截断最后一级目录名
+                                        let short_prefix = format!("{}{}/", prefix, abbreviated_middle.join("/"));
+                                        let ellipsis = "...";
+                                        let mut truncated = short_prefix.clone();
+                                        for ch in last.chars() {
+                                            let test = format!("{}{}{}", truncated, ch, ellipsis);
+                                            if measure(&test) > max_tab_text_width {
+                                                break;
+                                            }
+                                            truncated.push(ch);
+                                        }
+                                        format!("{}{}", truncated, ellipsis)
+                                    }
+                                }
+                            }
+                        };
+
                         let galley = painter.layout_no_wrap(
-                            tab_text.clone(),
+                            display_text.clone(),
                             egui::FontId::monospace(12.0),
                             egui::Color32::WHITE,
                         );
@@ -1166,7 +1254,7 @@ impl TerminalApp {
                                 tab_rect_item.center().y,
                             ),
                             egui::Align2::LEFT_CENTER,
-                            tab_text,
+                            &display_text,
                             egui::FontId::monospace(12.0),
                             if is_active {
                                 egui::Color32::WHITE
@@ -1175,7 +1263,7 @@ impl TerminalApp {
                             },
                         );
 
-                        // 绘制关闭按钮
+                        // 绘制关闭按钮（仅在悬停Tab时显示）
                         let close_btn_rect = egui::Rect::from_min_size(
                             egui::pos2(
                                 tab_rect_item.right() - close_btn_size - 3.0,
@@ -1184,39 +1272,41 @@ impl TerminalApp {
                             egui::vec2(close_btn_size, close_btn_size),
                         );
 
-                        let close_btn_hovered = if let Some(hover_pos) = hover_pos {
-                            close_btn_rect.contains(hover_pos)
-                        } else {
-                            false
-                        };
+                        if is_hovered && !is_dragging {
+                            let close_btn_hovered = if let Some(hover_pos) = hover_pos {
+                                close_btn_rect.contains(hover_pos)
+                            } else {
+                                false
+                            };
 
-                        // 绘制关闭按钮背景（悬停时显示）
-                        if close_btn_hovered && !is_dragging {
-                            painter.circle_filled(close_btn_rect.center(), close_btn_size / 2.0 + 2.0, egui::Color32::from_rgb(100, 50, 50));
+                            // 绘制关闭按钮背景（悬停关闭按钮时显示）
+                            if close_btn_hovered {
+                                painter.circle_filled(close_btn_rect.center(), close_btn_size / 2.0 + 2.0, egui::Color32::from_rgb(100, 50, 50));
+                            }
+
+                            // 绘制X符号
+                            let close_x_color = if close_btn_hovered {
+                                egui::Color32::from_rgb(255, 150, 150)
+                            } else {
+                                egui::Color32::from_rgb(150, 150, 150)
+                            };
+
+                            let cross_offset = close_btn_size / 3.0;
+                            painter.line_segment(
+                                [
+                                    egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y - cross_offset),
+                                    egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y + cross_offset),
+                                ],
+                                egui::Stroke::new(1.5, close_x_color),
+                            );
+                            painter.line_segment(
+                                [
+                                    egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y - cross_offset),
+                                    egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y + cross_offset),
+                                ],
+                                egui::Stroke::new(1.5, close_x_color),
+                            );
                         }
-
-                        // 绘制X符号
-                        let close_x_color = if close_btn_hovered && !is_dragging {
-                            egui::Color32::from_rgb(255, 150, 150)
-                        } else {
-                            egui::Color32::from_rgb(150, 150, 150)
-                        };
-
-                        let cross_offset = close_btn_size / 3.0;
-                        painter.line_segment(
-                            [
-                                egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y - cross_offset),
-                                egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y + cross_offset),
-                            ],
-                            egui::Stroke::new(1.5, close_x_color),
-                        );
-                        painter.line_segment(
-                            [
-                                egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y - cross_offset),
-                                egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y + cross_offset),
-                            ],
-                            egui::Stroke::new(1.5, close_x_color),
-                        );
 
                         x_offset += tab_width + 2.0;
 
