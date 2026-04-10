@@ -360,6 +360,7 @@ struct TerminalApp {
     dragging_tab: Option<usize>,
     drag_start_pos: Option<f32>,
     current_mouse_x: f32,
+    tab_scroll_offset: f32,
     // Search state
     search_state: search::SearchState,
     // Link detection
@@ -757,6 +758,7 @@ impl TerminalApp {
             dragging_tab: None,
             drag_start_pos: None,
             current_mouse_x: 0.0,
+            tab_scroll_offset: 0.0,
             search_state: search::SearchState::new(),
             link_detector: link::LinkDetector::new(link::LinkDetectionConfig::default()),
             hovered_link: None,
@@ -808,93 +810,167 @@ impl TerminalApp {
                     let tab_alpha = (self.renderer.opacity * 255.0) as u8;
                     painter.rect_filled(tab_rect, 0.0, egui::Color32::from_rgba_unmultiplied(40, 40, 40, tab_alpha));
 
-                    // 预先收集会话信息（CWD动态标题 + 缩略 + 宽度），供交互和渲染共用
-                    let max_tab_text_width = 150.0;
-                    let tab_infos: Vec<(usize, String, f32)> = {
-                        let measure = |p: &egui::Painter, text: &str| -> f32 {
-                            p.layout_no_wrap(
-                                text.to_string(),
-                                egui::FontId::monospace(12.0),
-                                egui::Color32::WHITE,
-                            ).rect.width()
+                    // === Tab 布局常量 ===
+                    let tab_padding = 20.0 + close_btn_size + 4.0; // 文本左右 padding + 关闭按钮
+                    let min_tab_width: f32 = 60.0;
+                    let max_tab_width: f32 = 200.0;
+                    let active_tab_extra: f32 = 60.0;
+                    let tab_spacing: f32 = 2.0;
+                    let left_margin: f32 = 5.0;
+                    let reserved_right: f32 = 80.0; // "+"按钮 + 关闭窗口按钮 + margin
+
+                    let active_idx_for_layout = self.session_manager.active_index();
+
+                    // 文本测量闭包
+                    let measure = |text: &str| -> f32 {
+                        painter.layout_no_wrap(
+                            text.to_string(),
+                            egui::FontId::monospace(12.0),
+                            egui::Color32::WHITE,
+                        ).rect.width()
+                    };
+
+                    // 路径缩略闭包：将 CWD 路径缩略到 max_text_w 像素以内
+                    let abbreviate_path = |title: &str, max_text_w: f32| -> String {
+                        if measure(title) <= max_text_w {
+                            return title.to_string();
+                        }
+                        let (prefix, path_part) = if let Some(rest) = title.strip_prefix("~/") {
+                            ("~/", rest)
+                        } else if let Some(rest) = title.strip_prefix('/') {
+                            ("/", rest)
+                        } else {
+                            ("", title)
                         };
-                        self.session_manager.sessions()
+                        let parts: Vec<&str> = path_part.split('/').collect();
+                        if parts.len() <= 1 {
+                            let ellipsis = "...";
+                            let mut truncated = String::new();
+                            for ch in title.chars() {
+                                let test = format!("{}{}{}", truncated, ch, ellipsis);
+                                if measure(&test) > max_text_w { break; }
+                                truncated.push(ch);
+                            }
+                            return format!("{}{}", truncated, ellipsis);
+                        }
+                        let last = parts[parts.len() - 1];
+                        let abbreviated_middle: Vec<String> = parts[..parts.len() - 1]
                             .iter()
-                            .enumerate()
-                            .map(|(idx, session)| {
-                                let pid = session.get_shell_pid();
-                                let tab_title = crate::session_manager::get_process_cwd(pid)
-                                    .map(|cwd| {
-                                        if let Ok(home) = std::env::var("HOME") {
-                                            if cwd == home {
-                                                "~".to_string()
-                                            } else if let Some(rest) = cwd.strip_prefix(&home) {
-                                                format!("~{}", rest)
-                                            } else {
-                                                cwd
-                                            }
+                            .map(|p| p.chars().next().map(|c| c.to_string()).unwrap_or_default())
+                            .collect();
+                        let short_path = format!("{}{}/{}", prefix, abbreviated_middle.join("/"), last);
+                        if measure(&short_path) <= max_text_w {
+                            return short_path;
+                        }
+                        let short_prefix = format!("{}{}/", prefix, abbreviated_middle.join("/"));
+                        let ellipsis = "...";
+                        let mut truncated = short_prefix.clone();
+                        for ch in last.chars() {
+                            let test = format!("{}{}{}", truncated, ch, ellipsis);
+                            if measure(&test) > max_text_w { break; }
+                            truncated.push(ch);
+                        }
+                        format!("{}{}", truncated, ellipsis)
+                    };
+
+                    // === 第一阶段：收集原始路径 + 为每个 tab 生成 display_text ===
+                    // 活跃 tab 允许更大的文本宽度
+                    let active_max_text = max_tab_width + active_tab_extra - tab_padding;
+                    let inactive_max_text = max_tab_width - tab_padding;
+
+                    let tab_infos: Vec<(usize, String, f32)> = self.session_manager.sessions()
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, session)| {
+                            let pid = session.get_shell_pid();
+                            let tab_title = crate::session_manager::get_process_cwd(pid)
+                                .map(|cwd| {
+                                    if let Ok(home) = std::env::var("HOME") {
+                                        if cwd == home {
+                                            "~".to_string()
+                                        } else if let Some(rest) = cwd.strip_prefix(&home) {
+                                            format!("~{}", rest)
                                         } else {
                                             cwd
                                         }
-                                    })
-                                    .unwrap_or_else(|| session.metadata.name.clone());
-
-                                // 路径缩略
-                                let display_text = if measure(&painter, &tab_title) <= max_tab_text_width {
-                                    tab_title.clone()
-                                } else {
-                                    let (prefix, path_part) = if let Some(rest) = tab_title.strip_prefix("~/") {
-                                        ("~/", rest)
-                                    } else if let Some(rest) = tab_title.strip_prefix('/') {
-                                        ("/", rest)
                                     } else {
-                                        ("", tab_title.as_str())
-                                    };
-
-                                    let parts: Vec<&str> = path_part.split('/').collect();
-                                    if parts.len() <= 1 {
-                                        let ellipsis = "...";
-                                        let mut truncated = String::new();
-                                        for ch in tab_title.chars() {
-                                            let test = format!("{}{}{}", truncated, ch, ellipsis);
-                                            if measure(&painter, &test) > max_tab_text_width {
-                                                break;
-                                            }
-                                            truncated.push(ch);
-                                        }
-                                        format!("{}{}", truncated, ellipsis)
-                                    } else {
-                                        let last = parts[parts.len() - 1];
-                                        let abbreviated_middle: Vec<String> = parts[..parts.len() - 1]
-                                            .iter()
-                                            .map(|p| p.chars().next().map(|c| c.to_string()).unwrap_or_default())
-                                            .collect();
-                                        let short_path = format!("{}{}/{}", prefix, abbreviated_middle.join("/"), last);
-
-                                        if measure(&painter, &short_path) <= max_tab_text_width {
-                                            short_path
-                                        } else {
-                                            let short_prefix = format!("{}{}/", prefix, abbreviated_middle.join("/"));
-                                            let ellipsis = "...";
-                                            let mut truncated = short_prefix.clone();
-                                            for ch in last.chars() {
-                                                let test = format!("{}{}{}", truncated, ch, ellipsis);
-                                                if measure(&painter, &test) > max_tab_text_width {
-                                                    break;
-                                                }
-                                                truncated.push(ch);
-                                            }
-                                            format!("{}{}", truncated, ellipsis)
-                                        }
+                                        cwd
                                     }
-                                };
+                                })
+                                .unwrap_or_else(|| session.metadata.name.clone());
 
-                                let text_width = measure(&painter, &display_text);
-                                let tab_width = text_width + 20.0 + close_btn_size + 4.0;
-                                (idx, display_text, tab_width)
-                            })
-                            .collect()
+                            let max_text_w = if idx == active_idx_for_layout { active_max_text } else { inactive_max_text };
+                            let display_text = abbreviate_path(&tab_title, max_text_w);
+                            let ideal_width = (measure(&display_text) + tab_padding)
+                                .clamp(min_tab_width, if idx == active_idx_for_layout { max_tab_width + active_tab_extra } else { max_tab_width });
+                            (idx, display_text, ideal_width)
+                        })
+                        .collect();
+
+                    // === 第二阶段：布局分配 —— 计算每个 tab 的最终宽度 ===
+                    let available_width = tab_rect.width() - left_margin - reserved_right;
+                    let n = tab_infos.len();
+                    let total_spacing = if n > 1 { (n - 1) as f32 * tab_spacing } else { 0.0 };
+
+                    let tab_widths: Vec<f32> = {
+                        let total_ideal: f32 = tab_infos.iter().map(|(_, _, w)| w).sum::<f32>() + total_spacing;
+
+                        if total_ideal <= available_width {
+                            // 空间足够，各自用理想宽度
+                            tab_infos.iter().map(|(_, _, w)| *w).collect()
+                        } else {
+                            // 空间不足：先保障活跃 tab，压缩非活跃 tab
+                            let active_w = tab_infos.iter()
+                                .find(|(idx, _, _)| *idx == active_idx_for_layout)
+                                .map(|(_, _, w)| *w)
+                                .unwrap_or(min_tab_width);
+                            let remaining = (available_width - active_w - total_spacing).max(0.0);
+                            let inactive_count = if n > 1 { n - 1 } else { 0 };
+
+                            if inactive_count == 0 {
+                                // 只有一个 tab
+                                vec![available_width.max(min_tab_width)]
+                            } else {
+                                let per_inactive = (remaining / inactive_count as f32).max(min_tab_width);
+                                tab_infos.iter().map(|(idx, _, w)| {
+                                    if *idx == active_idx_for_layout {
+                                        // 活跃 tab 也不能超过可用空间
+                                        active_w.min(available_width - total_spacing)
+                                    } else {
+                                        (*w).min(per_inactive).max(min_tab_width)
+                                    }
+                                }).collect()
+                            }
+                        }
                     };
+
+                    // === 第三阶段：滚动偏移 —— 保证活跃 tab 可见 ===
+                    {
+                        let total_width: f32 = tab_widths.iter().sum::<f32>() + total_spacing;
+                        let max_scroll = (total_width - available_width).max(0.0);
+
+                        if total_width <= available_width {
+                            self.tab_scroll_offset = 0.0;
+                        } else {
+                            // 计算活跃 tab 的位置
+                            let mut active_left: f32 = 0.0;
+                            for (i, tw) in tab_widths.iter().enumerate() {
+                                if i == active_idx_for_layout { break; }
+                                active_left += tw + tab_spacing;
+                            }
+                            let active_right = active_left + tab_widths.get(active_idx_for_layout).copied().unwrap_or(0.0);
+
+                            // 如果活跃 tab 左边超出可视区
+                            if active_left < self.tab_scroll_offset {
+                                self.tab_scroll_offset = active_left;
+                            }
+                            // 如果活跃 tab 右边超出可视区
+                            if active_right > self.tab_scroll_offset + available_width {
+                                self.tab_scroll_offset = active_right - available_width;
+                            }
+                            self.tab_scroll_offset = self.tab_scroll_offset.clamp(0.0, max_scroll);
+                        }
+                    }
 
                     // 检测悬停位置（在绘制之前）
                     let hover_pos = ctx.input(|i| i.pointer.hover_pos());
@@ -921,6 +997,10 @@ impl TerminalApp {
                         false
                     };
 
+                    // === 交互辅助：用 tab_widths 计算 tab 位置的宏 ===
+                    // scroll_base: 绝对坐标 x 基准（减去滚动偏移）
+                    let scroll_base = tab_rect.left() + left_margin - self.tab_scroll_offset;
+
                     // 处理拖拽结束或点击
                     if mouse_released {
                         if is_actually_dragging {
@@ -928,20 +1008,15 @@ impl TerminalApp {
                             if let Some(from_idx) = self.dragging_tab {
                                 if let Some(hover_pos) = hover_pos {
                                     if tab_rect.contains(hover_pos) {
-                                        let relative_x = hover_pos.x - tab_rect.left();
-                                        let mut x_offset = 5.0;
+                                        let mut x_off = scroll_base;
                                         let mut target_idx = from_idx;
 
-                                        for &(idx, _, tab_width) in &tab_infos {
-                                            if relative_x >= x_offset && relative_x < x_offset + tab_width {
-                                                target_idx = idx;
+                                        for (i, &tw) in tab_widths.iter().enumerate() {
+                                            if hover_pos.x >= x_off && hover_pos.x < x_off + tw {
+                                                target_idx = i;
                                                 break;
                                             }
-
-                                            x_offset += tab_width + 2.0;
-                                            if x_offset > tab_rect.right() - tab_rect.left() - 50.0 {
-                                                break;
-                                            }
+                                            x_off += tw + tab_spacing;
                                         }
 
                                         // 执行重排
@@ -957,11 +1032,11 @@ impl TerminalApp {
                             // 简单点击（没有发生实际拖拽）
                             if let Some(click_pos) = hover_pos.or_else(|| ctx.input(|i| i.pointer.latest_pos())) {
                                 if tab_rect.contains(click_pos) {
-                                    let mut x_offset = tab_rect.left() + 5.0;
-                                    for &(idx, _, tab_width) in &tab_infos {
+                                    let mut x_off = scroll_base;
+                                    for (i, &tw) in tab_widths.iter().enumerate() {
                                         let tab_rect_item = egui::Rect::from_min_size(
-                                            egui::pos2(x_offset, tab_rect.top() + 5.0),
-                                            egui::vec2(tab_width, tab_height - 10.0),
+                                            egui::pos2(x_off, tab_rect.top() + 5.0),
+                                            egui::vec2(tw, tab_height - 10.0),
                                         );
 
                                         let close_btn_rect = egui::Rect::from_min_size(
@@ -974,7 +1049,7 @@ impl TerminalApp {
 
                                         if close_btn_rect.contains(click_pos) {
                                             if self.session_manager.len() > 1 {
-                                                self.session_manager.close_session(idx);
+                                                self.session_manager.close_session(i);
                                                 self.schedule_session_save();
                                             } else {
                                                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -984,17 +1059,14 @@ impl TerminalApp {
                                             self.drag_start_pos = None;
                                             break;
                                         } else if tab_rect_item.contains(click_pos) {
-                                            self.session_manager.switch_session(idx);
+                                            self.session_manager.switch_session(i);
                                             self.force_resize_session = true;
                                             self.dragging_tab = None;
                                             self.drag_start_pos = None;
                                             break;
                                         }
 
-                                        x_offset += tab_width + 2.0;
-                                        if x_offset > tab_rect.right() - 50.0 {
-                                            break;
-                                        }
+                                        x_off += tw + tab_spacing;
                                     }
                                 }
                             }
@@ -1010,12 +1082,11 @@ impl TerminalApp {
                     if mouse_pressed {
                         if let Some(press_pos) = ctx.input(|i| i.pointer.press_origin()) {
                             if self.dragging_tab.is_none() {
-                                // 检查是否在某个Tab上按下
-                                let mut x_offset = tab_rect.left() + 5.0;
-                                for &(idx, _, tab_width) in &tab_infos {
+                                let mut x_off = scroll_base;
+                                for (i, &tw) in tab_widths.iter().enumerate() {
                                     let tab_rect_item = egui::Rect::from_min_size(
-                                        egui::pos2(x_offset, tab_rect.top() + 5.0),
-                                        egui::vec2(tab_width, tab_height - 10.0),
+                                        egui::pos2(x_off, tab_rect.top() + 5.0),
+                                        egui::vec2(tw, tab_height - 10.0),
                                     );
 
                                     let close_btn_rect = egui::Rect::from_min_size(
@@ -1027,16 +1098,12 @@ impl TerminalApp {
                                     );
 
                                     if tab_rect_item.contains(press_pos) && !close_btn_rect.contains(press_pos) {
-                                        // 标记开始拖拽（但还没有移动足够距离）
-                                        self.dragging_tab = Some(idx);
+                                        self.dragging_tab = Some(i);
                                         self.drag_start_pos = Some(press_pos.x);
                                         break;
                                     }
 
-                                    x_offset += tab_width + 2.0;
-                                    if x_offset > tab_rect.right() - 50.0 {
-                                        break;
-                                    }
+                                    x_off += tw + tab_spacing;
                                 }
                             }
                         }
@@ -1047,19 +1114,13 @@ impl TerminalApp {
                     if is_actually_dragging {
                         if let Some(hover_pos) = hover_pos {
                             if let Some(_from_idx) = self.dragging_tab {
-                                let relative_x = hover_pos.x - tab_rect.left();
-                                let mut x_offset = 5.0;
-
-                                for &(idx, _, tab_width) in &tab_infos {
-                                    if relative_x >= x_offset && relative_x < x_offset + tab_width {
-                                        drag_target_idx = Some(idx);
+                                let mut x_off = scroll_base;
+                                for (i, &tw) in tab_widths.iter().enumerate() {
+                                    if hover_pos.x >= x_off && hover_pos.x < x_off + tw {
+                                        drag_target_idx = Some(i);
                                         break;
                                     }
-
-                                    x_offset += tab_width + 2.0;
-                                    if x_offset > tab_rect.right() - tab_rect.left() - 50.0 {
-                                        break;
-                                    }
+                                    x_off += tw + tab_spacing;
                                 }
                             }
                         }
@@ -1067,21 +1128,27 @@ impl TerminalApp {
                         ctx.request_repaint();
                     }
 
-                    let mut x_offset = tab_rect.left() + 5.0;
+                    // === 渲染 Tab 栏（使用 clip rect 裁剪溢出内容）===
+                    let tab_clip_rect = egui::Rect::from_min_max(
+                        egui::pos2(tab_rect.left() + left_margin, tab_rect.top()),
+                        egui::pos2(tab_rect.right() - reserved_right, tab_rect.bottom()),
+                    );
+                    let clipped_painter = painter.with_clip_rect(tab_clip_rect);
+
+                    let mut x_offset = scroll_base;
                     let active_idx = self.session_manager.active_index();
 
-                    // 绘制每个标签（复用预计算的 tab_infos）
-                    for (idx, display_text, tab_width) in &tab_infos {
-                        let idx = *idx;
-                        let tab_width = *tab_width;
+                    // 绘制每个标签
+                    for (i, (_, display_text, _)) in tab_infos.iter().enumerate() {
+                        let tab_width = tab_widths[i];
                         let mut tab_rect_item = egui::Rect::from_min_size(
                             egui::pos2(x_offset, tab_rect.top() + 5.0),
                             egui::vec2(tab_width, tab_height - 10.0),
                         );
 
-                        let is_active = idx == active_idx;
-                        let is_dragging = self.dragging_tab == Some(idx);
-                        let is_drag_target = drag_target_idx == Some(idx);
+                        let is_active = i == active_idx;
+                        let is_dragging = self.dragging_tab == Some(i);
+                        let is_drag_target = drag_target_idx == Some(i);
 
                         // 计算拖拽过程中的动画位移
                         if is_actually_dragging {
@@ -1097,15 +1164,13 @@ impl TerminalApp {
                                 let drag_to_right = is_drag_target && drag_target_idx.map(|t| t > from_idx).unwrap_or(false);
 
                                 if drag_to_left {
-                                    // 目标在左边，右侧的tabs应该向右推移
-                                    if idx > from_idx {
-                                        let push_offset = tab_width + 2.0;
+                                    if i > from_idx {
+                                        let push_offset = tab_width + tab_spacing;
                                         tab_rect_item = tab_rect_item.translate(egui::vec2(push_offset, 0.0));
                                     }
                                 } else if drag_to_right {
-                                    // 目标在右边，左侧的tabs应该向左推移
-                                    if idx < from_idx {
-                                        let push_offset = -(tab_width + 2.0);
+                                    if i < from_idx {
+                                        let push_offset = -(tab_width + tab_spacing);
                                         tab_rect_item = tab_rect_item.translate(egui::vec2(push_offset, 0.0));
                                     }
                                 }
@@ -1114,13 +1179,13 @@ impl TerminalApp {
 
                         // 检测悬停
                         let is_hovered = if let Some(hover_pos) = hover_pos {
-                            tab_rect_item.contains(hover_pos)
+                            tab_rect_item.contains(hover_pos) && tab_clip_rect.contains(hover_pos)
                         } else {
                             false
                         };
 
                         if is_hovered && !is_actually_dragging {
-                            self.hovered_tab_index = Some(idx);
+                            self.hovered_tab_index = Some(i);
                         }
 
                         // 背景色：激活、拖拽中或悬停时改变
@@ -1131,7 +1196,6 @@ impl TerminalApp {
                         };
 
                         if is_hovered || is_dragging {
-                            // 增亮
                             bg_color = egui::Color32::from_rgb(
                                 (bg_color.r() + 25).min(255),
                                 (bg_color.g() + 25).min(255),
@@ -1141,54 +1205,20 @@ impl TerminalApp {
 
                         // 绘制Tab背景和边框
                         if is_dragging && is_actually_dragging {
-                            // 拖拽中的Tab：半透明+虚线边框
-                            painter.rect_filled(tab_rect_item, 1.0, egui::Color32::from_rgba_premultiplied(
+                            clipped_painter.rect_filled(tab_rect_item, 1.0, egui::Color32::from_rgba_premultiplied(
                                 bg_color.r(), bg_color.g(), bg_color.b(), 140
                             ));
-                            // 虚线边框表示拖拽中
-                            painter.hline(
-                                tab_rect_item.left()..=tab_rect_item.right(),
-                                tab_rect_item.top(),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
-                            );
-                            painter.hline(
-                                tab_rect_item.left()..=tab_rect_item.right(),
-                                tab_rect_item.bottom(),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
-                            );
-                            painter.vline(
-                                tab_rect_item.left(),
-                                tab_rect_item.top()..=tab_rect_item.bottom(),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
-                            );
-                            painter.vline(
-                                tab_rect_item.right(),
-                                tab_rect_item.top()..=tab_rect_item.bottom(),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)),
-                            );
+                            clipped_painter.hline(tab_rect_item.left()..=tab_rect_item.right(), tab_rect_item.top(), egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)));
+                            clipped_painter.hline(tab_rect_item.left()..=tab_rect_item.right(), tab_rect_item.bottom(), egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)));
+                            clipped_painter.vline(tab_rect_item.left(), tab_rect_item.top()..=tab_rect_item.bottom(), egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)));
+                            clipped_painter.vline(tab_rect_item.right(), tab_rect_item.top()..=tab_rect_item.bottom(), egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)));
                         } else {
-                            painter.rect_filled(tab_rect_item, 1.0, bg_color);
-                            // 绘制边框线
-                            painter.hline(
-                                tab_rect_item.left()..=tab_rect_item.right(),
-                                tab_rect_item.top(),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                            );
-                            painter.hline(
-                                tab_rect_item.left()..=tab_rect_item.right(),
-                                tab_rect_item.bottom(),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                            );
-                            painter.vline(
-                                tab_rect_item.left(),
-                                tab_rect_item.top()..=tab_rect_item.bottom(),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                            );
-                            painter.vline(
-                                tab_rect_item.right(),
-                                tab_rect_item.top()..=tab_rect_item.bottom(),
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130)),
-                            );
+                            clipped_painter.rect_filled(tab_rect_item, 1.0, bg_color);
+                            let border = egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130));
+                            clipped_painter.hline(tab_rect_item.left()..=tab_rect_item.right(), tab_rect_item.top(), border);
+                            clipped_painter.hline(tab_rect_item.left()..=tab_rect_item.right(), tab_rect_item.bottom(), border);
+                            clipped_painter.vline(tab_rect_item.left(), tab_rect_item.top()..=tab_rect_item.bottom(), border);
+                            clipped_painter.vline(tab_rect_item.right(), tab_rect_item.top()..=tab_rect_item.bottom(), border);
 
                             // 拖拽过程中，在目标Tab位置显示插入指示线
                             if is_drag_target && is_actually_dragging {
@@ -1197,28 +1227,22 @@ impl TerminalApp {
                                 } else {
                                     tab_rect_item.right()
                                 };
-                                painter.vline(
-                                    insert_line_x,
-                                    tab_rect_item.top()..=tab_rect_item.bottom(),
-                                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
-                                );
+                                clipped_painter.vline(insert_line_x, tab_rect_item.top()..=tab_rect_item.bottom(), egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)));
                             }
                         }
 
-                        // 绘制文本
-                        painter.text(
-                            egui::pos2(
-                                tab_rect_item.left() + 10.0,
-                                tab_rect_item.center().y,
-                            ),
+                        // 绘制文本（使用 tab 内部 clip 防止文本溢出 tab 边界）
+                        let text_clip = egui::Rect::from_min_max(
+                            tab_rect_item.left_top(),
+                            egui::pos2(tab_rect_item.right() - close_btn_size - 6.0, tab_rect_item.bottom()),
+                        );
+                        let text_painter = painter.with_clip_rect(text_clip.intersect(tab_clip_rect));
+                        text_painter.text(
+                            egui::pos2(tab_rect_item.left() + 10.0, tab_rect_item.center().y),
                             egui::Align2::LEFT_CENTER,
-                            &display_text,
+                            display_text,
                             egui::FontId::monospace(12.0),
-                            if is_active {
-                                egui::Color32::WHITE
-                            } else {
-                                egui::Color32::from_rgb(180, 180, 190)
-                            },
+                            if is_active { egui::Color32::WHITE } else { egui::Color32::from_rgb(180, 180, 190) },
                         );
 
                         // 绘制关闭按钮（仅在悬停Tab时显示）
@@ -1237,12 +1261,10 @@ impl TerminalApp {
                                 false
                             };
 
-                            // 绘制关闭按钮背景（悬停关闭按钮时显示）
                             if close_btn_hovered {
-                                painter.circle_filled(close_btn_rect.center(), close_btn_size / 2.0 + 2.0, egui::Color32::from_rgb(100, 50, 50));
+                                clipped_painter.circle_filled(close_btn_rect.center(), close_btn_size / 2.0 + 2.0, egui::Color32::from_rgb(100, 50, 50));
                             }
 
-                            // 绘制X符号
                             let close_x_color = if close_btn_hovered {
                                 egui::Color32::from_rgb(255, 150, 150)
                             } else {
@@ -1250,14 +1272,14 @@ impl TerminalApp {
                             };
 
                             let cross_offset = close_btn_size / 3.0;
-                            painter.line_segment(
+                            clipped_painter.line_segment(
                                 [
                                     egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y - cross_offset),
                                     egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y + cross_offset),
                                 ],
                                 egui::Stroke::new(1.5, close_x_color),
                             );
-                            painter.line_segment(
+                            clipped_painter.line_segment(
                                 [
                                     egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y - cross_offset),
                                     egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y + cross_offset),
@@ -1266,17 +1288,13 @@ impl TerminalApp {
                             );
                         }
 
-                        x_offset += tab_width + 2.0;
-
-                        // 防止超出屏幕
-                        if x_offset > tab_rect.right() - 50.0 {
-                            break;
-                        }
+                        x_offset += tab_width + tab_spacing;
                     }
 
-                    // "+" 按钮 - 新建会话（紧跟最后一个 Tab）
+                    // "+" 按钮 - 新建会话（紧跟最后一个 Tab，但不超过 clip 区域）
+                    let plus_btn_x = x_offset.max(tab_rect.left() + left_margin).min(tab_clip_rect.right());
                     let plus_btn_rect = egui::Rect::from_min_size(
-                        egui::pos2(tab_rect.left() + x_offset + 4.0, tab_rect.top() + 5.0),
+                        egui::pos2(plus_btn_x + 4.0, tab_rect.top() + 5.0),
                         egui::vec2(25.0, tab_height - 10.0),
                     );
 
