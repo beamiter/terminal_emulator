@@ -2733,6 +2733,10 @@ impl eframe::App for TerminalApp {
                     time_until_next.as_millis());
                 ctx.request_repaint_after(time_until_next);
             }
+        } else {
+            // 安全网：防止 PTY 线程的 request_repaint 与主线程 try_recv 之间的
+            // 竞态条件导致事件循环在 CPU 繁忙时永久休眠。
+            ctx.request_repaint_after(std::time::Duration::from_millis(2000));
         }
 
         // Debounce 保存配置和会话
