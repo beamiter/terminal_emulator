@@ -815,6 +815,7 @@ impl TerminalApp {
                     let min_tab_width: f32 = 60.0;
                     let max_tab_width: f32 = 200.0;
                     let active_tab_extra: f32 = 60.0;
+                    let active_min_width: f32 = min_tab_width * 2.0; // 当前 session 最小宽度，更突出
                     let tab_spacing: f32 = 2.0;
                     let left_margin: f32 = 5.0;
                     let reserved_right: f32 = 80.0; // "+"按钮 + 关闭窗口按钮 + margin
@@ -901,8 +902,11 @@ impl TerminalApp {
 
                             let max_text_w = if idx == active_idx_for_layout { active_max_text } else { inactive_max_text };
                             let display_text = abbreviate_path(&tab_title, max_text_w);
-                            let ideal_width = (measure(&display_text) + tab_padding)
-                                .clamp(min_tab_width, if idx == active_idx_for_layout { max_tab_width + active_tab_extra } else { max_tab_width });
+                            let ideal_width = if idx == active_idx_for_layout {
+                                (measure(&display_text) + tab_padding).max(active_min_width)
+                            } else {
+                                (measure(&display_text) + tab_padding).clamp(min_tab_width, max_tab_width)
+                            };
                             (idx, display_text, ideal_width)
                         })
                         .collect();
