@@ -1165,7 +1165,6 @@ impl TerminalRenderer {
                             egui::Key::Z => input.push(0x1a), // Ctrl+Z (suspend)
                             _ => {}
                         }
-
                     }
                 }
                 _ => {}

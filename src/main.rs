@@ -1893,14 +1893,36 @@ impl eframe::App for TerminalApp {
             let terminal = self.session_manager.get_active_session_mut().terminal.lock();
             terminal.is_paste_events_enabled()
         };
-        crate::debug_log!("[RAW_INPUT_HOOK] events before normalize: {}, preserve_paste_event={}",
-                         raw_input.events.len(), preserve_paste_event);
+
+        // Fix: egui-winit swallows Ctrl+V press when clipboard has no text (e.g. image only).
+        // It calls `return` after checking clipboard, so neither Paste nor Key::V pressed
+        // appears in raw_input — only Key::V released survives.
+        // Detect this case and inject Key::V pressed so the terminal receives 0x16.
+        let has_ctrl_v_release = raw_input.events.iter().any(|evt| matches!(evt,
+            egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. }
+            if modifiers.ctrl && !modifiers.shift
+        ));
+        let has_ctrl_v_press = raw_input.events.iter().any(|evt| matches!(evt,
+            egui::Event::Key { key: egui::Key::V, pressed: true, modifiers, .. }
+            if modifiers.ctrl && !modifiers.shift
+        ));
+        let has_paste_event = raw_input.events.iter().any(|evt| matches!(evt, egui::Event::Paste(_)));
+
+        if has_ctrl_v_release && !has_ctrl_v_press && !has_paste_event {
+            // Insert Key::V pressed before the release event
+            raw_input.events.insert(0, egui::Event::Key {
+                key: egui::Key::V,
+                physical_key: Some(egui::Key::V),
+                pressed: true,
+                repeat: false,
+                modifiers: raw_input.modifiers,
+            });
+        }
 
         // egui-winit turns Ctrl/Cmd+C/X/V into semantic clipboard events and skips the
         // corresponding Key press. Restore those as Key events so the terminal can receive
         // control bytes, while still preventing egui's default text-edit shortcut behavior.
         let restore_shortcuts = should_restore_terminal_shortcut_event(ctx, raw_input.modifiers);
-        crate::debug_log!("[RAW_INPUT_HOOK] restore_shortcuts={}", restore_shortcuts);
 
         normalize_terminal_shortcut_events(
             &mut raw_input.events,
@@ -1908,8 +1930,6 @@ impl eframe::App for TerminalApp {
             restore_shortcuts,
             preserve_paste_event,
         );
-
-        crate::debug_log!("[RAW_INPUT_HOOK] events after normalize: {}", raw_input.events.len());
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -2255,10 +2275,6 @@ impl eframe::App for TerminalApp {
         let mut saw_ctrl_shift_v = false;
         let mut saw_semantic_paste = false;
 
-        if !all_events.is_empty() {
-            crate::debug_log!("[EVENT] total events this frame: {}", all_events.len());
-        }
-
         for evt in &all_events {
             match evt {
                 egui::Event::Key { key, modifiers, pressed, .. } => {
@@ -2274,12 +2290,12 @@ impl eframe::App for TerminalApp {
                         }
                     }
 
-                    // 也检查 Ctrl+V（按键释放事件）- 这是 macOS 和某些 Linux 系统的行为
-                    // Ctrl+V 由于被转换为 Paste 事件，可能只发送释放事件
-                    if !*pressed && *key == egui::Key::V && modifiers.ctrl && !modifiers.shift {
-                        crate::debug_log!("[EVENT] detected Ctrl+V (pressed=false, release event)");
-                        saw_ctrl_shift_v = true;  // 使用同一个标志来触发粘贴
-                    }
+                    // 注意：不再检测 Ctrl+V 释放事件。
+                    // 当 restore_shortcuts=true 时，egui 的 Paste 事件已被转换为
+                    // Key::V pressed，由 ui.rs 发送 0x16 给 PTY，让应用自己处理剪贴板。
+                    // 之前这里检测 Key::V release 会导致终端也读剪贴板并发送文本内容，
+                    // 造成双重粘贴（应用收到 0x16 + bracketed paste 文本）。
+                    // Ctrl+V 粘贴只应通过 Ctrl+Shift+V（显式）或 semantic Paste 事件处理。
                 }
                 egui::Event::Paste(content) => {
                     crate::debug_log!("[EVENT] detected Paste event: {:?}", if content.is_empty() { "empty" } else { "has content" });
