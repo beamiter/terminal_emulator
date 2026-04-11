@@ -816,7 +816,7 @@ impl TerminalApp {
                     let max_tab_width: f32 = 200.0;
                     let active_tab_extra: f32 = 60.0;
                     let active_min_width: f32 = min_tab_width * 2.0; // 当前 session 最小宽度，更突出
-                    let tab_spacing: f32 = 2.0;
+                    let tab_spacing: f32 = 1.0;
                     let left_margin: f32 = 5.0;
                     let reserved_right: f32 = 80.0; // "+"按钮 + 关闭窗口按钮 + margin
 
@@ -1192,37 +1192,34 @@ impl TerminalApp {
                             self.hovered_tab_index = Some(i);
                         }
 
-                        // 背景色：激活、拖拽中或悬停时改变
-                        let mut bg_color = if is_active {
-                            egui::Color32::from_rgb(70, 70, 80)
-                        } else {
+                        // 背景色：无边框风格，通过背景色差异区分状态
+                        let bg_color = if is_active {
                             egui::Color32::from_rgb(50, 50, 60)
+                        } else if is_hovered || is_dragging {
+                            egui::Color32::from_rgb(55, 55, 65)
+                        } else {
+                            egui::Color32::TRANSPARENT
                         };
 
-                        if is_hovered || is_dragging {
-                            bg_color = egui::Color32::from_rgb(
-                                (bg_color.r() + 25).min(255),
-                                (bg_color.g() + 25).min(255),
-                                (bg_color.b() + 25).min(255),
-                            );
-                        }
-
-                        // 绘制Tab背景和边框
+                        // 绘制Tab背景（无边框）
                         if is_dragging && is_actually_dragging {
-                            clipped_painter.rect_filled(tab_rect_item, 1.0, egui::Color32::from_rgba_premultiplied(
-                                bg_color.r(), bg_color.g(), bg_color.b(), 140
-                            ));
-                            clipped_painter.hline(tab_rect_item.left()..=tab_rect_item.right(), tab_rect_item.top(), egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)));
-                            clipped_painter.hline(tab_rect_item.left()..=tab_rect_item.right(), tab_rect_item.bottom(), egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)));
-                            clipped_painter.vline(tab_rect_item.left(), tab_rect_item.top()..=tab_rect_item.bottom(), egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)));
-                            clipped_painter.vline(tab_rect_item.right(), tab_rect_item.top()..=tab_rect_item.bottom(), egui::Stroke::new(1.0, egui::Color32::from_rgb(150, 150, 160)));
+                            let drag_bg = if is_active {
+                                egui::Color32::from_rgba_premultiplied(50, 50, 60, 140)
+                            } else {
+                                egui::Color32::from_rgba_premultiplied(55, 55, 65, 140)
+                            };
+                            clipped_painter.rect_filled(tab_rect_item, 4.0, drag_bg);
                         } else {
-                            clipped_painter.rect_filled(tab_rect_item, 1.0, bg_color);
-                            let border = egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130));
-                            clipped_painter.hline(tab_rect_item.left()..=tab_rect_item.right(), tab_rect_item.top(), border);
-                            clipped_painter.hline(tab_rect_item.left()..=tab_rect_item.right(), tab_rect_item.bottom(), border);
-                            clipped_painter.vline(tab_rect_item.left(), tab_rect_item.top()..=tab_rect_item.bottom(), border);
-                            clipped_painter.vline(tab_rect_item.right(), tab_rect_item.top()..=tab_rect_item.bottom(), border);
+                            clipped_painter.rect_filled(tab_rect_item, 4.0, bg_color);
+
+                            // Active Tab 底部高亮指示线
+                            if is_active {
+                                clipped_painter.hline(
+                                    (tab_rect_item.left() + 4.0)..=(tab_rect_item.right() - 4.0),
+                                    tab_rect_item.bottom() - 1.0,
+                                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 160, 255)),
+                                );
+                            }
 
                             // 拖拽过程中，在目标Tab位置显示插入指示线
                             if is_drag_target && is_actually_dragging {
@@ -1310,17 +1307,12 @@ impl TerminalApp {
                     };
 
                     let plus_btn_color = if plus_btn_hovered {
-                        egui::Color32::from_rgb(75, 75, 85)
+                        egui::Color32::from_rgb(55, 55, 65)
                     } else {
-                        egui::Color32::from_rgb(50, 50, 60)
+                        egui::Color32::TRANSPARENT
                     };
 
-                    painter.rect_filled(plus_btn_rect, 1.0, plus_btn_color);
-                    let btn_border = egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130));
-                    painter.hline(plus_btn_rect.left()..=plus_btn_rect.right(), plus_btn_rect.top(), btn_border);
-                    painter.hline(plus_btn_rect.left()..=plus_btn_rect.right(), plus_btn_rect.bottom(), btn_border);
-                    painter.vline(plus_btn_rect.left(), plus_btn_rect.top()..=plus_btn_rect.bottom(), btn_border);
-                    painter.vline(plus_btn_rect.right(), plus_btn_rect.top()..=plus_btn_rect.bottom(), btn_border);
+                    painter.rect_filled(plus_btn_rect, 4.0, plus_btn_color);
 
                     let plus_text_color = if plus_btn_hovered {
                         egui::Color32::from_rgb(220, 220, 220)
@@ -1364,15 +1356,10 @@ impl TerminalApp {
                     let close_win_bg = if close_win_hovered {
                         egui::Color32::from_rgb(180, 50, 50)
                     } else {
-                        egui::Color32::from_rgb(50, 50, 60)
+                        egui::Color32::TRANSPARENT
                     };
 
-                    painter.rect_filled(close_win_rect, 1.0, close_win_bg);
-                    let close_border = egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 120, 130));
-                    painter.hline(close_win_rect.left()..=close_win_rect.right(), close_win_rect.top(), close_border);
-                    painter.hline(close_win_rect.left()..=close_win_rect.right(), close_win_rect.bottom(), close_border);
-                    painter.vline(close_win_rect.left(), close_win_rect.top()..=close_win_rect.bottom(), close_border);
-                    painter.vline(close_win_rect.right(), close_win_rect.top()..=close_win_rect.bottom(), close_border);
+                    painter.rect_filled(close_win_rect, 4.0, close_win_bg);
 
                     // 绘制 X 符号
                     let cw_cross = 5.0;
