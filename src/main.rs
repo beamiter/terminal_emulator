@@ -395,6 +395,8 @@ struct TerminalApp {
     session_save_deadline: std::time::Instant,
     // Lock file to detect running instances
     _lock_file: Option<std::fs::File>,
+    // 每帧字节限制溢出的缓冲区，下一帧继续处理
+    pending_output: Vec<u8>,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -778,6 +780,7 @@ impl TerminalApp {
             session_save_pending: true, // 启动后立即保存一次（确保首次运行就有记录）
             session_save_deadline: std::time::Instant::now() + std::time::Duration::from_secs(1),
             _lock_file: lock_file,
+            pending_output: Vec::new(),
         }
     }
 
@@ -2514,40 +2517,64 @@ impl eframe::App for TerminalApp {
         }
 
         // Step 6: 处理 shell 事件
+        // 关键：限制每帧处理的总字节数，防止大量 ANSI 数据阻塞 UI 线程导致假死。
+        // 超出限制的数据保存到 pending_output，下一帧继续处理。
         let mut has_new_output = false;
-        // P3 优化：批量收集本帧的所有事件，然后一次性处理
-        let mut accumulated_data = Vec::new();
-        const MAX_EVENTS_PER_FRAME: usize = 128;
-        let mut event_count = 0;
+        const MAX_BYTES_PER_FRAME: usize = 32768; // 32KB/帧 - 确保 process_input < 5ms
+        let mut has_more_data = false;
 
-        while event_count < MAX_EVENTS_PER_FRAME {
-            match session.shell.events().try_recv() {
-                Ok(ShellEvent::Output(data)) => {
-                    accumulated_data.extend(data);
-                    event_count += 1;
-                    has_new_output = true;
-                }
-                Ok(ShellEvent::Exit(code)) => {
-                    crate::debug_log!("[SHELL EXIT] shell exited with code: {}", code);
-                    self.status_message = format!("Shell exited with code: {}", code);
-                    has_new_output = true;
-                    shell_exited = true;
-                    break;
-                }
-                Ok(ShellEvent::Error(e)) => {
-                    self.status_message = format!("Error: {}", e);
-                    has_new_output = true;
-                    break;
-                }
-                Err(crossbeam::channel::TryRecvError::Empty) => break,
-                Err(crossbeam::channel::TryRecvError::Disconnected) => {
-                    shell_exited = true;
-                    break;
-                }
-            }
+        // 先取回上一帧未处理完的数据
+        let mut accumulated_data = std::mem::take(&mut self.pending_output);
+        if !accumulated_data.is_empty() {
+            has_new_output = true;
         }
 
-        // 一次性处理所有累积的数据
+        // 从 channel 中收集数据，直到达到字节上限
+        if accumulated_data.len() < MAX_BYTES_PER_FRAME {
+            loop {
+                match session.shell.events().try_recv() {
+                    Ok(ShellEvent::Output(data)) => {
+                        accumulated_data.extend(data);
+                        has_new_output = true;
+                        if accumulated_data.len() >= MAX_BYTES_PER_FRAME {
+                            has_more_data = true;
+                            break;
+                        }
+                    }
+                    Ok(ShellEvent::Exit(code)) => {
+                        crate::debug_log!("[SHELL EXIT] shell exited with code: {}", code);
+                        self.status_message = format!("Shell exited with code: {}", code);
+                        has_new_output = true;
+                        shell_exited = true;
+                        break;
+                    }
+                    Ok(ShellEvent::Error(e)) => {
+                        self.status_message = format!("Error: {}", e);
+                        has_new_output = true;
+                        break;
+                    }
+                    Err(crossbeam::channel::TryRecvError::Empty) => break,
+                    Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                        shell_exited = true;
+                        break;
+                    }
+                }
+            }
+        } else {
+            has_more_data = true;
+        }
+
+        // 如果累积数据超过帧限制，将多余部分保存到下一帧
+        if accumulated_data.len() > MAX_BYTES_PER_FRAME {
+            self.pending_output = accumulated_data.split_off(MAX_BYTES_PER_FRAME);
+            has_more_data = true;
+        }
+        // 也检查 channel 中是否还有数据
+        if !has_more_data && !session.shell.events().is_empty() {
+            has_more_data = true;
+        }
+
+        // 处理本帧的数据
         if !accumulated_data.is_empty() {
             let mut terminal = session.terminal.lock();
             terminal.process_batch(&accumulated_data);
@@ -2832,47 +2859,39 @@ impl eframe::App for TerminalApp {
         // 渲染 UI
         self.render_ui(ctx);
 
-        // 修复竞态条件：在 render_ui 之后、决定是否休眠之前，再检查一次 channel
-        // 是否有新数据。这能捕获 try_recv 之后到现在这段时间内 PTY 线程新发送的数据。
-        let has_pending_data = if !has_new_output {
-            let session = self.session_manager.get_active_session_mut();
-            !session.shell.events().is_empty()
-        } else {
-            false
-        };
-        let has_new_output = has_new_output || has_pending_data;
-
-        // 只在需要时请求重绘：有新输出、光标状态改变、或有未处理的输入
-        let should_repaint = has_new_output
-            || cursor_state_changed
-            || has_keyboard_input
-            || has_mouse_input
-            || self.debug_panel.is_open;
-
-        if should_repaint {
-            if cursor_state_changed {
-                debug_log!("[REPAINT] cursor_state_changed");
-            }
+        // channel 中还有未处理的数据时，立即请求下一帧继续处理
+        if has_more_data {
             ctx.request_repaint();
-        } else if app_wants_cursor_visible {
-            // 当光标应该可见且没有其他事件时，定时请求重绘以保持闪烁效果
-            // 这样可以确保即使没有用户输入，光标也能持续闪烁
-            let now = std::time::Instant::now();
-            let time_until_next = self.next_cursor_blink_time.saturating_duration_since(now);
-
-            if time_until_next.as_millis() == 0 {
-                // 如果时间已经到了，立即重绘
-                ctx.request_repaint();
-            } else {
-                // 定时请求重绘（心跳）
-                debug_log!("[REPAINT] schedule cursor blink in {}ms",
-                    time_until_next.as_millis());
-                ctx.request_repaint_after(time_until_next);
-            }
         } else {
-            // 安全网：即使上面的二次检查也可能有极短窗口的竞态，
-            // 用 100ms 超时作为最后防线，确保 UI 在最坏情况下也能快速恢复。
-            ctx.request_repaint_after(std::time::Duration::from_millis(500));
+            // 二次检查：render_ui 期间 PTY 线程可能又发送了新数据
+            let has_pending_data = if !has_new_output {
+                let session = self.session_manager.get_active_session_mut();
+                !session.shell.events().is_empty()
+            } else {
+                false
+            };
+            let has_new_output = has_new_output || has_pending_data;
+
+            let should_repaint = has_new_output
+                || cursor_state_changed
+                || has_keyboard_input
+                || has_mouse_input
+                || self.debug_panel.is_open;
+
+            if should_repaint {
+                ctx.request_repaint();
+            } else if app_wants_cursor_visible {
+                let now = std::time::Instant::now();
+                let time_until_next = self.next_cursor_blink_time.saturating_duration_since(now);
+                if time_until_next.as_millis() == 0 {
+                    ctx.request_repaint();
+                } else {
+                    ctx.request_repaint_after(time_until_next);
+                }
+            } else {
+                // 安全网：1000ms 超时防止极端竞态
+                ctx.request_repaint_after(std::time::Duration::from_millis(1000));
+            }
         }
 
         // Debounce 保存配置和会话
