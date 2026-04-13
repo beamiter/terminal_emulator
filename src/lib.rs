@@ -26,4 +26,5 @@ pub mod kitty_graphics;
 pub mod image_cache;
 pub mod char_width;  // P5：字符宽度缓存
 pub mod glyph_cache;  // P2：字形缓存
+pub mod gpu;
 

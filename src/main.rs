@@ -27,6 +27,7 @@ mod kitty_graphics;
 mod image_cache;
 mod char_width;  // P5：字符宽度缓存
 mod glyph_cache;  // P2：字形缓存
+mod gpu;
 
 use base64::Engine;
 use eframe::egui;
@@ -259,6 +260,7 @@ fn main() -> Result<(), eframe::Error> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([cfg.initial_width, cfg.initial_height])
             .with_transparent(true),
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 
@@ -329,6 +331,12 @@ fn main() -> Result<(), eframe::Error> {
                 eprintln!("[Fonts] Warning: no CJK fallback font file could be loaded");
             }
 
+            // Extract font bytes for GPU glyph atlas before giving fonts to egui
+            let mono_font_data: Option<Vec<u8>> = fonts
+                .font_data
+                .get("monospace_unicode")
+                .map(|fd| fd.font.to_vec());
+
             cc.egui_ctx.set_fonts(fonts);
 
             // 设置暗色主题，避免浮夸的亮色背景
@@ -338,7 +346,30 @@ fn main() -> Result<(), eframe::Error> {
             visuals.extreme_bg_color = egui::Color32::from_rgb(20, 20, 20);
             cc.egui_ctx.set_visuals(visuals);
 
-            Ok(Box::new(TerminalApp::new(&cfg_clone, cc.egui_ctx.clone())))
+            // Initialize GPU resources for terminal grid rendering
+            if let (Some(render_state), Some(font_bytes)) = (&cc.wgpu_render_state, mono_font_data) {
+                let font_size_px = cfg_clone.font_size * cc.egui_ctx.pixels_per_point();
+                let atlas = gpu::atlas::GlyphAtlas::new(
+                    &render_state.device,
+                    &render_state.queue,
+                    &font_bytes,
+                    None, // no separate bold font for now
+                    font_size_px,
+                );
+                let pipeline = gpu::pipeline::GridPipeline::new(
+                    &render_state.device,
+                    render_state.target_format,
+                    &atlas.view,
+                    &atlas.sampler,
+                );
+                let gpu_resources = gpu::callback::GpuResources::new(atlas, pipeline);
+                render_state.renderer.write().callback_resources.insert(gpu_resources);
+                eprintln!("[GPU] Initialized GPU terminal renderer (font_size_px={:.1})", font_size_px);
+            } else {
+                eprintln!("[GPU] Warning: wgpu render state or font data not available, falling back to CPU rendering");
+            }
+
+            Ok(Box::new(TerminalApp::new(&cfg_clone, cc.egui_ctx.clone(), cc.wgpu_render_state.clone())))
         }),
     )
 }
@@ -662,7 +693,7 @@ fn build_keybinding_string(key: egui::Key, modifiers: egui::Modifiers) -> Option
 }
 
 impl TerminalApp {
-    fn new(cfg: &config::Config, repaint_ctx: egui::Context) -> Self {
+    fn new(cfg: &config::Config, repaint_ctx: egui::Context, wgpu_render_state: Option<egui_wgpu::RenderState>) -> Self {
         let cols = cfg.cols;
         let rows = cfg.rows;
 
@@ -727,6 +758,7 @@ impl TerminalApp {
             current_theme.clone(),
         );
         renderer.opacity = cfg.opacity;
+        renderer.wgpu_render_state = wgpu_render_state.clone();
 
         // Initialize layout manager with first session
         let layout_manager = layout::LayoutManager::new(0);
@@ -742,6 +774,7 @@ impl TerminalApp {
                 current_theme.clone(),
             );
             pr.opacity = cfg.opacity;
+            pr.wgpu_render_state = wgpu_render_state.clone();
             pane_renderers.push(pr);
         }
 

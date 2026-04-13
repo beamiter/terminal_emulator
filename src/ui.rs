@@ -1,4 +1,5 @@
 use crate::color;
+use crate::gpu;
 use crate::terminal::TerminalState;
 use egui::{Color32, FontId, Response, Ui, Vec2};
 
@@ -224,6 +225,8 @@ pub struct TerminalRenderer {
     /// The content rect from the last render, used for mouse-to-grid coordinate conversion
     pub last_content_rect: Option<egui::Rect>,
     pub opacity: f32,
+    /// wgpu render state for GPU-accelerated grid rendering
+    pub wgpu_render_state: Option<egui_wgpu::RenderState>,
 }
 
 impl TerminalRenderer {
@@ -259,6 +262,7 @@ impl TerminalRenderer {
             last_ime_rect: None,
             opacity: 1.0,
             texture_cache: std::collections::HashMap::new(),
+            wgpu_render_state: None,
         }
     }
 
@@ -700,255 +704,12 @@ impl TerminalRenderer {
             }
         }
 
-        // Render grid in two phases: first backgrounds, then characters
-        // Phase 1: Render non-default backgrounds only (default bg already filled above)
-        let default_bg = self.theme.terminal_background();
-        let has_search = !search_state.matches.is_empty() && !search_state.query.is_empty();
-        for row_idx in 0..rows {
-            for col_idx in 0..cols {
-                let cell = &grid[row_idx][col_idx];
+        // GPU-accelerated grid rendering via wgpu instanced draw
+        let gpu_rendered = self.render_grid_gpu(ui, terminal, search_state, links, hovered_link, &grid, rows, cols, content_rect, char_width, line_height);
 
-                if cell.wide_continuation {
-                    continue;
-                }
-
-                let is_selected = terminal.is_cell_selected(row_idx, col_idx);
-                let is_inverse = cell.flags.inverse;
-
-                // Fast path: skip cells with default background and no special state
-                if !is_selected && !is_inverse && cell.background == crate::terminal::Color::Default && !has_search {
-                    continue;
-                }
-
-                let mut bg_color = if is_selected {
-                    self.theme.selection_color()
-                } else if is_inverse {
-                    resolve_foreground_color(cell.foreground, &self.theme)
-                } else {
-                    resolve_background_color(cell.background, &self.theme)
-                };
-
-                // Check if this cell is part of a search match (反色高亮)
-                if has_search {
-                    for (match_idx, m) in search_state.matches.iter().enumerate() {
-                        if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
-                            let orig_fg = resolve_foreground_color(cell.foreground, &self.theme);
-                            bg_color = orig_fg;
-
-                            if match_idx == search_state.current_match_index % search_state.matches.len() {
-                                let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
-                                bg_color = Color32::from_rgba_unmultiplied(
-                                    (r as u16 * 180 / 255) as u8,
-                                    (g as u16 * 180 / 255) as u8,
-                                    (b as u16 * 180 / 255) as u8,
-                                    255,
-                                );
-                            }
-                            break;
-                        }
-                    }
-                } else if bg_color == default_bg {
-                    // No search active and bg matches default — skip painting
-                    continue;
-                }
-
-                let (x, snapped_width) = snapped_span(content_rect.left(), col_idx, char_width);
-                let (y, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
-                let cell_width = if cell.wide {
-                    let (_, next_width) = snapped_span(content_rect.left(), col_idx + 1, char_width);
-                    snapped_width + next_width
-                } else {
-                    snapped_width
-                };
-                let cell_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, y),
-                    Vec2::new(cell_width, snapped_height),
-                );
-
-                painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
-            }
-        }
-
-        // Phase 2: Render characters with run-length batching
-        // Consecutive cells with the same style are merged into a single layout_no_wrap call
-        for row_idx in 0..rows {
-            let (_, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
-            let y = snapped_span(content_rect.top(), row_idx, line_height).0;
-
-            // Collect text runs: (start_col, text, fg_color, bold, decorations)
-            let mut col_idx = 0;
-            while col_idx < cols {
-                let cell = &grid[row_idx][col_idx];
-
-                if cell.wide_continuation || cell.character == ' ' {
-                    col_idx += 1;
-                    continue;
-                }
-
-                // Determine this cell's style
-                let is_selected = terminal.is_cell_selected(row_idx, col_idx);
-                let mut fg_color = if is_selected {
-                    self.theme.selection_fg_color()
-                } else if cell.flags.inverse {
-                    resolve_background_color(cell.background, &self.theme)
-                } else {
-                    resolve_foreground_color(cell.foreground, &self.theme)
-                };
-
-                let is_link = if links.is_empty() {
-                    false
-                } else {
-                    let mut found = false;
-                    for link in links {
-                        if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
-                            let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
-                            fg_color = if is_hovered_link {
-                                Color32::from_rgb(100, 200, 255)
-                            } else {
-                                Color32::from_rgb(50, 150, 255)
-                            };
-                            found = true;
-                            break;
-                        }
-                    }
-                    found
-                };
-
-                let bold = cell.flags.bold;
-                let has_underline = cell.flags.underline || is_link;
-                let has_strikethrough = cell.flags.strikethrough;
-                let is_wide = cell.wide;
-
-                // Collect consecutive same-style cells for decoration spans,
-                // but render each character individually at its exact grid position
-                // to avoid cumulative drift from font advance vs grid cell width mismatch.
-                let run_start_col = col_idx;
-
-                // Collect decoration spans for this run: (col_start, col_end_exclusive)
-                let mut underline_spans: Vec<(usize, usize)> = Vec::new();
-                let mut strikethrough_spans: Vec<(usize, usize)> = Vec::new();
-                if has_underline {
-                    underline_spans.push((col_idx, col_idx + if is_wide { 2 } else { 1 }));
-                }
-                if has_strikethrough {
-                    strikethrough_spans.push((col_idx, col_idx + if is_wide { 2 } else { 1 }));
-                }
-
-                // Render this character at its exact grid position
-                let mut font_id = FontId::monospace(self.font_size);
-                if bold {
-                    font_id.size *= 1.1;
-                }
-
-                let ch_str = if is_wide {
-                    cell.character.to_string()
-                } else {
-                    cell.character.to_string()
-                };
-                let galley = ui.painter().layout_no_wrap(ch_str, font_id.clone(), fg_color);
-                let (cx, cw) = snapped_span(content_rect.left(), col_idx, char_width);
-                let text_y = y + (snapped_height - galley.size().y) / 2.0;
-                // Center the glyph within the grid cell
-                let cell_width = if is_wide { cw + snapped_span(content_rect.left(), col_idx + 1, char_width).1 } else { cw };
-                let glyph_x = cx + (cell_width - galley.size().x) / 2.0;
-                painter.galley(egui::pos2(glyph_x, text_y), galley, fg_color);
-
-                col_idx += if is_wide { 2 } else { 1 };
-
-                // Extend decoration spans with consecutive same-style cells
-                // (characters are rendered individually above in next loop iterations)
-                let mut peek_idx = col_idx;
-                while peek_idx < cols {
-                    let next = &grid[row_idx][peek_idx];
-                    if next.wide_continuation || next.character == ' ' || next.wide {
-                        break;
-                    }
-                    let next_is_selected = terminal.is_cell_selected(row_idx, peek_idx);
-                    let mut next_fg = if next_is_selected {
-                        self.theme.selection_fg_color()
-                    } else if next.flags.inverse {
-                        resolve_background_color(next.background, &self.theme)
-                    } else {
-                        resolve_foreground_color(next.foreground, &self.theme)
-                    };
-                    let next_is_link = if links.is_empty() {
-                        false
-                    } else {
-                        let mut found = false;
-                        for link in links {
-                            if link.line == row_idx && peek_idx >= link.col_start && peek_idx < link.col_end {
-                                let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
-                                next_fg = if is_hovered_link {
-                                    Color32::from_rgb(100, 200, 255)
-                                } else {
-                                    Color32::from_rgb(50, 150, 255)
-                                };
-                                found = true;
-                                break;
-                            }
-                        }
-                        found
-                    };
-                    if next_fg != fg_color || next.flags.bold != bold {
-                        break;
-                    }
-                    // Render this character at its exact grid position
-                    let ch_galley = ui.painter().layout_no_wrap(
-                        next.character.to_string(), font_id.clone(), fg_color,
-                    );
-                    let (nx, nw) = snapped_span(content_rect.left(), peek_idx, char_width);
-                    let glyph_nx = nx + (nw - ch_galley.size().x) / 2.0;
-                    painter.galley(egui::pos2(glyph_nx, text_y), ch_galley, fg_color);
-
-                    let next_has_underline = next.flags.underline || next_is_link;
-                    let next_has_strikethrough = next.flags.strikethrough;
-                    if next_has_underline {
-                        if let Some(last) = underline_spans.last_mut() {
-                            if last.1 == peek_idx {
-                                last.1 = peek_idx + 1;
-                            } else {
-                                underline_spans.push((peek_idx, peek_idx + 1));
-                            }
-                        } else {
-                            underline_spans.push((peek_idx, peek_idx + 1));
-                        }
-                    }
-                    if next_has_strikethrough {
-                        if let Some(last) = strikethrough_spans.last_mut() {
-                            if last.1 == peek_idx {
-                                last.1 = peek_idx + 1;
-                            } else {
-                                strikethrough_spans.push((peek_idx, peek_idx + 1));
-                            }
-                        } else {
-                            strikethrough_spans.push((peek_idx, peek_idx + 1));
-                        }
-                    }
-                    peek_idx += 1;
-                }
-                col_idx = peek_idx;
-
-                // Draw decoration spans
-                let _ = run_start_col;
-                for (span_start, span_end) in &underline_spans {
-                    let (sx, _) = snapped_span(content_rect.left(), *span_start, char_width);
-                    let (ex, ew) = snapped_span(content_rect.left(), *span_end - 1, char_width);
-                    let underline_y = y + line_height - 1.0;
-                    painter.line_segment(
-                        [egui::pos2(sx, underline_y), egui::pos2(ex + ew, underline_y)],
-                        egui::Stroke::new(1.0, fg_color),
-                    );
-                }
-                for (span_start, span_end) in &strikethrough_spans {
-                    let (sx, _) = snapped_span(content_rect.left(), *span_start, char_width);
-                    let (ex, ew) = snapped_span(content_rect.left(), *span_end - 1, char_width);
-                    let strikethrough_y = y + line_height / 2.0;
-                    painter.line_segment(
-                        [egui::pos2(sx, strikethrough_y), egui::pos2(ex + ew, strikethrough_y)],
-                        egui::Stroke::new(1.0, fg_color),
-                    );
-                }
-            }
+        if !gpu_rendered {
+            // Fallback: CPU rendering via egui painter
+            self.render_grid_cpu(ui, &painter, terminal, search_state, links, hovered_link, &grid, rows, cols, content_rect, char_width, line_height);
         }
 
         // Render cursor - direct O(1) positioning instead of full grid scan
@@ -1066,6 +827,336 @@ impl TerminalRenderer {
 
         response
     }
+
+    /// GPU path: build instance buffer from grid, rasterize new glyphs, emit PaintCallback.
+    /// Returns true if GPU rendering was used, false if fallback is needed.
+    fn render_grid_gpu(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &TerminalState,
+        search_state: &crate::search::SearchState,
+        links: &[crate::link::Link],
+        hovered_link: &Option<crate::link::Link>,
+        grid: &[Vec<crate::terminal::TerminalCell>],
+        rows: usize,
+        cols: usize,
+        content_rect: egui::Rect,
+        char_width: f32,
+        line_height: f32,
+    ) -> bool {
+        let render_state = match &self.wgpu_render_state {
+            Some(rs) => rs.clone(),
+            None => return false,
+        };
+
+        let ppp = ui.ctx().pixels_per_point();
+        let default_bg = self.theme.terminal_background();
+        let has_search = !search_state.matches.is_empty() && !search_state.query.is_empty();
+
+        // Build instance data and rasterize new glyphs via atlas
+        let mut instances = Vec::with_capacity(rows * cols);
+        {
+            let mut renderer = render_state.renderer.write();
+            let gpu_res = match renderer.callback_resources.get_mut::<gpu::callback::GpuResources>() {
+                Some(r) => r,
+                None => return false,
+            };
+
+            for row_idx in 0..rows {
+                for col_idx in 0..cols {
+                    let cell = &grid[row_idx][col_idx];
+                    if cell.wide_continuation {
+                        continue;
+                    }
+
+                    let is_selected = terminal.is_cell_selected(row_idx, col_idx);
+                    let is_inverse = cell.flags.inverse;
+
+                    // Resolve background color
+                    let mut bg_color = if is_selected {
+                        self.theme.selection_color()
+                    } else if is_inverse {
+                        resolve_foreground_color(cell.foreground, &self.theme)
+                    } else {
+                        resolve_background_color(cell.background, &self.theme)
+                    };
+
+                    // Search match highlighting
+                    if has_search {
+                        for (match_idx, m) in search_state.matches.iter().enumerate() {
+                            if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
+                                let orig_fg = resolve_foreground_color(cell.foreground, &self.theme);
+                                bg_color = orig_fg;
+                                if match_idx == search_state.current_match_index % search_state.matches.len() {
+                                    let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
+                                    bg_color = Color32::from_rgba_unmultiplied(
+                                        (r as u16 * 180 / 255) as u8,
+                                        (g as u16 * 180 / 255) as u8,
+                                        (b as u16 * 180 / 255) as u8,
+                                        255,
+                                    );
+                                }
+                                break;
+                            }
+                        }
+                    }
+
+                    // If bg matches default and no special state, use default bg
+                    if !is_selected && !is_inverse && cell.background == crate::terminal::Color::Default && !has_search {
+                        bg_color = default_bg;
+                    }
+
+                    // Resolve foreground color
+                    let mut fg_color = if is_selected {
+                        self.theme.selection_fg_color()
+                    } else if is_inverse {
+                        resolve_background_color(cell.background, &self.theme)
+                    } else {
+                        resolve_foreground_color(cell.foreground, &self.theme)
+                    };
+
+                    // Link coloring
+                    let is_link = if !links.is_empty() {
+                        let mut found = false;
+                        for link in links {
+                            if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
+                                let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                                fg_color = if is_hovered_link {
+                                    Color32::from_rgb(100, 200, 255)
+                                } else {
+                                    Color32::from_rgb(50, 150, 255)
+                                };
+                                found = true;
+                                break;
+                            }
+                        }
+                        found
+                    } else {
+                        false
+                    };
+
+                    let bold = cell.flags.bold;
+                    let has_underline = cell.flags.underline || is_link;
+                    let has_strikethrough = cell.flags.strikethrough;
+                    let is_wide = cell.wide;
+
+                    // Build flags
+                    let mut flags: u32 = 0;
+                    let has_glyph = cell.character != ' ' && cell.character != '\0';
+                    if has_glyph { flags |= gpu::instance::CellInstance::FLAG_HAS_GLYPH; }
+                    if is_wide { flags |= gpu::instance::CellInstance::FLAG_WIDE; }
+                    if has_underline { flags |= gpu::instance::CellInstance::FLAG_UNDERLINE; }
+                    if has_strikethrough { flags |= gpu::instance::CellInstance::FLAG_STRIKETHROUGH; }
+
+                    // Get glyph atlas region
+                    let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
+                        let region = gpu_res.atlas.get_or_rasterize(cell.character, bold);
+                        if region.width_px > 0.0 && region.height_px > 0.0 {
+                            // Compute centering offset within cell (in logical pixels)
+                            let cell_w = if is_wide { char_width * 2.0 } else { char_width };
+                            let off_x = (cell_w - region.width_px / ppp) / 2.0;
+                            let off_y = (line_height - region.height_px / ppp) / 2.0;
+                            (region.u0, region.v0, region.u1, region.v1, off_x, off_y)
+                        } else {
+                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                        }
+                    } else {
+                        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                    };
+
+                    let [fg_r, fg_g, fg_b, fg_a] = fg_color.to_srgba_unmultiplied();
+                    let [bg_r, bg_g, bg_b, _bg_a] = bg_color.to_srgba_unmultiplied();
+                    let bg_a = if bg_color == default_bg { (self.opacity * 255.0) as u8 } else { 255u8 };
+
+                    instances.push(gpu::instance::CellInstance {
+                        col: col_idx as u32,
+                        row: row_idx as u32,
+                        glyph_u0: u0,
+                        glyph_v0: v0,
+                        glyph_u1: u1,
+                        glyph_v1: v1,
+                        fg_color: [fg_r, fg_g, fg_b, fg_a],
+                        bg_color: [bg_r, bg_g, bg_b, bg_a],
+                        flags,
+                        glyph_offset_x,
+                        glyph_offset_y,
+                        _pad: 0,
+                    });
+                }
+            }
+        } // drop renderer write lock
+
+        let instance_count = instances.len() as u32;
+
+        // Get screen dimensions in physical pixels
+        let screen_rect = ui.ctx().input(|i| i.screen_rect());
+        let uniforms = gpu::instance::GridUniforms {
+            screen_width: screen_rect.width() * ppp,
+            screen_height: screen_rect.height() * ppp,
+            cell_width: char_width * ppp,
+            cell_height: line_height * ppp,
+            atlas_width: 0.0, // not used in shader (UV coords are normalized)
+            atlas_height: 0.0,
+            content_origin_x: content_rect.left() * ppp,
+            content_origin_y: content_rect.top() * ppp,
+        };
+
+        let callback = gpu::callback::GridRenderCallback {
+            instances,
+            uniforms,
+            instance_count,
+        };
+
+        let paint_callback = egui_wgpu::Callback::new_paint_callback(content_rect, callback);
+        ui.painter().add(paint_callback);
+        true
+    }
+
+    /// CPU fallback: render grid using egui painter API (the original path).
+    fn render_grid_cpu(
+        &self,
+        ui: &mut Ui,
+        painter: &egui::Painter,
+        terminal: &TerminalState,
+        search_state: &crate::search::SearchState,
+        links: &[crate::link::Link],
+        hovered_link: &Option<crate::link::Link>,
+        grid: &[Vec<crate::terminal::TerminalCell>],
+        rows: usize,
+        cols: usize,
+        content_rect: egui::Rect,
+        char_width: f32,
+        line_height: f32,
+    ) {
+        let default_bg = self.theme.terminal_background();
+        let has_search = !search_state.matches.is_empty() && !search_state.query.is_empty();
+
+        // Phase 1: Render non-default backgrounds
+        for row_idx in 0..rows {
+            for col_idx in 0..cols {
+                let cell = &grid[row_idx][col_idx];
+                if cell.wide_continuation { continue; }
+
+                let is_selected = terminal.is_cell_selected(row_idx, col_idx);
+                let is_inverse = cell.flags.inverse;
+
+                if !is_selected && !is_inverse && cell.background == crate::terminal::Color::Default && !has_search {
+                    continue;
+                }
+
+                let mut bg_color = if is_selected {
+                    self.theme.selection_color()
+                } else if is_inverse {
+                    resolve_foreground_color(cell.foreground, &self.theme)
+                } else {
+                    resolve_background_color(cell.background, &self.theme)
+                };
+
+                if has_search {
+                    for (match_idx, m) in search_state.matches.iter().enumerate() {
+                        if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
+                            let orig_fg = resolve_foreground_color(cell.foreground, &self.theme);
+                            bg_color = orig_fg;
+                            if match_idx == search_state.current_match_index % search_state.matches.len() {
+                                let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
+                                bg_color = Color32::from_rgba_unmultiplied(
+                                    (r as u16 * 180 / 255) as u8,
+                                    (g as u16 * 180 / 255) as u8,
+                                    (b as u16 * 180 / 255) as u8,
+                                    255,
+                                );
+                            }
+                            break;
+                        }
+                    }
+                } else if bg_color == default_bg {
+                    continue;
+                }
+
+                let (x, snapped_width) = snapped_span(content_rect.left(), col_idx, char_width);
+                let (y, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
+                let cell_w = if cell.wide {
+                    let (_, next_width) = snapped_span(content_rect.left(), col_idx + 1, char_width);
+                    snapped_width + next_width
+                } else {
+                    snapped_width
+                };
+                let cell_rect = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(cell_w, snapped_height));
+                painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
+            }
+        }
+
+        // Phase 2: Render characters
+        for row_idx in 0..rows {
+            let (_, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
+            let y = snapped_span(content_rect.top(), row_idx, line_height).0;
+
+            let mut col_idx = 0;
+            while col_idx < cols {
+                let cell = &grid[row_idx][col_idx];
+                if cell.wide_continuation || cell.character == ' ' {
+                    col_idx += 1;
+                    continue;
+                }
+
+                let is_selected = terminal.is_cell_selected(row_idx, col_idx);
+                let mut fg_color = if is_selected {
+                    self.theme.selection_fg_color()
+                } else if cell.flags.inverse {
+                    resolve_background_color(cell.background, &self.theme)
+                } else {
+                    resolve_foreground_color(cell.foreground, &self.theme)
+                };
+
+                let is_link = if !links.is_empty() {
+                    let mut found = false;
+                    for link in links {
+                        if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
+                            let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                            fg_color = if is_hovered_link { Color32::from_rgb(100, 200, 255) } else { Color32::from_rgb(50, 150, 255) };
+                            found = true;
+                            break;
+                        }
+                    }
+                    found
+                } else {
+                    false
+                };
+
+                let bold = cell.flags.bold;
+                let has_underline = cell.flags.underline || is_link;
+                let has_strikethrough = cell.flags.strikethrough;
+                let is_wide = cell.wide;
+
+                let mut font_id = FontId::monospace(self.font_size);
+                if bold { font_id.size *= 1.1; }
+
+                let galley = ui.painter().layout_no_wrap(cell.character.to_string(), font_id.clone(), fg_color);
+                let (cx, cw) = snapped_span(content_rect.left(), col_idx, char_width);
+                let text_y = y + (snapped_height - galley.size().y) / 2.0;
+                let cell_w = if is_wide { cw + snapped_span(content_rect.left(), col_idx + 1, char_width).1 } else { cw };
+                let glyph_x = cx + (cell_w - galley.size().x) / 2.0;
+                painter.galley(egui::pos2(glyph_x, text_y), galley, fg_color);
+
+                col_idx += if is_wide { 2 } else { 1 };
+
+                // Decorations
+                if has_underline {
+                    let (sx, sw) = snapped_span(content_rect.left(), col_idx - if is_wide { 2 } else { 1 }, char_width);
+                    let ew = if is_wide { sw + snapped_span(content_rect.left(), col_idx - 1, char_width).1 } else { sw };
+                    let underline_y = y + line_height - 1.0;
+                    painter.line_segment([egui::pos2(sx, underline_y), egui::pos2(sx + ew, underline_y)], egui::Stroke::new(1.0, fg_color));
+                }
+                if has_strikethrough {
+                    let (sx, sw) = snapped_span(content_rect.left(), col_idx - if is_wide { 2 } else { 1 }, char_width);
+                    let ew = if is_wide { sw + snapped_span(content_rect.left(), col_idx - 1, char_width).1 } else { sw };
+                    let strikethrough_y = y + line_height / 2.0;
+                    painter.line_segment([egui::pos2(sx, strikethrough_y), egui::pos2(sx + ew, strikethrough_y)], egui::Stroke::new(1.0, fg_color));
+                }
+            }
+        }
+    }
+
     pub fn handle_keyboard_input(
         &self,
         ctx: &egui::Context,
