@@ -2825,8 +2825,22 @@ impl eframe::App for TerminalApp {
             terminal.is_cursor_visible()
         };
 
+        // 结束 session 的可变借用，render_ui 需要 &mut self
+        #[allow(dropping_references)]
+        drop(session);
+
         // 渲染 UI
         self.render_ui(ctx);
+
+        // 修复竞态条件：在 render_ui 之后、决定是否休眠之前，再检查一次 channel
+        // 是否有新数据。这能捕获 try_recv 之后到现在这段时间内 PTY 线程新发送的数据。
+        let has_pending_data = if !has_new_output {
+            let session = self.session_manager.get_active_session_mut();
+            !session.shell.events().is_empty()
+        } else {
+            false
+        };
+        let has_new_output = has_new_output || has_pending_data;
 
         // 只在需要时请求重绘：有新输出、光标状态改变、或有未处理的输入
         let should_repaint = has_new_output
@@ -2856,9 +2870,9 @@ impl eframe::App for TerminalApp {
                 ctx.request_repaint_after(time_until_next);
             }
         } else {
-            // 安全网：防止 PTY 线程的 request_repaint 与主线程 try_recv 之间的
-            // 竞态条件导致事件循环在 CPU 繁忙时永久休眠。
-            ctx.request_repaint_after(std::time::Duration::from_millis(2000));
+            // 安全网：即使上面的二次检查也可能有极短窗口的竞态，
+            // 用 100ms 超时作为最后防线，确保 UI 在最坏情况下也能快速恢复。
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
 
         // Debounce 保存配置和会话
