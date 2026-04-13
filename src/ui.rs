@@ -262,6 +262,12 @@ impl TerminalRenderer {
         }
     }
 
+    /// 重置 renderer 的 IME 状态缓存，使下一帧重新同步 IME 状态
+    pub fn reset_ime_state(&mut self) {
+        self.ime_enabled = false;
+        self.last_ime_rect = None;
+    }
+
     pub fn sync_font_metrics(&mut self, ctx: &egui::Context) {
         let font_id = FontId::monospace(self.font_size);
         let (char_width, line_height) = ctx.fonts_mut(|fonts| {

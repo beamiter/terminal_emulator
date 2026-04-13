@@ -1404,6 +1404,11 @@ impl TerminalApp {
                     terminal.on_resize(cols, rows);
                     self.cols = cols;
                     self.rows = rows;
+                    if self.force_resize_session {
+                        // Session 切换时重置 renderer 的 IME 状态缓存
+                        // 这样下一帧会重新发送 IMEAllowed(true)，确保 IME 不会丢失
+                        self.renderer.reset_ime_state();
+                    }
                     self.force_resize_session = false;
                 }
 
@@ -1940,7 +1945,6 @@ impl eframe::App for TerminalApp {
 
         // Step 1: 处理 IME 事件
         let all_events = ctx.input(|i| i.events.clone());
-        let mut has_preedit = false;
         for evt in &all_events {
             if let egui::Event::Ime(ime_event) = evt {
                 let mut terminal = session.terminal.lock();
@@ -1952,8 +1956,6 @@ impl eframe::App for TerminalApp {
                     egui::ImeEvent::Preedit(text) => {
                         crate::debug_log!("[IME] Preedit: {:?}", text);
                         terminal.set_preedit(text.clone(), text.len());
-                        // 只有当有实际的预编辑文本时，才抑制 Text 事件
-                        has_preedit = !text.is_empty();
                     }
                     egui::ImeEvent::Commit(text) => {
                         crate::debug_log!("[IME] Commit: {:?}", text);
@@ -1961,7 +1963,9 @@ impl eframe::App for TerminalApp {
                         if !text.is_empty() {
                             let _ = session.shell.write(text.as_bytes());
                         }
-                        terminal.ime_enabled = false;
+                        // 不要在 commit 时置 ime_enabled = false
+                        // commit 只是确认一个字/词，不代表用户要退出中文输入模式
+                        // 只有 ImeEvent::Disabled 才是真正的 IME 关闭信号
                     }
                     egui::ImeEvent::Disabled => {
                         crate::debug_log!("[IME] Disabled");
@@ -1971,6 +1975,12 @@ impl eframe::App for TerminalApp {
                 }
             }
         }
+        // 使用 terminal 持久状态判断是否有预编辑，而不是帧局部变量
+        // 这样即使跨帧也能正确抑制 Text 事件
+        let has_preedit = {
+            let terminal = session.terminal.lock();
+            !terminal.preedit_text.is_empty()
+        };
 
         let window_title = {
             let terminal = session.terminal.lock();
