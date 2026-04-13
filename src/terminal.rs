@@ -2021,8 +2021,32 @@ impl TerminalState {
         std::mem::take(&mut self.output_buffer)
     }
 
+    /// Convert a viewport-relative row to an absolute row in the full buffer
+    /// (scrollback + grid). Absolute row 0 = first scrollback line.
+    fn viewport_row_to_absolute(&self, viewport_row: usize) -> usize {
+        self.scrollback.len().saturating_sub(self.scroll_offset) + viewport_row
+    }
+
     pub fn select_text(&mut self, anchor: (usize, usize), active: (usize, usize)) {
         self.selection = Some(Selection { anchor, active });
+    }
+
+    /// Start a new selection at a viewport-relative position.
+    /// Converts to absolute buffer coordinates internally.
+    pub fn start_selection(&mut self, viewport_pos: (usize, usize)) {
+        let abs = (self.viewport_row_to_absolute(viewport_pos.0), viewport_pos.1);
+        self.selection = Some(Selection {
+            anchor: abs,
+            active: abs,
+        });
+    }
+
+    /// Update the active end of the current selection with a viewport-relative position.
+    pub fn update_selection(&mut self, viewport_pos: (usize, usize)) {
+        let abs_row = self.viewport_row_to_absolute(viewport_pos.0);
+        if let Some(ref mut sel) = self.selection {
+            sel.active = (abs_row, viewport_pos.1);
+        }
     }
 
     /// Select the word at the given (row, col) position in the visible grid.
@@ -2091,9 +2115,10 @@ impl TerminalState {
             right += 1;
         }
 
+        let abs_row = self.viewport_row_to_absolute(row);
         self.selection = Some(Selection {
-            anchor: (row, left),
-            active: (row, right),
+            anchor: (abs_row, left),
+            active: (abs_row, right),
         });
     }
 
@@ -2105,34 +2130,42 @@ impl TerminalState {
                 (sel.active, sel.anchor)
             };
             let mut result = String::new();
+            let scrollback_len = self.scrollback.len();
+            let grid_rows = self.grid.rows();
             let cols = self.grid.row_len();
+            let total_rows = scrollback_len + grid_rows;
 
-            if start.0 == end.0 {
-                for col in start.1..=end.1.min(cols - 1) {
-                    let cell = self.grid.get(start.0, col);
-                    if !cell.wide_continuation {
-                        result.push(cell.character);
-                    }
-                }
-            } else {
-                for row in start.0..=end.0.min(self.grid.rows() - 1) {
-                    let start_col = if row == start.0 { start.1 } else { 0 };
-                    let end_col = if row == end.0 {
-                        end.1.min(cols - 1)
-                    } else {
-                        cols - 1
-                    };
+            for abs_row in start.0..=end.0.min(total_rows.saturating_sub(1)) {
+                let start_col = if abs_row == start.0 { start.1 } else { 0 };
+                let end_col = if abs_row == end.0 {
+                    end.1.min(cols.saturating_sub(1))
+                } else {
+                    cols.saturating_sub(1)
+                };
 
-                    for col in start_col..=end_col {
-                        let cell = self.grid.get(row, col);
-                        if !cell.wide_continuation {
-                            result.push(cell.character);
+                if abs_row < scrollback_len {
+                    // Read from scrollback
+                    let line = &self.scrollback[abs_row];
+                    for col in start_col..=end_col.min(line.len().saturating_sub(1)) {
+                        if !line[col].wide_continuation {
+                            result.push(line[col].character);
                         }
                     }
-
-                    if row < end.0 {
-                        result.push('\n');
+                } else {
+                    // Read from current grid
+                    let grid_row = abs_row - scrollback_len;
+                    if grid_row < grid_rows {
+                        for col in start_col..=end_col {
+                            let cell = self.grid.get(grid_row, col);
+                            if !cell.wide_continuation {
+                                result.push(cell.character);
+                            }
+                        }
                     }
+                }
+
+                if abs_row < end.0 {
+                    result.push('\n');
                 }
             }
 
@@ -2209,23 +2242,24 @@ impl TerminalState {
         }
     }
 
-    pub fn is_cell_selected(&self, row: usize, col: usize) -> bool {
+    pub fn is_cell_selected(&self, viewport_row: usize, col: usize) -> bool {
         if let Some(sel) = self.selection {
+            let abs_row = self.viewport_row_to_absolute(viewport_row);
             let (start, end) = if sel.anchor <= sel.active {
                 (sel.anchor, sel.active)
             } else {
                 (sel.active, sel.anchor)
             };
 
-            if row < start.0 || row > end.0 {
+            if abs_row < start.0 || abs_row > end.0 {
                 return false;
             }
 
-            if row == start.0 && row == end.0 {
+            if abs_row == start.0 && abs_row == end.0 {
                 col >= start.1 && col <= end.1
-            } else if row == start.0 {
+            } else if abs_row == start.0 {
                 col >= start.1
-            } else if row == end.0 {
+            } else if abs_row == end.0 {
                 col <= end.1
             } else {
                 true

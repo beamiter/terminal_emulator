@@ -571,7 +571,7 @@ impl TerminalRenderer {
                     } else {
                         0
                     };
-                    terminal.select_text((row, col), (row, col));
+                    terminal.start_selection((row, col));
                 }
             }
         }
@@ -594,9 +594,7 @@ impl TerminalRenderer {
                     } else {
                         0
                     };
-                    if let Some(sel) = terminal.selection {
-                        terminal.select_text(sel.anchor, (row, col));
-                    }
+                    terminal.update_selection((row, col));
                 }
             }
         }
