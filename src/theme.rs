@@ -829,7 +829,7 @@ impl Theme {
 
     /// Custom themes directory
     pub fn custom_themes_dir() -> Option<std::path::PathBuf> {
-        dirs::config_dir().map(|d| d.join("terminal_emulator").join("themes"))
+        dirs::config_dir().map(|d| d.join("jterm2").join("themes"))
     }
 
     /// Load all custom themes from the themes directory

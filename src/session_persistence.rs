@@ -52,7 +52,7 @@ impl SessionsSnapshot {
 /// 尝试获取实例锁文件。成功返回 Some(File)（持有锁），失败表示已有实例在运行。
 pub fn try_acquire_instance_lock() -> Option<std::fs::File> {
     let lock_path = dirs::config_dir()?
-        .join("terminal_emulator")
+        .join("jterm2")
         .join("instance.lock");
     if let Some(parent) = lock_path.parent() {
         let _ = std::fs::create_dir_all(parent);

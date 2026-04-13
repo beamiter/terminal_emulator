@@ -30,7 +30,7 @@ impl HelpPanel {
             .show(ctx, |ui| {
                 ui.vertical(|ui| {
                     // 标题
-                    ui.heading(RichText::new("⌨️ Terminal Emulator 快捷键").size(18.0));
+                    ui.heading(RichText::new("⌨️ JTerm2 快捷键").size(18.0));
                     ui.separator();
 
                     // 分屏操作

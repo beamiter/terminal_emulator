@@ -350,7 +350,7 @@ impl KeyBindings {
     pub fn config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let config_dir = dirs::config_dir()
             .ok_or("Could not determine config directory")?;
-        Ok(config_dir.join("terminal_emulator/keybindings.toml"))
+        Ok(config_dir.join("jterm2/keybindings.toml"))
     }
 }
 

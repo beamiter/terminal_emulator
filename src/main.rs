@@ -265,7 +265,7 @@ fn main() -> Result<(), eframe::Error> {
     let cfg = std::sync::Arc::new(cfg);
 
     eframe::run_native(
-        "Terminal Emulator",
+        "JTerm2",
         options,
         Box::new(move |cc| {
             let cfg_clone = cfg.clone();

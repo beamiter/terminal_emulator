@@ -227,14 +227,14 @@ impl Config {
         let config_dir = dirs::config_dir()
             .ok_or("Failed to determine config directory")?;
         Ok(config_dir
-            .join("terminal_emulator")
+            .join("jterm2")
             .join("session_history.json"))
     }
 
     fn config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let config_dir = dirs::config_dir()
             .ok_or("Failed to determine config directory")?;
-        Ok(config_dir.join("terminal_emulator").join("config.toml"))
+        Ok(config_dir.join("jterm2").join("config.toml"))
     }
 
     pub fn get_font_family(&self) -> &str {

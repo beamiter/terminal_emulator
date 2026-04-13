@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use std::ffi::CString;
 use std::os::unix::io::RawFd;
 
-const TERM_PROGRAM_NAME: &str = "terminal_emulator";
+const TERM_PROGRAM_NAME: &str = "jterm2";
 const TERM_PROGRAM_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VTE_VERSION: &str = "7802";
 
