@@ -3,6 +3,7 @@ use crossbeam::channel::{Receiver, unbounded};
 use eframe::egui;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 
 #[derive(Clone, Debug)]
@@ -18,6 +19,7 @@ pub struct ShellSession {
     event_rx: Receiver<ShellEvent>,
     pub is_running: bool,
     child_pid: i32,  // 存储 shell 子进程的 PID
+    shutdown: Arc<AtomicBool>,  // 通知 IO 线程退出
 }
 
 impl ShellSession {
@@ -39,13 +41,15 @@ impl ShellSession {
                 let child_pid = pty.get_child_pid();
 
                 let (event_tx, event_rx) = unbounded::<ShellEvent>();
+                let shutdown = Arc::new(AtomicBool::new(false));
 
                 let pty = Arc::new(Mutex::new(pty));
                 let pty_clone = Arc::clone(&pty);
                 let repaint_ctx_clone = repaint_ctx.clone();
+                let shutdown_clone = Arc::clone(&shutdown);
 
                 thread::spawn(move || {
-                    Self::io_loop(pty_clone, event_tx, repaint_ctx_clone);
+                    Self::io_loop(pty_clone, event_tx, repaint_ctx_clone, shutdown_clone);
                 });
 
                 Ok(ShellSession {
@@ -53,6 +57,7 @@ impl ShellSession {
                     event_rx,
                     is_running: true,
                     child_pid,
+                    shutdown,
                 })
             }
             Err(e) => Err(format!("Failed to create shell session: {}", e)),
@@ -78,6 +83,7 @@ impl ShellSession {
         pty: Arc<Mutex<Pty>>,
         event_tx: crossbeam::channel::Sender<ShellEvent>,
         repaint_ctx: egui::Context,
+        shutdown: Arc<AtomicBool>,
     ) {
         const BUFFER_SIZE: usize = 65536;  // 64KB 读缓冲
         const BATCH_SIZE_THRESHOLD: usize = 131072;  // 128KB 累积阈值
@@ -91,6 +97,12 @@ impl ShellSession {
         crate::debug_log!("[IOLoop] 后台 I/O 线程启动 (P3 批处理优化)");
 
         loop {
+            // 检查 shutdown 标志
+            if shutdown.load(Ordering::Relaxed) {
+                crate::debug_log!("[IOLoop] 收到 shutdown 信号，退出 IO 线程");
+                return;
+            }
+
             // 动态计算超时：累积数据时快速超时，空闲时正常超时
             let timeout_ms = if !accumulated.is_empty() {
                 // 已有累积数据，快速超时以便发送
@@ -230,5 +242,30 @@ impl ShellSession {
     /// 获取 shell 子进程的 PID
     pub fn get_child_pid(&self) -> i32 {
         self.child_pid
+    }
+}
+
+impl Drop for ShellSession {
+    fn drop(&mut self) {
+        // 通知 IO 线程退出
+        self.shutdown.store(true, Ordering::Relaxed);
+
+        // 直接杀死整个进程组，确保 shell 及其子进程都被清理
+        unsafe {
+            let pgid = -(self.child_pid as i32);
+            libc::kill(pgid, libc::SIGHUP);
+            libc::kill(self.child_pid, libc::SIGTERM);
+
+            // 短暂等待后强制杀死
+            std::thread::sleep(std::time::Duration::from_millis(30));
+
+            // 强制杀死残留进程
+            let _ = libc::kill(pgid, libc::SIGKILL);
+            let _ = libc::kill(self.child_pid, libc::SIGKILL);
+
+            // 回收僵尸进程
+            let mut status = 0;
+            let _ = libc::waitpid(self.child_pid, &mut status, libc::WNOHANG);
+        }
     }
 }

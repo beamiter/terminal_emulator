@@ -351,18 +351,25 @@ mod unix_pty {
 
         pub fn terminate(&mut self) -> Result<()> {
             unsafe {
-                if libc::kill(self.child_pid, libc::SIGTERM) == 0 {
-                    // 给进程时间优雅退出
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                // 向整个进程组发送 SIGHUP（子进程通过 setsid() 创建了新会话）
+                // 使用负 PID 向进程组发信号，确保 shell 的子进程也被杀死
+                let pgid = -self.child_pid;
+                let _ = libc::kill(pgid, libc::SIGHUP);
+                let _ = libc::kill(self.child_pid, libc::SIGTERM);
 
-                    // 如果仍未退出，强制杀死
-                    if self.is_alive() {
-                        let _ = libc::kill(self.child_pid, libc::SIGKILL);
-                    }
-                    Ok(())
-                } else {
-                    Err(anyhow!("Failed to terminate child process"))
+                // 给进程时间优雅退出
+                std::thread::sleep(std::time::Duration::from_millis(50));
+
+                // 如果仍未退出，强制杀死
+                if self.is_alive() {
+                    let _ = libc::kill(pgid, libc::SIGKILL);
+                    let _ = libc::kill(self.child_pid, libc::SIGKILL);
+                    // 回收僵尸进程
+                    let mut status = 0;
+                    let _ = libc::waitpid(self.child_pid, &mut status, 0);
+                    self.exit_code_cached = Some(-9);
                 }
+                Ok(())
             }
         }
     }
