@@ -57,10 +57,10 @@ mod unix_pty {
 
     impl Pty {
         pub fn new(cols: usize, rows: usize) -> Result<Self> {
-            Self::new_with_cwd(cols, rows, None)
+            Self::new_with_cwd(cols, rows, None, None)
         }
 
-        pub fn new_with_cwd(cols: usize, rows: usize, cwd: Option<&str>) -> Result<Self> {
+        pub fn new_with_cwd(cols: usize, rows: usize, cwd: Option<&str>, session_id: Option<&str>) -> Result<Self> {
             unsafe {
                 // 1. 创建 PTY
                 let mut master = 0;
@@ -187,30 +187,34 @@ mod unix_pty {
                         }
                     };
 
-                    // 如果是 bash，添加 -l 参数；rsh 不需要
+                    // Build argv as a Vec for flexibility
+                    let mut argv_ptrs: Vec<*const libc::c_char> = Vec::new();
+                    argv_ptrs.push(dash_shell_cstr.as_ptr());
+
+                    // 如果是 bash，添加 -l 参数
                     let login_arg = if shell_name == "bash" {
                         Some(CString::new("-l").unwrap())
                     } else {
                         None
                     };
+                    if let Some(ref arg) = login_arg {
+                        argv_ptrs.push(arg.as_ptr());
+                    }
 
-                    // 构造 argv
-                    let argv = if let Some(arg) = &login_arg {
-                        [
-                            dash_shell_cstr.as_ptr(),
-                            arg.as_ptr(),
-                            std::ptr::null(),
-                        ]
-                    } else {
-                        [
-                            dash_shell_cstr.as_ptr(),
-                            std::ptr::null(),
-                            std::ptr::null(),
-                        ]
-                    };
+                    // 如果是 rsh 且有 session_id，添加 --session <id>
+                    let session_flag = CString::new("--session").unwrap();
+                    let session_id_cstr = session_id.and_then(|s| CString::new(s).ok());
+                    if shell_name == "rsh" {
+                        if let Some(ref sid) = session_id_cstr {
+                            argv_ptrs.push(session_flag.as_ptr());
+                            argv_ptrs.push(sid.as_ptr());
+                        }
+                    }
+
+                    argv_ptrs.push(std::ptr::null());
 
                     // 执行 shell，继承当前环境
-                    libc::execve(shell_cstr.as_ptr(), argv.as_ptr(), environ);
+                    libc::execve(shell_cstr.as_ptr(), argv_ptrs.as_ptr(), environ);
 
                     // 如果 execve 返回，说明出错
                     libc::perror(b"execve failed\0".as_ptr() as *const i8);

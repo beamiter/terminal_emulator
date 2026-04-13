@@ -671,12 +671,11 @@ impl TerminalApp {
         let is_first_instance = lock_file.is_some();
 
         // 仅在首个实例且配置允许时恢复会话
-        let saved_snapshots = if cfg.restore_session && is_first_instance {
+        let saved_snapshot = if cfg.restore_session && is_first_instance {
             config::Config::session_history_path()
                 .ok()
                 .and_then(|path| session_persistence::SessionsSnapshot::load(&path).ok())
                 .filter(|s| !s.sessions.is_empty())
-                .map(|s| s.sessions)
         } else {
             if !is_first_instance {
                 eprintln!("[SessionPersistence] Another instance is running, starting fresh");
@@ -684,11 +683,13 @@ impl TerminalApp {
             None
         };
 
-        // 创建首个会话，使用保存的 cwd（如果有）
-        let first_cwd = saved_snapshots.as_ref().and_then(|s| s.first()?.cwd.as_deref().map(String::from));
+        // 创建首个会话，使用保存的 cwd 和 session_id（如果有）
+        let first_cwd = saved_snapshot.as_ref().and_then(|s| s.sessions.first()?.cwd.as_deref().map(String::from));
+        let first_session_id = saved_snapshot.as_ref().and_then(|s| s.sessions.first()?.session_id.as_deref().map(String::from));
+        let saved_active_index = saved_snapshot.as_ref().and_then(|s| s.active_index);
         let terminal = TerminalState::new(cols, rows);
 
-        let shell = match ShellSession::new_with_cwd(cols, rows, first_cwd.as_deref(), repaint_ctx.clone()) {
+        let shell = match ShellSession::new_with_cwd(cols, rows, first_cwd.as_deref(), first_session_id.as_deref(), repaint_ctx.clone()) {
             Ok(session) => {
                 eprintln!("✓ Shell session started successfully");
                 session
@@ -704,9 +705,9 @@ impl TerminalApp {
         let session = Session::with_default_name(0, Arc::new(ParkingMutex::new(terminal)), shell);
         let mut session_manager = SessionManager::new(session, repaint_ctx);
 
-        // 恢复额外的会话
-        if let Some(snapshots) = saved_snapshots {
-            session_manager.restore_from_snapshots(snapshots);
+        // 恢复额外的会话（包括 restorable commands 回放）
+        if let Some(snap) = saved_snapshot {
+            session_manager.restore_from_snapshots(snap.sessions, saved_active_index);
             eprintln!("[SessionPersistence] Restored {} sessions", session_manager.len());
         }
 
@@ -1877,7 +1878,8 @@ impl TerminalApp {
             if let Ok(path) = config::Config::session_history_path() {
                 let _ = session_persistence::ensure_session_history_dir(&path);
                 let snapshots = self.session_manager.get_session_snapshots();
-                let snapshot = session_persistence::SessionsSnapshot::from_snapshots(snapshots);
+                let active_index = Some(self.session_manager.active_index());
+                let snapshot = session_persistence::SessionsSnapshot::from_snapshots(snapshots, active_index);
                 if let Err(e) = snapshot.save(&path) {
                     eprintln!("[SessionPersistence] Failed to save: {}", e);
                 }
@@ -2924,12 +2926,13 @@ impl Drop for TerminalApp {
             }
         }
 
-        // 保存当前会话到持久化存储（包含每个 session 的 cwd）
+        // 保存当前会话到持久化存储（包含每个 session 的 cwd 和 restorable commands）
         if let Ok(session_history_path) = config::Config::session_history_path() {
             let _ = session_persistence::ensure_session_history_dir(&session_history_path);
 
             let snapshots = self.session_manager.get_session_snapshots();
-            let snapshot = session_persistence::SessionsSnapshot::from_snapshots(snapshots);
+            let active_index = Some(self.session_manager.active_index());
+            let snapshot = session_persistence::SessionsSnapshot::from_snapshots(snapshots, active_index);
             if let Err(e) = snapshot.save(&session_history_path) {
                 eprintln!("[SessionPersistence] Failed to save sessions: {}", e);
             }

@@ -1,9 +1,18 @@
 use crate::terminal::TerminalState;
 use crate::shell::ShellSession;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use parking_lot::Mutex as ParkingMutex;
 use uuid::Uuid;
+
+/// Generate a unique session ID for rsh session persistence.
+pub fn generate_session_id() -> String {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{}-{}", std::process::id(), ts)
+}
 
 /// Session metadata - 会话元数据
 #[derive(Debug, Clone)]
@@ -11,6 +20,7 @@ pub struct SessionMetadata {
     pub id: Uuid,
     pub name: String,
     pub tags: Vec<String>,
+    pub session_id: String,
     pub created_at: Instant,
     pub last_active: Instant,
 }
@@ -22,6 +32,7 @@ impl SessionMetadata {
             id: Uuid::new_v4(),
             name,
             tags,
+            session_id: generate_session_id(),
             created_at: now,
             last_active: now,
         }

@@ -1,4 +1,5 @@
 use crate::session::Session;
+use crate::session_persistence;
 use crate::terminal::TerminalState;
 use crate::shell::ShellSession;
 use eframe::egui;
@@ -45,9 +46,9 @@ impl SessionManager {
             None
         };
 
-        // 创建新会话，继承工作目录
+        // 创建新会话，继承工作目录（新会话不传 session_id，自动生成）
         let cwd_ref = cwd.as_deref();
-        match ShellSession::new_with_cwd(80, 24, cwd_ref, self.repaint_ctx.clone()) {
+        match ShellSession::new_with_cwd(80, 24, cwd_ref, None, self.repaint_ctx.clone()) {
             Ok(shell) => {
                 let terminal = Arc::new(ParkingMutex::new(TerminalState::new(80, 24)));
                 let session = Session::new(name, tags, terminal, shell);
@@ -220,46 +221,93 @@ impl SessionManager {
         }
     }
 
-    /// 获取会话列表的快照用于持久化（包含 cwd）
-    pub fn get_session_snapshots(&self) -> Vec<crate::session_persistence::SessionSnapshot> {
+    /// 获取会话列表的快照用于持久化（包含 cwd 和 restorable commands）
+    pub fn get_session_snapshots(&self) -> Vec<session_persistence::SessionSnapshot> {
         self.sessions
             .iter()
             .map(|s| {
                 let cwd = get_process_cwd(s.get_shell_pid());
-                crate::session_persistence::SessionSnapshot {
+                let master_fd = s.shell.get_master_fd();
+                let restorable_commands = master_fd.and_then(|fd| {
+                    session_persistence::get_restorable_commands(s.get_shell_pid(), fd)
+                });
+                session_persistence::SessionSnapshot {
                     name: s.metadata.name.clone(),
                     tags: s.metadata.tags.clone(),
                     cwd,
+                    restorable_commands,
+                    session_id: Some(s.metadata.session_id.clone()),
                 }
             })
             .collect()
     }
 
     /// 从快照恢复额外的会话（第一个已经在外部创建好）
-    pub fn restore_from_snapshots(&mut self, snapshots: Vec<crate::session_persistence::SessionSnapshot>) {
-        // 用第一个快照的 name 更新已有的第一个 session
+    pub fn restore_from_snapshots(
+        &mut self,
+        snapshots: Vec<session_persistence::SessionSnapshot>,
+        active_index: Option<usize>,
+    ) {
+        // 用第一个快照的 name/tags/session_id 更新已有的第一个 session
         if let Some(first) = snapshots.first() {
             if let Some(session) = self.sessions.get_mut(0) {
                 session.metadata.name = first.name.clone();
                 session.metadata.tags = first.tags.clone();
+                if let Some(ref sid) = first.session_id {
+                    session.metadata.session_id = sid.clone();
+                }
+            }
+            // 为第一个 session 回放恢复命令
+            if let Some(ref cmds) = first.restorable_commands {
+                if let Some(session) = self.sessions.get(0) {
+                    Self::schedule_command_replay(&session.shell, cmds.clone());
+                }
             }
         }
 
         // 为剩余快照创建新会话
         for snap in snapshots.into_iter().skip(1) {
-            let index = self.sessions.len();
             let cwd_ref = snap.cwd.as_deref();
-            match ShellSession::new_with_cwd(80, 24, cwd_ref, self.repaint_ctx.clone()) {
+            let sid_ref = snap.session_id.as_deref();
+            match ShellSession::new_with_cwd(80, 24, cwd_ref, sid_ref, self.repaint_ctx.clone()) {
                 Ok(shell) => {
                     let terminal = Arc::new(ParkingMutex::new(TerminalState::new(80, 24)));
-                    let session = Session::new(snap.name, snap.tags, terminal, shell);
+                    let mut session = Session::new(snap.name, snap.tags, terminal, shell);
+                    if let Some(sid) = snap.session_id {
+                        session.metadata.session_id = sid;
+                    }
+                    // 回放恢复命令
+                    if let Some(ref cmds) = snap.restorable_commands {
+                        Self::schedule_command_replay(&session.shell, cmds.clone());
+                    }
                     self.sessions.push(session);
                 }
                 Err(e) => {
-                    eprintln!("Failed to restore session {}: {}", index, e);
+                    eprintln!("Failed to restore session: {}", e);
                 }
             }
         }
+
+        // 恢复活跃标签页
+        if let Some(idx) = active_index {
+            if idx < self.sessions.len() {
+                self.active_index = idx;
+            }
+        }
+    }
+
+    /// 延迟回放恢复命令到 shell（500ms 延迟确保 shell 进入 raw mode）
+    fn schedule_command_replay(shell: &ShellSession, commands: String) {
+        let pty = shell.pty_writer();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if let Ok(mut pty_guard) = pty.lock() {
+                for cmd in commands.split(", ") {
+                    let text = format!("{}\r", cmd.trim());
+                    let _ = pty_guard.write(text.as_bytes());
+                }
+            }
+        });
     }
 }
 

@@ -1,6 +1,7 @@
 use crate::pty::Pty;
 use crossbeam::channel::{Receiver, unbounded};
 use eframe::egui;
+use std::os::unix::io::RawFd;
 use std::time::Duration;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,17 +26,18 @@ pub struct ShellSession {
 impl ShellSession {
     /// 启动新的 shell session
     pub fn new(cols: usize, rows: usize, repaint_ctx: egui::Context) -> std::result::Result<Self, String> {
-        Self::new_with_cwd(cols, rows, None, repaint_ctx)
+        Self::new_with_cwd(cols, rows, None, None, repaint_ctx)
     }
 
-    /// 启动新的 shell session，指定初始工作目录
+    /// 启动新的 shell session，指定初始工作目录和 session ID
     pub fn new_with_cwd(
         cols: usize,
         rows: usize,
         cwd: Option<&str>,
+        session_id: Option<&str>,
         repaint_ctx: egui::Context,
     ) -> std::result::Result<Self, String> {
-        match Pty::new_with_cwd(cols, rows, cwd) {
+        match Pty::new_with_cwd(cols, rows, cwd, session_id) {
             Ok(pty) => {
                 // 在把 pty 放入 Arc<Mutex> 前获取 child_pid
                 let child_pid = pty.get_child_pid();
@@ -242,6 +244,16 @@ impl ShellSession {
     /// 获取 shell 子进程的 PID
     pub fn get_child_pid(&self) -> i32 {
         self.child_pid
+    }
+
+    /// 获取 PTY master fd（用于 tcgetpgrp 等系统调用）
+    pub fn get_master_fd(&self) -> Option<RawFd> {
+        self.pty.lock().ok().map(|pty| pty.master_fd())
+    }
+
+    /// 获取可克隆的 PTY writer（用于延迟写入命令）
+    pub fn pty_writer(&self) -> Arc<Mutex<Pty>> {
+        Arc::clone(&self.pty)
     }
 }
 
