@@ -1188,9 +1188,13 @@ impl TerminalRenderer {
         for event in events {
             match event {
                 egui::Event::Text(text) => {
-                    // 只在IME预编辑期间（suppress_text_events=true）才跳过Text事件
-                    // report_all_keys模式应该使用Key事件，但不应该阻止Text事件处理
                     if suppress_text_events {
+                        continue;
+                    }
+                    // When report_all_keys is active, character input is handled
+                    // by Key events via the Kitty keyboard protocol encoding.
+                    // Skip Text events to avoid sending each character twice.
+                    if report_all_keys {
                         continue;
                     }
                     // 不处理特殊按键对应的文本事件
