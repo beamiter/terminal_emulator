@@ -215,8 +215,12 @@ impl GlyphAtlas {
             (glyph_id, font)
         };
 
-        let scaled_used = used_font.as_scaled(scale);
-        let glyph = glyph_id.with_scale_and_position(scale, point(0.0, scaled_used.ascent()));
+        // Always use primary font's ascent for baseline positioning so that
+        // fallback fonts (e.g. CJK) align to the same baseline as the primary font.
+        // Cell height is computed from the primary font's metrics, so using a fallback
+        // font's ascent would shift the glyph down and truncate the bottom.
+        let primary_ascent = self.font_regular.as_scaled(scale).ascent();
+        let glyph = glyph_id.with_scale_and_position(scale, point(0.0, primary_ascent));
 
         if let Some(outlined) = used_font.outline_glyph(glyph) {
             let bounds = outlined.px_bounds();

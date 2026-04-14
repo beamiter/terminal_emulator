@@ -102,7 +102,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         // Only apply glyph where pixel falls within the glyph area
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)
-                      * step(rel.x, glyph_size.x - 0.5) * step(rel.y, glyph_size.y - 0.5);
+                      * step(rel.x, glyph_size.x) * step(rel.y, glyph_size.y);
         color = mix(color, vec4<f32>(in.fg_color.rgb, 1.0), alpha * in_bounds);
     }
 
