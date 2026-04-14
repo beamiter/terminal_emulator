@@ -993,22 +993,21 @@ impl TerminalRenderer {
 
         let instance_count = instances.len() as u32;
 
-        // Get screen dimensions in physical pixels
-        let screen_rect = ui.ctx().input(|i| i.screen_rect());
         let (atlas_w, atlas_h) = {
             let renderer = render_state.renderer.read();
             let gpu_res = renderer.callback_resources.get::<gpu::callback::GpuResources>().unwrap();
             (gpu_res.atlas.atlas_width() as f32, gpu_res.atlas.atlas_height() as f32)
         };
+        // Viewport is set to content_rect by egui-wgpu, so use its dimensions
         let uniforms = gpu::instance::GridUniforms {
-            screen_width: screen_rect.width() * ppp,
-            screen_height: screen_rect.height() * ppp,
+            viewport_width: content_rect.width() * ppp,
+            viewport_height: content_rect.height() * ppp,
             cell_width: char_width * ppp,
             cell_height: line_height * ppp,
             atlas_width: atlas_w,
             atlas_height: atlas_h,
-            content_origin_x: content_rect.left() * ppp,
-            content_origin_y: content_rect.top() * ppp,
+            _pad0: 0.0,
+            _pad1: 0.0,
         };
 
         let callback = gpu::callback::GridRenderCallback {

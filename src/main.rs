@@ -336,6 +336,11 @@ fn main() -> Result<(), eframe::Error> {
                 .font_data
                 .get("monospace_unicode")
                 .map(|fd| fd.font.to_vec());
+            let fallback_font_data: Vec<Vec<u8>> = fonts
+                .font_data
+                .get("cjk")
+                .map(|fd| vec![fd.font.to_vec()])
+                .unwrap_or_default();
 
             cc.egui_ctx.set_fonts(fonts);
 
@@ -354,6 +359,7 @@ fn main() -> Result<(), eframe::Error> {
                     &render_state.queue,
                     &font_bytes,
                     None, // no separate bold font for now
+                    &fallback_font_data,
                     font_size_px,
                 );
                 let pipeline = gpu::pipeline::GridPipeline::new(

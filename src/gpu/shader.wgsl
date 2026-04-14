@@ -1,12 +1,12 @@
 struct Uniforms {
-    screen_width: f32,
-    screen_height: f32,
+    viewport_width: f32,
+    viewport_height: f32,
     cell_width: f32,
     cell_height: f32,
     atlas_width: f32,
     atlas_height: f32,
-    content_origin_x: f32,
-    content_origin_y: f32,
+    _pad0: f32,
+    _pad1: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -49,13 +49,13 @@ fn vs_main(
         cell_w = u.cell_width * 2.0;
     }
 
-    // Cell position in physical pixels
-    let px = u.content_origin_x + f32(col_row.x) * u.cell_width + qx * cell_w;
-    let py = u.content_origin_y + f32(col_row.y) * u.cell_height + qy * u.cell_height;
+    // Cell position in physical pixels relative to viewport origin
+    let px = f32(col_row.x) * u.cell_width + qx * cell_w;
+    let py = f32(col_row.y) * u.cell_height + qy * u.cell_height;
 
-    // Convert to NDC
-    let ndc_x = (px / u.screen_width) * 2.0 - 1.0;
-    let ndc_y = 1.0 - (py / u.screen_height) * 2.0;
+    // Convert to NDC (viewport is set to content_rect by egui-wgpu)
+    let ndc_x = (px / u.viewport_width) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (py / u.viewport_height) * 2.0;
 
     var out: VertexOutput;
     out.position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);

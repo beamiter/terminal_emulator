@@ -28,6 +28,7 @@ pub struct AtlasGlyphKey {
 pub struct GlyphAtlas {
     font_regular: FontVec,
     font_bold: Option<FontVec>,
+    fallback_fonts: Vec<FontVec>,
     font_size_px: f32,
     /// CPU-side alpha bitmap
     bitmap: Vec<u8>,
@@ -57,12 +58,17 @@ impl GlyphAtlas {
         queue: &wgpu::Queue,
         font_data_regular: &[u8],
         font_data_bold: Option<&[u8]>,
+        fallback_font_data: &[Vec<u8>],
         font_size_px: f32,
     ) -> Self {
         let font_regular =
             FontVec::try_from_vec(font_data_regular.to_vec()).expect("failed to load regular font");
         let font_bold = font_data_bold
             .map(|data| FontVec::try_from_vec(data.to_vec()).expect("failed to load bold font"));
+        let fallback_fonts: Vec<FontVec> = fallback_font_data
+            .iter()
+            .filter_map(|data| FontVec::try_from_vec(data.clone()).ok())
+            .collect();
 
         let width = Self::INITIAL_SIZE;
         let height = Self::INITIAL_SIZE;
@@ -94,6 +100,7 @@ impl GlyphAtlas {
         let mut atlas = GlyphAtlas {
             font_regular,
             font_bold,
+            fallback_fonts,
             font_size_px,
             bitmap,
             width,
@@ -173,10 +180,34 @@ impl GlyphAtlas {
         let scaled_font = font.as_scaled(scale);
 
         let glyph_id = font.glyph_id(ch);
-        // Fallback: if glyph not found, try regular font for bold, or use tofu
+        // Fallback chain: bold->regular, then fallback fonts
         let (glyph_id, used_font): (GlyphId, &FontVec) = if glyph_id.0 == 0 && bold {
             let fallback_id = self.font_regular.glyph_id(ch);
-            (fallback_id, &self.font_regular)
+            if fallback_id.0 != 0 {
+                (fallback_id, &self.font_regular)
+            } else {
+                // Try fallback fonts
+                let mut found = None;
+                for fb in &self.fallback_fonts {
+                    let fb_id = fb.glyph_id(ch);
+                    if fb_id.0 != 0 {
+                        found = Some((fb_id, fb as &FontVec));
+                        break;
+                    }
+                }
+                found.unwrap_or((fallback_id, &self.font_regular))
+            }
+        } else if glyph_id.0 == 0 {
+            // Try fallback fonts for regular style
+            let mut found = None;
+            for fb in &self.fallback_fonts {
+                let fb_id = fb.glyph_id(ch);
+                if fb_id.0 != 0 {
+                    found = Some((fb_id, fb as &FontVec));
+                    break;
+                }
+            }
+            found.unwrap_or((glyph_id, font))
         } else {
             (glyph_id, font)
         };

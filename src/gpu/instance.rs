@@ -96,20 +96,18 @@ impl CellInstance {
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct GridUniforms {
-    /// Viewport width in physical pixels
-    pub screen_width: f32,
-    /// Viewport height in physical pixels
-    pub screen_height: f32,
+    /// Viewport (content_rect) width in physical pixels
+    pub viewport_width: f32,
+    /// Viewport (content_rect) height in physical pixels
+    pub viewport_height: f32,
     /// Cell width in physical pixels
     pub cell_width: f32,
     /// Cell height in physical pixels
     pub cell_height: f32,
-    /// Atlas texture width
+    /// Atlas texture width in pixels
     pub atlas_width: f32,
-    /// Atlas texture height
+    /// Atlas texture height in pixels
     pub atlas_height: f32,
-    /// Content area origin X in physical pixels
-    pub content_origin_x: f32,
-    /// Content area origin Y in physical pixels
-    pub content_origin_y: f32,
+    pub _pad0: f32,
+    pub _pad1: f32,
 }
