@@ -439,4 +439,14 @@ impl GlyphAtlas {
     pub fn atlas_height(&self) -> u32 {
         self.height
     }
+
+    /// Return font metrics: (ascent, descent, advance_width of '0') in physical pixels.
+    pub fn font_metrics(&self) -> (f32, f32, f32) {
+        let scale = PxScale::from(self.font_size_px);
+        let scaled = self.font_regular.as_scaled(scale);
+        let ascent = scaled.ascent();
+        let descent = scaled.descent(); // negative value
+        let advance = scaled.h_advance(self.font_regular.glyph_id('0'));
+        (ascent, descent, advance)
+    }
 }

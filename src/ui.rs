@@ -276,13 +276,33 @@ impl TerminalRenderer {
     }
 
     pub fn sync_font_metrics(&mut self, ctx: &egui::Context) {
+        // When GPU rendering is active, derive cell size from the GPU atlas font
+        // metrics (ascent + |descent| and advance width) which give tighter spacing
+        // than egui's row_height (which includes extra leading).
+        if self.gpu_rendering {
+            if let Some(render_state) = &self.wgpu_render_state {
+                let ppp = ctx.pixels_per_point();
+                let renderer = render_state.renderer.read();
+                if let Some(gpu_res) = renderer.callback_resources.get::<gpu::callback::GpuResources>() {
+                    let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
+                    // Convert from physical pixels back to logical points
+                    let cw = advance / ppp;
+                    let ch = (ascent - descent) / ppp; // descent is negative
+                    if cw.is_finite() && cw > 0.0 {
+                        self.char_width = cw;
+                    }
+                    if ch.is_finite() && ch > 0.0 {
+                        self.line_height = ch;
+                    }
+                    return;
+                }
+            }
+        }
+
+        // CPU fallback: use egui font metrics
         let font_id = FontId::monospace(self.font_size);
         let (char_width, line_height) = ctx.fonts_mut(|fonts| {
-            // For monospace fonts, measure a single representative character.
-            // We render each character at its exact grid position, so the advance
-            // width only determines the grid cell size, not the text layout.
             let glyph_width = fonts.glyph_width(&font_id, '0');
-
             let row_height = fonts.row_height(&font_id);
             (glyph_width, row_height)
         });
@@ -993,17 +1013,23 @@ impl TerminalRenderer {
 
         let instance_count = instances.len() as u32;
 
-        let (atlas_w, atlas_h) = {
+        let (atlas_w, atlas_h, gpu_cell_width, gpu_cell_height) = {
             let renderer = render_state.renderer.read();
             let gpu_res = renderer.callback_resources.get::<gpu::callback::GpuResources>().unwrap();
-            (gpu_res.atlas.atlas_width() as f32, gpu_res.atlas.atlas_height() as f32)
+            let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
+            // Use actual font metrics for tighter cell sizing:
+            // cell_height = ascent + |descent| (no extra leading)
+            // cell_width  = advance width of '0'
+            let cell_h = ascent - descent; // descent is negative
+            let cell_w = advance;
+            (gpu_res.atlas.atlas_width() as f32, gpu_res.atlas.atlas_height() as f32, cell_w, cell_h)
         };
         // Viewport is set to content_rect by egui-wgpu, so use its dimensions
         let uniforms = gpu::instance::GridUniforms {
             viewport_width: content_rect.width() * ppp,
             viewport_height: content_rect.height() * ppp,
-            cell_width: char_width * ppp,
-            cell_height: line_height * ppp,
+            cell_width: gpu_cell_width,
+            cell_height: gpu_cell_height,
             atlas_width: atlas_w,
             atlas_height: atlas_h,
             _pad0: 0.0,
