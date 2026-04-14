@@ -952,11 +952,9 @@ impl TerminalRenderer {
                     let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
                         let region = gpu_res.atlas.get_or_rasterize(cell.character, bold);
                         if region.width_px > 0.0 && region.height_px > 0.0 {
-                            // Compute centering offset within cell (in logical pixels)
-                            let cell_w = if is_wide { char_width * 2.0 } else { char_width };
-                            let off_x = (cell_w - region.width_px / ppp) / 2.0;
-                            let off_y = (line_height - region.height_px / ppp) / 2.0;
-                            (region.u0, region.v0, region.u1, region.v1, off_x, off_y)
+                            // Use font bearing for glyph positioning within cell (physical pixels)
+                            (region.u0, region.v0, region.u1, region.v1,
+                             region.bearing_x, region.bearing_y)
                         } else {
                             (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                         }
@@ -990,13 +988,18 @@ impl TerminalRenderer {
 
         // Get screen dimensions in physical pixels
         let screen_rect = ui.ctx().input(|i| i.screen_rect());
+        let (atlas_w, atlas_h) = {
+            let renderer = render_state.renderer.read();
+            let gpu_res = renderer.callback_resources.get::<gpu::callback::GpuResources>().unwrap();
+            (gpu_res.atlas.atlas_width() as f32, gpu_res.atlas.atlas_height() as f32)
+        };
         let uniforms = gpu::instance::GridUniforms {
             screen_width: screen_rect.width() * ppp,
             screen_height: screen_rect.height() * ppp,
             cell_width: char_width * ppp,
             cell_height: line_height * ppp,
-            atlas_width: 0.0, // not used in shader (UV coords are normalized)
-            atlas_height: 0.0,
+            atlas_width: atlas_w,
+            atlas_height: atlas_h,
             content_origin_x: content_rect.left() * ppp,
             content_origin_y: content_rect.top() * ppp,
         };
