@@ -758,6 +758,7 @@ impl TerminalApp {
             current_theme.clone(),
         );
         renderer.opacity = cfg.opacity;
+        renderer.gpu_rendering = cfg.gpu_rendering;
         renderer.wgpu_render_state = wgpu_render_state.clone();
 
         // Initialize layout manager with first session
@@ -774,6 +775,7 @@ impl TerminalApp {
                 current_theme.clone(),
             );
             pr.opacity = cfg.opacity;
+            pr.gpu_rendering = cfg.gpu_rendering;
             pr.wgpu_render_state = wgpu_render_state.clone();
             pane_renderers.push(pr);
         }
@@ -1847,6 +1849,14 @@ impl TerminalApp {
                     self.renderer.opacity = opacity;
                     for pr in &mut self.pane_renderers {
                         pr.opacity = opacity;
+                    }
+                    self.schedule_config_save();
+                }
+                config_panel::ConfigAction::GpuRenderingChanged(enabled) => {
+                    self.config.gpu_rendering = enabled;
+                    self.renderer.gpu_rendering = enabled;
+                    for pr in &mut self.pane_renderers {
+                        pr.gpu_rendering = enabled;
                     }
                     self.schedule_config_save();
                 }

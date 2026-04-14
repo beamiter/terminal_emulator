@@ -225,6 +225,8 @@ pub struct TerminalRenderer {
     /// The content rect from the last render, used for mouse-to-grid coordinate conversion
     pub last_content_rect: Option<egui::Rect>,
     pub opacity: f32,
+    /// Whether to use GPU-accelerated grid rendering
+    pub gpu_rendering: bool,
     /// wgpu render state for GPU-accelerated grid rendering
     pub wgpu_render_state: Option<egui_wgpu::RenderState>,
 }
@@ -261,6 +263,7 @@ impl TerminalRenderer {
             last_content_rect: None,
             last_ime_rect: None,
             opacity: 1.0,
+            gpu_rendering: true,
             texture_cache: std::collections::HashMap::new(),
             wgpu_render_state: None,
         }
@@ -705,7 +708,11 @@ impl TerminalRenderer {
         }
 
         // GPU-accelerated grid rendering via wgpu instanced draw
-        let gpu_rendered = self.render_grid_gpu(ui, terminal, search_state, links, hovered_link, &grid, rows, cols, content_rect, char_width, line_height);
+        let gpu_rendered = if self.gpu_rendering {
+            self.render_grid_gpu(ui, terminal, search_state, links, hovered_link, &grid, rows, cols, content_rect, char_width, line_height)
+        } else {
+            false
+        };
 
         if !gpu_rendered {
             // Fallback: CPU rendering via egui painter

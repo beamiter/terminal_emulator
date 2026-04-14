@@ -20,6 +20,7 @@ pub enum ConfigAction {
     ScrollbackLinesChanged(usize),
     DebugPanelToggled(bool),
     OpacityChanged(f32),
+    GpuRenderingChanged(bool),
     SaveRequested,
     ResetToDefaults,
 }
@@ -37,6 +38,7 @@ pub struct ConfigPanel {
     edit_restore_session: bool,
     edit_opacity: f32,
     pub edit_debug_overlay: bool,
+    edit_gpu_rendering: bool,
     // 系统字体缓存
     monospace_fonts: Vec<String>,
     all_fonts: Vec<String>,
@@ -68,6 +70,7 @@ impl ConfigPanel {
             edit_theme: "dark".to_string(),
             edit_restore_session: false,
             edit_debug_overlay: false,
+            edit_gpu_rendering: true,
             monospace_fonts: Vec::new(),
             all_fonts: Vec::new(),
             available_themes: Vec::new(),
@@ -107,6 +110,7 @@ impl ConfigPanel {
         self.edit_theme = config.theme.clone();
         self.edit_restore_session = config.restore_session;
         self.edit_opacity = config.opacity;
+        self.edit_gpu_rendering = config.gpu_rendering;
 
         if !self.fonts_loaded {
             self.monospace_fonts = Config::get_monospace_fonts();
@@ -734,6 +738,16 @@ impl ConfigPanel {
             .changed()
         {
             actions.push(ConfigAction::DebugPanelToggled(self.edit_debug_overlay));
+        }
+
+        ui.separator();
+
+        if ui
+            .checkbox(&mut self.edit_gpu_rendering, "GPU rendering")
+            .changed()
+        {
+            actions.push(ConfigAction::GpuRenderingChanged(self.edit_gpu_rendering));
+            self.has_changes = true;
         }
     }
 }

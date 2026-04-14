@@ -70,6 +70,9 @@ pub struct Config {
 
     #[serde(default = "default_opacity")]
     pub opacity: f32,
+
+    #[serde(default = "default_gpu_rendering")]
+    pub gpu_rendering: bool,
 }
 
 fn default_font_size() -> f32 {
@@ -167,6 +170,10 @@ fn default_opacity() -> f32 {
     1.0
 }
 
+fn default_gpu_rendering() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -184,6 +191,7 @@ impl Default for Config {
             restore_session: default_restore_session(),
             session_history_file: None,
             opacity: default_opacity(),
+            gpu_rendering: default_gpu_rendering(),
         }
     }
 }
