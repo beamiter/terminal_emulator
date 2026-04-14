@@ -1191,15 +1191,20 @@ impl TerminalRenderer {
                     if suppress_text_events {
                         continue;
                     }
-                    // When report_all_keys is active, character input is handled
-                    // by Key events via the Kitty keyboard protocol encoding.
-                    // Skip Text events to avoid sending each character twice.
-                    if report_all_keys {
-                        continue;
-                    }
                     // 不处理特殊按键对应的文本事件
                     if !text.is_empty() && text.as_bytes()[0] < 32 {
                         continue;
+                    }
+                    // When report_all_keys is active, letters and digits are handled
+                    // by Key events via the Kitty keyboard protocol encoding.
+                    // Only skip Text events for characters that kitty_text_key_code
+                    // can encode (a-z, 0-9), so special characters like !@#$% still
+                    // get through via Text events.
+                    if report_all_keys && text.len() == 1 {
+                        let ch = text.as_bytes()[0];
+                        if ch.is_ascii_alphanumeric() {
+                            continue;
+                        }
                     }
                     input.extend(text.as_bytes());
                 }
