@@ -42,6 +42,8 @@ pub struct GlyphAtlas {
     cache: HashMap<AtlasGlyphKey, GlyphRegion>,
     /// Whether the CPU bitmap has been modified since last GPU upload
     dirty: bool,
+    /// Set after reset() to force bind group rebuild
+    needs_rebind: bool,
     /// GPU resources
     pub texture: wgpu::Texture,
     pub view: wgpu::TextureView,
@@ -110,6 +112,7 @@ impl GlyphAtlas {
             shelf_height: 0,
             cache: HashMap::with_capacity(256),
             dirty: false,
+            needs_rebind: false,
             texture,
             view,
             sampler,
@@ -419,6 +422,14 @@ impl GlyphAtlas {
 
         self.prepopulate_ascii();
         self.ensure_uploaded(device, queue);
+        self.needs_rebind = true;
+    }
+
+    /// Returns and clears the needs_rebind flag (set after reset).
+    pub fn take_needs_rebind(&mut self) -> bool {
+        let v = self.needs_rebind;
+        self.needs_rebind = false;
+        v
     }
 
     pub fn atlas_width(&self) -> u32 {

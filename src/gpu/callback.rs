@@ -44,8 +44,8 @@ impl egui_wgpu::CallbackTrait for GridRenderCallback {
         res.atlas.ensure_uploaded(device, queue);
         let new_tex_size = (res.atlas.atlas_width(), res.atlas.atlas_height());
 
-        // Rebuild bind group if atlas texture was recreated (resized)
-        if old_tex_size != new_tex_size {
+        // Rebuild bind group if atlas texture was recreated (resized or reset)
+        if old_tex_size != new_tex_size || res.atlas.take_needs_rebind() {
             res.atlas_gen += 1;
             res.pipeline
                 .rebuild_bind_group(device, &res.atlas.view, &res.atlas.sampler);

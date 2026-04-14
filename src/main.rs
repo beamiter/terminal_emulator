@@ -1578,6 +1578,15 @@ impl TerminalApp {
                                 pane_renderer.char_width = new_font_size * 0.62;
                                 pane_renderer.line_height = new_font_size * pane_renderer.line_spacing;
                             }
+                            // Reset GPU glyph atlas with new font size
+                            if let Some(ref render_state) = self.renderer.wgpu_render_state {
+                                let ppp = ui.ctx().pixels_per_point();
+                                let font_size_px = new_font_size * ppp;
+                                let mut renderer = render_state.renderer.write();
+                                if let Some(gpu_res) = renderer.callback_resources.get_mut::<gpu::callback::GpuResources>() {
+                                    gpu_res.atlas.reset(&render_state.device, &render_state.queue, font_size_px);
+                                }
+                            }
                             // 同步到 config 并触发保存
                             self.config.font_size = new_font_size;
                             // 释放 session 引用，允许调用 &mut self 方法
