@@ -434,6 +434,8 @@ struct TerminalApp {
     _lock_file: Option<std::fs::File>,
     // 每帧字节限制溢出的缓冲区，下一帧继续处理
     pending_output: Vec<u8>,
+    // 滚轮像素累积器，累积到一行高度才滚动
+    scroll_accumulator: f32,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -823,6 +825,7 @@ impl TerminalApp {
             session_save_deadline: std::time::Instant::now() + std::time::Duration::from_secs(1),
             _lock_file: lock_file,
             pending_output: Vec::new(),
+            scroll_accumulator: 0.0,
         }
     }
 
@@ -1859,6 +1862,10 @@ impl TerminalApp {
                     self.config.scrollback_lines = lines;
                     self.schedule_config_save();
                 }
+                config_panel::ConfigAction::ScrollSpeedChanged(speed) => {
+                    self.config.scroll_speed = speed;
+                    self.schedule_config_save();
+                }
                 config_panel::ConfigAction::OpacityChanged(opacity) => {
                     self.config.opacity = opacity;
                     self.renderer.opacity = opacity;
@@ -2741,7 +2748,6 @@ impl eframe::App for TerminalApp {
         }
 
         let scroll_delta = ctx.input(|i| i.smooth_scroll_delta.y);
-        let shift_pressed = ctx.input(|i| i.modifiers.shift);
 
         // 检查是否启用鼠标报告
         let mouse_enabled = {
@@ -2753,23 +2759,15 @@ impl eframe::App for TerminalApp {
         // 1. 如果应用启用了鼠标报告（如 vim），滚轮会在下面的鼠标处理部分发送给应用
         // 2. 如果应用未启用鼠标，或在普通终端，滚轮用于查看历史
         if scroll_delta != 0.0 && !mouse_enabled {
-            let mut terminal = session.terminal.lock();
-            // 根据是否按住 Shift 键来决定滚动速度
-            let scroll_multiplier = if shift_pressed { 1.0 } else { 0.5 };
-
-            // 根据滚轮滚动方向和速度计算滚动行数
-            // scroll_delta > 0: 向上滚（显示更早的内容）
-            // scroll_delta < 0: 向下滚（显示更新的内容）
-            let scroll_lines = if scroll_delta > 0.0 {
-                // 向上滚轮，显示历史
-                let lines = (scroll_delta * scroll_multiplier).ceil() as isize;
-                lines.max(1)
-            } else {
-                // 向下滚轮，显示最新
-                let lines = (scroll_delta.abs() * scroll_multiplier).ceil() as isize;
-                -(lines.max(1))
-            };
-            terminal.scroll(scroll_lines);
+            self.scroll_accumulator += scroll_delta;
+            let line_h = self.renderer.line_height.max(1.0);
+            let lines = (self.scroll_accumulator / line_h) as isize;
+            if lines != 0 {
+                self.scroll_accumulator -= lines as f32 * line_h;
+                let scroll_lines = lines * self.config.scroll_speed as isize;
+                let mut terminal = session.terminal.lock();
+                terminal.scroll(scroll_lines);
+            }
         }
 
         // Step 11: 鼠标处理（包括滚轮）
@@ -2807,8 +2805,7 @@ impl eframe::App for TerminalApp {
                         // 滚轮按钮号：64 = 向上滚，65 = 向下滚
                         let button = if scroll_delta_for_mouse > 0.0 { 64 } else { 65 };
 
-                        // 发送多个滚轮事件，基于滚动距离
-                        let scroll_count = (scroll_delta_for_mouse.abs().ceil() as usize).max(1);
+                        let scroll_count = self.config.scroll_speed as usize;
                         for _ in 0..scroll_count {
                             if let Some(report) = terminal.get_mouse_report(button, col, row) {
                                 reports.push(report);

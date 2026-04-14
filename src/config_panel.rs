@@ -18,6 +18,7 @@ pub enum ConfigAction {
     CustomThemeApplied(Box<Theme>),
     PaddingChanged(f32),
     ScrollbackLinesChanged(usize),
+    ScrollSpeedChanged(u32),
     DebugPanelToggled(bool),
     OpacityChanged(f32),
     GpuRenderingChanged(bool),
@@ -33,6 +34,7 @@ pub struct ConfigPanel {
     edit_line_spacing: f32,
     edit_padding: f32,
     edit_scrollback_lines: usize,
+    edit_scroll_speed: u32,
     edit_font_family: String,
     edit_theme: String,
     edit_restore_session: bool,
@@ -66,6 +68,7 @@ impl ConfigPanel {
             edit_line_spacing: 1.3,
             edit_padding: 2.0,
             edit_scrollback_lines: 10000,
+            edit_scroll_speed: 3,
             edit_font_family: String::new(),
             edit_theme: "dark".to_string(),
             edit_restore_session: false,
@@ -106,6 +109,7 @@ impl ConfigPanel {
         self.edit_line_spacing = config.line_spacing;
         self.edit_padding = config.padding;
         self.edit_scrollback_lines = config.scrollback_lines;
+        self.edit_scroll_speed = config.scroll_speed;
         self.edit_font_family = config.font_family.clone();
         self.edit_theme = config.theme.clone();
         self.edit_restore_session = config.restore_session;
@@ -718,6 +722,20 @@ impl ConfigPanel {
                 .changed()
             {
                 actions.push(ConfigAction::ScrollbackLinesChanged(self.edit_scrollback_lines));
+                self.has_changes = true;
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Scroll Speed:");
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.edit_scroll_speed, 1..=10)
+                        .show_value(true),
+                )
+                .changed()
+            {
+                actions.push(ConfigAction::ScrollSpeedChanged(self.edit_scroll_speed));
                 self.has_changes = true;
             }
         });

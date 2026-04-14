@@ -73,6 +73,9 @@ pub struct Config {
 
     #[serde(default = "default_gpu_rendering")]
     pub gpu_rendering: bool,
+
+    #[serde(default = "default_scroll_speed")]
+    pub scroll_speed: u32,
 }
 
 fn default_font_size() -> f32 {
@@ -174,6 +177,10 @@ fn default_gpu_rendering() -> bool {
     true
 }
 
+fn default_scroll_speed() -> u32 {
+    3
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -192,6 +199,7 @@ impl Default for Config {
             session_history_file: None,
             opacity: default_opacity(),
             gpu_rendering: default_gpu_rendering(),
+            scroll_speed: default_scroll_speed(),
         }
     }
 }
@@ -268,6 +276,10 @@ impl Config {
 
     pub fn clamp_opacity(opacity: f32) -> f32 {
         opacity.clamp(0.05, 1.0)
+    }
+
+    pub fn clamp_scroll_speed(speed: u32) -> u32 {
+        speed.clamp(1, 10)
     }
 
     pub fn get_monospace_fonts() -> Vec<String> {
