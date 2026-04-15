@@ -10,14 +10,38 @@ enum CharClass {
     Symbol,
 }
 
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn is_whitespace_char(c: char) -> bool {
+    c == ' ' || c == '\t' || c == '\0'
+}
+
 fn char_class(c: char) -> CharClass {
-    if c.is_alphanumeric() || c == '_' {
+    if is_word_char(c) {
         CharClass::Word
-    } else if c == ' ' || c == '\t' || c == '\0' {
+    } else if is_whitespace_char(c) {
         CharClass::Whitespace
     } else {
         CharClass::Symbol
     }
+}
+
+fn is_extended_token_separator(c: char) -> bool {
+    matches!(c, '/' | '\\' | '.' | ':' | '-' | '~' | '?' | '&' | '=' | '#' | '%' | '+' | '@')
+}
+
+fn is_extended_token_char(c: char) -> bool {
+    is_word_char(c) || is_extended_token_separator(c)
+}
+
+fn is_token_prefix_wrapper(c: char) -> bool {
+    matches!(c, '"' | '\'' | '`' | '(' | '[' | '{' | '<')
+}
+
+fn is_token_suffix_wrapper(c: char) -> bool {
+    matches!(c, '"' | '\'' | '`' | ')' | ']' | '}' | '>' | ',' | ';' | '!')
 }
 
 const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
@@ -2069,6 +2093,15 @@ impl TerminalState {
             start_col -= 1;
         }
 
+        if let Some((left, right)) = Self::select_extended_token_span(line, start_col) {
+            let abs_row = self.viewport_row_to_absolute(row);
+            self.selection = Some(Selection {
+                anchor: (abs_row, left),
+                active: (abs_row, right),
+            });
+            return;
+        }
+
         let ch = line[start_col].character;
         let class = char_class(ch);
 
@@ -2120,6 +2153,83 @@ impl TerminalState {
             anchor: (abs_row, left),
             active: (abs_row, right),
         });
+    }
+
+    fn select_extended_token_span(line: &[TerminalCell], start_col: usize) -> Option<(usize, usize)> {
+        let cols = line.len();
+        if start_col >= cols {
+            return None;
+        }
+
+        let start_char = line[start_col].character;
+        if !is_extended_token_char(start_char) {
+            return None;
+        }
+
+        let mut left = start_col;
+        while left > 0 {
+            let prev = left - 1;
+            if line[prev].wide_continuation {
+                left = prev;
+                continue;
+            }
+            if !is_extended_token_char(line[prev].character) {
+                break;
+            }
+            left = prev;
+        }
+
+        let mut right = start_col;
+        loop {
+            let next = if line[right].wide { right + 2 } else { right + 1 };
+            if next >= cols {
+                break;
+            }
+            if line[next].wide_continuation {
+                if next + 1 < cols && is_extended_token_char(line[next + 1].character) {
+                    right = next + 1;
+                    continue;
+                }
+                break;
+            }
+            if !is_extended_token_char(line[next].character) {
+                break;
+            }
+            right = next;
+        }
+
+        while left < start_col && is_token_prefix_wrapper(line[left].character) {
+            left += 1;
+        }
+
+        while right > start_col && is_token_suffix_wrapper(line[right].character) {
+            right -= if line[right].wide_continuation && right > 0 { 2 } else { 1 };
+        }
+
+        if left > right || start_col < left || start_col > right {
+            return None;
+        }
+
+        let mut has_alnum = false;
+        let mut has_separator = false;
+        for cell in &line[left..=right] {
+            if cell.wide_continuation {
+                continue;
+            }
+            let ch = cell.character;
+            has_alnum |= ch.is_alphanumeric();
+            has_separator |= is_extended_token_separator(ch);
+        }
+
+        if !has_alnum || !has_separator {
+            return None;
+        }
+
+        if line[right].wide && right + 1 < cols {
+            right += 1;
+        }
+
+        Some((left, right))
     }
 
     pub fn copy_selection(&self) -> Option<String> {
@@ -2472,6 +2582,42 @@ mod tests {
         assert_eq!(
             String::from_utf8(terminal.get_output()).unwrap(),
             "\x1bP>|VTE(7802)\x1b\\"
+        );
+    }
+
+    #[test]
+    fn double_click_selects_full_url() {
+        let mut terminal = TerminalState::new(64, 2);
+
+        terminal.process_input(b"see https://example.com/path?a=1&b=2 now");
+        terminal.select_word_at(0, 12);
+
+        assert_eq!(
+            terminal.copy_selection().as_deref(),
+            Some("https://example.com/path?a=1&b=2")
+        );
+    }
+
+    #[test]
+    fn double_click_selects_file_path_with_line_number() {
+        let mut terminal = TerminalState::new(64, 2);
+
+        terminal.process_input(b"open src/main.rs:1480 please");
+        terminal.select_word_at(0, 8);
+
+        assert_eq!(terminal.copy_selection().as_deref(), Some("src/main.rs:1480"));
+    }
+
+    #[test]
+    fn double_click_excludes_wrapping_punctuation() {
+        let mut terminal = TerminalState::new(64, 2);
+
+        terminal.process_input(b"(https://example.com/path), next");
+        terminal.select_word_at(0, 10);
+
+        assert_eq!(
+            terminal.copy_selection().as_deref(),
+            Some("https://example.com/path")
         );
     }
 
