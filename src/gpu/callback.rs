@@ -70,7 +70,7 @@ impl egui_wgpu::CallbackTrait for GridRenderCallback {
         }
         let res = callback_resources.get::<GpuResources>().unwrap();
         render_pass.set_pipeline(res.pipeline.pipeline());
-        render_pass.set_bind_group(0, res.pipeline.bind_group(), &[]);
+        render_pass.set_bind_group(0, res.pipeline.bind_group_for_phase(self.uniforms.render_phase), &[]);
         render_pass.set_vertex_buffer(0, res.pipeline.instance_buffer().slice(..));
         render_pass.draw(0..6, 0..self.instance_count);
     }

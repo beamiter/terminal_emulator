@@ -5,10 +5,12 @@ use wgpu::util::DeviceExt;
 pub struct GridPipeline {
     pipeline: wgpu::RenderPipeline,
     bind_group_layout: wgpu::BindGroupLayout,
-    uniform_buffer: wgpu::Buffer,
+    background_uniform_buffer: wgpu::Buffer,
+    foreground_uniform_buffer: wgpu::Buffer,
     instance_buffer: wgpu::Buffer,
     instance_capacity: usize,
-    pub bind_group: wgpu::BindGroup,
+    pub background_bind_group: wgpu::BindGroup,
+    pub foreground_bind_group: wgpu::BindGroup,
 }
 
 impl GridPipeline {
@@ -94,8 +96,14 @@ impl GridPipeline {
             cache: None,
         });
 
-        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grid_uniforms"),
+        let background_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grid_background_uniforms"),
+            contents: bytemuck::bytes_of(&GridUniforms::zeroed()),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let foreground_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("grid_foreground_uniforms"),
             contents: bytemuck::bytes_of(&GridUniforms::zeroed()),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         });
@@ -109,10 +117,18 @@ impl GridPipeline {
             mapped_at_creation: false,
         });
 
-        let bind_group = Self::create_bind_group(
+        let background_bind_group = Self::create_bind_group(
             device,
             &bind_group_layout,
-            &uniform_buffer,
+            &background_uniform_buffer,
+            atlas_view,
+            atlas_sampler,
+        );
+
+        let foreground_bind_group = Self::create_bind_group(
+            device,
+            &bind_group_layout,
+            &foreground_uniform_buffer,
             atlas_view,
             atlas_sampler,
         );
@@ -120,10 +136,12 @@ impl GridPipeline {
         GridPipeline {
             pipeline,
             bind_group_layout,
-            uniform_buffer,
+            background_uniform_buffer,
+            foreground_uniform_buffer,
             instance_buffer,
             instance_capacity: initial_capacity,
-            bind_group,
+            background_bind_group,
+            foreground_bind_group,
         }
     }
 
@@ -161,10 +179,17 @@ impl GridPipeline {
         atlas_view: &wgpu::TextureView,
         atlas_sampler: &wgpu::Sampler,
     ) {
-        self.bind_group = Self::create_bind_group(
+        self.background_bind_group = Self::create_bind_group(
             device,
             &self.bind_group_layout,
-            &self.uniform_buffer,
+            &self.background_uniform_buffer,
+            atlas_view,
+            atlas_sampler,
+        );
+        self.foreground_bind_group = Self::create_bind_group(
+            device,
+            &self.bind_group_layout,
+            &self.foreground_uniform_buffer,
             atlas_view,
             atlas_sampler,
         );
@@ -172,7 +197,13 @@ impl GridPipeline {
 
     /// Upload uniform data.
     pub fn update_uniforms(&self, queue: &wgpu::Queue, uniforms: &GridUniforms) {
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(uniforms));
+        let uniform_buffer = if uniforms.render_phase < 0.5 {
+            &self.background_uniform_buffer
+        } else {
+            &self.foreground_uniform_buffer
+        };
+
+        queue.write_buffer(uniform_buffer, 0, bytemuck::bytes_of(uniforms));
     }
 
     /// Upload instance data, resizing the buffer if needed.
@@ -204,8 +235,12 @@ impl GridPipeline {
         &self.pipeline
     }
 
-    pub fn bind_group(&self) -> &wgpu::BindGroup {
-        &self.bind_group
+    pub fn bind_group_for_phase(&self, render_phase: f32) -> &wgpu::BindGroup {
+        if render_phase < 0.5 {
+            &self.background_bind_group
+        } else {
+            &self.foreground_bind_group
+        }
     }
 
     pub fn instance_buffer(&self) -> &wgpu::Buffer {
