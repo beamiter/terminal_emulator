@@ -1888,6 +1888,16 @@ impl TerminalState {
         self.max_scrollback
     }
 
+    pub fn set_max_scrollback(&mut self, max_scrollback: usize) {
+        self.max_scrollback = max_scrollback.max(1);
+
+        while self.scrollback.len() > self.max_scrollback {
+            self.scrollback.pop_front();
+        }
+
+        self.scroll_offset = self.scroll_offset.min(self.scrollback.len());
+    }
+
     pub fn is_cursor_visible(&self) -> bool {
         // Cursor is visible when mode 25 is SET (via \x1b[?25h)
         // Hidden when mode 25 is RESET (via \x1b[?25l)

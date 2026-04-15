@@ -19,6 +19,7 @@ pub enum ConfigAction {
     PaddingChanged(f32),
     ScrollbackLinesChanged(usize),
     ScrollSpeedChanged(u32),
+    RestoreSessionChanged(bool),
     DebugPanelToggled(bool),
     OpacityChanged(f32),
     GpuRenderingChanged(bool),
@@ -104,17 +105,7 @@ impl ConfigPanel {
 
     pub fn open(&mut self, config: &Config) {
         self.is_open = true;
-        self.has_changes = false;
-        self.edit_font_size = config.font_size;
-        self.edit_line_spacing = config.line_spacing;
-        self.edit_padding = config.padding;
-        self.edit_scrollback_lines = config.scrollback_lines;
-        self.edit_scroll_speed = config.scroll_speed;
-        self.edit_font_family = config.font_family.clone();
-        self.edit_theme = config.theme.clone();
-        self.edit_restore_session = config.restore_session;
-        self.edit_opacity = config.opacity;
-        self.edit_gpu_rendering = config.gpu_rendering;
+        self.sync_from_config(config);
 
         if !self.fonts_loaded {
             self.monospace_fonts = Config::get_monospace_fonts();
@@ -131,6 +122,20 @@ impl ConfigPanel {
         }
         self.font_filter.clear();
         self.refresh_theme_list();
+    }
+
+    pub fn sync_from_config(&mut self, config: &Config) {
+        self.has_changes = false;
+        self.edit_font_size = config.font_size;
+        self.edit_line_spacing = config.line_spacing;
+        self.edit_padding = config.padding;
+        self.edit_scrollback_lines = config.scrollback_lines;
+        self.edit_scroll_speed = config.scroll_speed;
+        self.edit_font_family = config.font_family.clone();
+        self.edit_theme = config.theme.clone();
+        self.edit_restore_session = config.restore_session;
+        self.edit_opacity = config.opacity;
+        self.edit_gpu_rendering = config.gpu_rendering;
     }
 
     pub fn close(&mut self) {
@@ -746,6 +751,7 @@ impl ConfigPanel {
             .checkbox(&mut self.edit_restore_session, "Restore sessions on startup")
             .changed()
         {
+            actions.push(ConfigAction::RestoreSessionChanged(self.edit_restore_session));
             self.has_changes = true;
         }
 

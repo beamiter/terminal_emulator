@@ -252,6 +252,136 @@ fn kitty_graphics_payload(mime_type: &str, data: &[u8]) -> Vec<u8> {
     output
 }
 
+fn configure_fonts_and_gpu(
+    ctx: &egui::Context,
+    wgpu_render_state: Option<&egui_wgpu::RenderState>,
+    cfg: &config::Config,
+) {
+    let mut fonts = egui::FontDefinitions::default();
+    let mut loaded_font_paths = HashMap::new();
+
+    let configured_mono_family = cfg.get_font_family();
+    let mono_loaded = load_first_matching_font(
+        &mut fonts,
+        &mut loaded_font_paths,
+        &[
+            configured_mono_family,
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "Noto Sans Mono",
+            "Noto Mono",
+        ],
+        &[
+            "/usr/share/fonts/opentype/noto/NotoMono-Regular.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/opentype/dejavu/DejaVuSansMono.otf",
+            "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+            "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Regular.ttf",
+        ],
+        "monospace_unicode",
+        &[egui::FontFamily::Monospace],
+        true,
+    );
+
+    if !mono_loaded {
+        eprintln!(
+            "[Fonts] Warning: no monospace font file could be loaded for {}",
+            configured_mono_family
+        );
+    }
+
+    let cjk_loaded = load_first_matching_font(
+        &mut fonts,
+        &mut loaded_font_paths,
+        &[
+            "Noto Sans CJK SC",
+            "Noto Sans CJK",
+            "Source Han Sans SC",
+            "WenQuanYi Zen Hei",
+            "AR PL UMing CN",
+        ],
+        &[
+            "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+            "/usr/share/fonts/wenquanyi/wqy-zenhei.ttc",
+        ],
+        "cjk",
+        &[egui::FontFamily::Monospace, egui::FontFamily::Proportional],
+        false,
+    );
+
+    if !cjk_loaded {
+        eprintln!("[Fonts] Warning: no CJK fallback font file could be loaded");
+    }
+
+    let mono_font_data: Option<Vec<u8>> = fonts
+        .font_data
+        .get("monospace_unicode")
+        .map(|fd| fd.font.to_vec());
+    let fallback_font_data: Vec<Vec<u8>> = fonts
+        .font_data
+        .get("cjk")
+        .map(|fd| vec![fd.font.to_vec()])
+        .unwrap_or_default();
+
+    ctx.set_fonts(fonts);
+
+    if let (Some(render_state), Some(font_bytes)) = (wgpu_render_state, mono_font_data) {
+        let font_size_px = cfg.font_size * ctx.pixels_per_point();
+        let atlas = gpu::atlas::GlyphAtlas::new(
+            &render_state.device,
+            &render_state.queue,
+            &font_bytes,
+            None,
+            &fallback_font_data,
+            font_size_px,
+        );
+        let pipeline = gpu::pipeline::GridPipeline::new(
+            &render_state.device,
+            render_state.target_format,
+            &atlas.view,
+            &atlas.sampler,
+        );
+
+        let mut renderer = render_state.renderer.write();
+        if let Some(gpu_res) = renderer.callback_resources.get_mut::<gpu::callback::GpuResources>() {
+            gpu_res.atlas = atlas;
+            gpu_res.pipeline = pipeline;
+        } else {
+            let gpu_resources = gpu::callback::GpuResources::new(atlas, pipeline);
+            renderer.callback_resources.insert(gpu_resources);
+        }
+
+        eprintln!("[GPU] Configured GPU terminal renderer (font_size_px={:.1})", font_size_px);
+    } else {
+        eprintln!("[GPU] Warning: wgpu render state or font data not available, falling back to CPU rendering");
+    }
+}
+
+fn apply_theme_visuals(ctx: &egui::Context, theme: &theme::Theme) {
+    let ui = &theme.ui;
+    let brightness = u16::from(ui.window_bg[0]) + u16::from(ui.window_bg[1]) + u16::from(ui.window_bg[2]);
+    let mut visuals = if brightness > 382 {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
+
+    visuals.window_fill = theme::Theme::rgb_to_color32(ui.window_bg);
+    visuals.panel_fill = theme::Theme::rgb_to_color32(ui.panel_bg);
+    visuals.extreme_bg_color = theme::Theme::rgb_to_color32(ui.panel_bg);
+    visuals.override_text_color = Some(theme::Theme::rgb_to_color32(ui.text));
+    visuals.widgets.noninteractive.bg_stroke.color = theme::Theme::rgb_to_color32(ui.border);
+    visuals.widgets.inactive.bg_stroke.color = theme::Theme::rgb_to_color32(ui.border);
+    visuals.widgets.active.bg_stroke.color = theme::Theme::rgb_to_color32(ui.border);
+    visuals.widgets.hovered.bg_stroke.color = theme::Theme::rgb_to_color32(ui.border);
+
+    ctx.set_visuals(visuals);
+}
+
 fn main() -> Result<(), eframe::Error> {
     // Load configuration
     let cfg = config::Config::load();
@@ -271,109 +401,9 @@ fn main() -> Result<(), eframe::Error> {
         options,
         Box::new(move |cc| {
             let cfg_clone = cfg.clone();
-            let mut fonts = egui::FontDefinitions::default();
-            let mut loaded_font_paths = HashMap::new();
-
-            let configured_mono_family = cfg_clone.get_font_family();
-            let mono_loaded = load_first_matching_font(
-                &mut fonts,
-                &mut loaded_font_paths,
-                &[
-                    configured_mono_family,
-                    "DejaVu Sans Mono",
-                    "Liberation Mono",
-                    "Noto Sans Mono",
-                    "Noto Mono",
-                ],
-                &[
-                    "/usr/share/fonts/opentype/noto/NotoMono-Regular.ttf",
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-                    "/usr/share/fonts/opentype/dejavu/DejaVuSansMono.otf",
-                    "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
-                    "/usr/share/fonts/liberation-mono-fonts/LiberationMono-Regular.ttf",
-                ],
-                "monospace_unicode",
-                &[egui::FontFamily::Monospace],
-                true,
-            );
-
-            if !mono_loaded {
-                eprintln!(
-                    "[Fonts] Warning: no monospace font file could be loaded for {}",
-                    configured_mono_family
-                );
-            }
-
-            let cjk_loaded = load_first_matching_font(
-                &mut fonts,
-                &mut loaded_font_paths,
-                &[
-                    "Noto Sans CJK SC",
-                    "Noto Sans CJK",
-                    "Source Han Sans SC",
-                    "WenQuanYi Zen Hei",
-                    "AR PL UMing CN",
-                ],
-                &[
-                    "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
-                    "/usr/share/fonts/google-noto-sans-cjk-vf-fonts/NotoSansCJK-VF.ttc",
-                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
-                    "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
-                    "/usr/share/fonts/wenquanyi/wqy-zenhei.ttc",
-                ],
-                "cjk",
-                &[egui::FontFamily::Monospace, egui::FontFamily::Proportional],
-                false,
-            );
-
-            if !cjk_loaded {
-                eprintln!("[Fonts] Warning: no CJK fallback font file could be loaded");
-            }
-
-            // Extract font bytes for GPU glyph atlas before giving fonts to egui
-            let mono_font_data: Option<Vec<u8>> = fonts
-                .font_data
-                .get("monospace_unicode")
-                .map(|fd| fd.font.to_vec());
-            let fallback_font_data: Vec<Vec<u8>> = fonts
-                .font_data
-                .get("cjk")
-                .map(|fd| vec![fd.font.to_vec()])
-                .unwrap_or_default();
-
-            cc.egui_ctx.set_fonts(fonts);
-
-            // 设置暗色主题，避免浮夸的亮色背景
-            let mut visuals = egui::Visuals::dark();
-            visuals.window_fill = egui::Color32::from_rgb(29, 29, 29);
-            visuals.panel_fill = egui::Color32::from_rgb(29, 29, 29);
-            visuals.extreme_bg_color = egui::Color32::from_rgb(20, 20, 20);
-            cc.egui_ctx.set_visuals(visuals);
-
-            // Initialize GPU resources for terminal grid rendering
-            if let (Some(render_state), Some(font_bytes)) = (&cc.wgpu_render_state, mono_font_data) {
-                let font_size_px = cfg_clone.font_size * cc.egui_ctx.pixels_per_point();
-                let atlas = gpu::atlas::GlyphAtlas::new(
-                    &render_state.device,
-                    &render_state.queue,
-                    &font_bytes,
-                    None, // no separate bold font for now
-                    &fallback_font_data,
-                    font_size_px,
-                );
-                let pipeline = gpu::pipeline::GridPipeline::new(
-                    &render_state.device,
-                    render_state.target_format,
-                    &atlas.view,
-                    &atlas.sampler,
-                );
-                let gpu_resources = gpu::callback::GpuResources::new(atlas, pipeline);
-                render_state.renderer.write().callback_resources.insert(gpu_resources);
-                eprintln!("[GPU] Initialized GPU terminal renderer (font_size_px={:.1})", font_size_px);
-            } else {
-                eprintln!("[GPU] Warning: wgpu render state or font data not available, falling back to CPU rendering");
-            }
+            configure_fonts_and_gpu(&cc.egui_ctx, cc.wgpu_render_state.as_ref(), &cfg_clone);
+            let initial_theme = theme::Theme::get_theme(&cfg_clone.theme).unwrap_or_default();
+            apply_theme_visuals(&cc.egui_ctx, &initial_theme);
 
             Ok(Box::new(TerminalApp::new(&cfg_clone, cc.egui_ctx.clone(), cc.wgpu_render_state.clone())))
         }),
@@ -750,6 +780,11 @@ impl TerminalApp {
             eprintln!("[SessionPersistence] Restored {} sessions", session_manager.len());
         }
 
+        for session in session_manager.sessions_mut() {
+            let mut terminal = session.terminal.lock();
+            terminal.set_max_scrollback(cfg.scrollback_lines);
+        }
+
         let clipboard = ClipboardManager::new().ok();
 
         let keybindings = keybindings::KeyBindings::load().unwrap_or_default();
@@ -827,6 +862,38 @@ impl TerminalApp {
             pending_output: Vec::new(),
             scroll_accumulator: 0.0,
         }
+    }
+
+    fn apply_runtime_config(&mut self, ctx: &egui::Context) {
+        configure_fonts_and_gpu(ctx, self.renderer.wgpu_render_state.as_ref(), &self.config);
+        apply_theme_visuals(ctx, &self.current_theme);
+
+        self.renderer.font_size = self.config.font_size;
+        self.renderer.padding = self.config.padding;
+        self.renderer.line_spacing = self.config.line_spacing;
+        self.renderer.scrollbar_visibility = self.config.scrollbar_visibility.clone();
+        self.renderer.theme = self.current_theme.clone();
+        self.renderer.opacity = self.config.opacity;
+        self.renderer.gpu_rendering = self.config.gpu_rendering;
+        self.renderer.sync_font_metrics(ctx);
+
+        for renderer in &mut self.pane_renderers {
+            renderer.font_size = self.config.font_size;
+            renderer.padding = self.config.padding;
+            renderer.line_spacing = self.config.line_spacing;
+            renderer.scrollbar_visibility = self.config.scrollbar_visibility.clone();
+            renderer.theme = self.current_theme.clone();
+            renderer.opacity = self.config.opacity;
+            renderer.gpu_rendering = self.config.gpu_rendering;
+            renderer.sync_font_metrics(ctx);
+        }
+
+        for session in self.session_manager.sessions_mut() {
+            let mut terminal = session.terminal.lock();
+            terminal.set_max_scrollback(self.config.scrollback_lines);
+        }
+
+        ctx.request_repaint();
     }
 
     #[allow(deprecated)]
@@ -1828,60 +1895,57 @@ impl TerminalApp {
             match action {
                 config_panel::ConfigAction::FontSizeChanged(size) => {
                     self.config.font_size = size;
+                    self.apply_runtime_config(ctx);
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::LineSpacingChanged(spacing) => {
                     self.config.line_spacing = spacing;
+                    self.apply_runtime_config(ctx);
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::FontFamilyChanged(family) => {
                     self.config.font_family = family;
+                    self.apply_runtime_config(ctx);
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::ThemeChanged(theme_name) => {
                     self.config.theme = theme_name.clone();
                     if let Some(t) = theme::Theme::get_theme(&theme_name) {
                         self.current_theme = t.clone();
-                        self.renderer.theme = t.clone();
-                        for r in &mut self.pane_renderers {
-                            r.theme = t.clone();
-                        }
+                        self.apply_runtime_config(ctx);
                     }
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::CustomThemeApplied(theme) => {
                     self.current_theme = *theme.clone();
-                    self.renderer.theme = *theme.clone();
-                    for r in &mut self.pane_renderers {
-                        r.theme = *theme.clone();
-                    }
+                    self.apply_runtime_config(ctx);
                 }
                 config_panel::ConfigAction::PaddingChanged(padding) => {
                     self.config.padding = padding;
+                    self.apply_runtime_config(ctx);
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::ScrollbackLinesChanged(lines) => {
                     self.config.scrollback_lines = lines;
+                    self.apply_runtime_config(ctx);
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::ScrollSpeedChanged(speed) => {
                     self.config.scroll_speed = speed;
                     self.schedule_config_save();
                 }
+                config_panel::ConfigAction::RestoreSessionChanged(enabled) => {
+                    self.config.restore_session = enabled;
+                    self.schedule_config_save();
+                }
                 config_panel::ConfigAction::OpacityChanged(opacity) => {
                     self.config.opacity = opacity;
-                    self.renderer.opacity = opacity;
-                    for pr in &mut self.pane_renderers {
-                        pr.opacity = opacity;
-                    }
+                    self.apply_runtime_config(ctx);
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::GpuRenderingChanged(enabled) => {
                     self.config.gpu_rendering = enabled;
-                    self.renderer.gpu_rendering = enabled;
-                    for pr in &mut self.pane_renderers {
-                        pr.gpu_rendering = enabled;
-                    }
+                    self.apply_runtime_config(ctx);
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::SaveRequested => {
@@ -1889,6 +1953,10 @@ impl TerminalApp {
                 }
                 config_panel::ConfigAction::ResetToDefaults => {
                     self.config = config::Config::default();
+                    self.current_theme = theme::Theme::get_theme(&self.config.theme).unwrap_or_default();
+                    self.apply_runtime_config(ctx);
+                    self.config_panel.sync_from_config(&self.config);
+                    self.config_panel.edit_debug_overlay = self.debug_panel.is_open;
                     self.schedule_config_save();
                 }
                 config_panel::ConfigAction::DebugPanelToggled(open) => {

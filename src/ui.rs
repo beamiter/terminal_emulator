@@ -287,7 +287,7 @@ impl TerminalRenderer {
                     let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
                     // Convert from physical pixels back to logical points
                     let cw = advance / ppp;
-                    let ch = (ascent - descent) / ppp; // descent is negative
+                    let ch = ((ascent - descent) / ppp) * self.line_spacing.max(0.5); // descent is negative
                     if cw.is_finite() && cw > 0.0 {
                         self.char_width = cw;
                     }
@@ -310,6 +310,8 @@ impl TerminalRenderer {
         if char_width.is_finite() && char_width > 0.0 {
             self.char_width = char_width;
         }
+
+        let line_height = line_height * self.line_spacing.max(0.5);
 
         if line_height.is_finite() && line_height > 0.0 {
             self.line_height = line_height;
