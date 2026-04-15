@@ -5,7 +5,7 @@ struct Uniforms {
     cell_height: f32,
     atlas_width: f32,
     atlas_height: f32,
-    _pad0: f32,
+    render_phase: f32,
     _pad1: f32,
 };
 
@@ -20,8 +20,9 @@ struct VertexOutput {
     @location(2) fg_color: vec4<f32>,
     @location(3) bg_color: vec4<f32>,
     @location(4) @interpolate(flat) flags: u32,
-    @location(5) local_pos: vec2<f32>,
+    @location(5) cell_local_pos: vec2<f32>,
     @location(6) @interpolate(flat) glyph_offset: vec2<f32>,
+    @location(7) cell_px_pos: vec2<f32>,
 };
 
 @vertex
@@ -49,9 +50,25 @@ fn vs_main(
         cell_w = u.cell_width * 2.0;
     }
 
+    let has_glyph = (flags & 1u) != 0u;
+    let glyph_size = (glyph_uv1 - glyph_uv0) * vec2<f32>(u.atlas_width, u.atlas_height);
+    let foreground_pass = u.render_phase >= 0.5;
+
+    var quad_min = vec2<f32>(0.0, 0.0);
+    var quad_max = vec2<f32>(cell_w, u.cell_height);
+    if foreground_pass && has_glyph {
+        quad_min = min(quad_min, glyph_offset);
+        quad_max = max(quad_max, glyph_offset + glyph_size);
+    }
+
+    let px_in_cell = vec2<f32>(
+        mix(quad_min.x, quad_max.x, qx),
+        mix(quad_min.y, quad_max.y, qy),
+    );
+
     // Cell position in physical pixels relative to viewport origin
-    let px = f32(col_row.x) * u.cell_width + qx * cell_w;
-    let py = f32(col_row.y) * u.cell_height + qy * u.cell_height;
+    let px = f32(col_row.x) * u.cell_width + px_in_cell.x;
+    let py = f32(col_row.y) * u.cell_height + px_in_cell.y;
 
     // Convert to NDC (viewport is set to content_rect by egui-wgpu)
     let ndc_x = (px / u.viewport_width) * 2.0 - 1.0;
@@ -64,8 +81,9 @@ fn vs_main(
     out.fg_color = fg_color;
     out.bg_color = bg_color;
     out.flags = flags;
-    out.local_pos = vec2<f32>(qx, qy);
+    out.cell_local_pos = px_in_cell / vec2<f32>(cell_w, u.cell_height);
     out.glyph_offset = glyph_offset;
+    out.cell_px_pos = px_in_cell;
 
     return out;
 }
@@ -75,6 +93,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let has_glyph = (in.flags & 1u) != 0u;
     let has_underline = (in.flags & 4u) != 0u;
     let has_strikethrough = (in.flags & 8u) != 0u;
+    let background_pass = u.render_phase < 0.5;
 
     let is_wide = (in.flags & 2u) != 0u;
     var cell_w = u.cell_width;
@@ -82,20 +101,20 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         cell_w = u.cell_width * 2.0;
     }
 
-    // Start with background
-    var color = in.bg_color;
+    // Background pass draws only cell fills. Foreground pass starts transparent.
+    var color = select(vec4<f32>(0.0, 0.0, 0.0, 0.0), in.bg_color, background_pass);
+
+    if background_pass {
+        return color;
+    }
 
     // Composite glyph foreground using atlas alpha
     if has_glyph {
-        // local_pos is in [0, 1] across the cell quad
-        // Convert to physical pixel position within the cell
-        let px_in_cell = in.local_pos * vec2<f32>(cell_w, u.cell_height);
-
         // Glyph size in physical pixels (derived from atlas UV extent)
         let glyph_size = (in.glyph_uv1 - in.glyph_uv0) * vec2<f32>(u.atlas_width, u.atlas_height);
 
         // Compute atlas UV from pixel position relative to glyph origin
-        let rel = px_in_cell - in.glyph_offset;
+        let rel = in.cell_px_pos - in.glyph_offset;
         let t = clamp(rel / max(glyph_size, vec2<f32>(1.0, 1.0)), vec2<f32>(0.0), vec2<f32>(1.0));
         let uv = in.glyph_uv0 + t * (in.glyph_uv1 - in.glyph_uv0);
         let alpha = textureSample(atlas_texture, atlas_sampler, uv).r;
@@ -107,16 +126,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Underline: 1-2px line at bottom of cell
-    if has_underline {
-        let bottom_band = 1.0 - in.local_pos.y;
+    let within_cell = in.cell_local_pos.x >= 0.0 && in.cell_local_pos.x <= 1.0
+        && in.cell_local_pos.y >= 0.0 && in.cell_local_pos.y <= 1.0;
+
+    if has_underline && within_cell {
+        let bottom_band = 1.0 - in.cell_local_pos.y;
         if bottom_band < 0.08 {
             color = vec4<f32>(in.fg_color.rgb, 1.0);
         }
     }
 
     // Strikethrough: 1-2px line at middle of cell
-    if has_strikethrough {
-        let mid = abs(in.local_pos.y - 0.5);
+    if has_strikethrough && within_cell {
+        let mid = abs(in.cell_local_pos.y - 0.5);
         if mid < 0.04 {
             color = vec4<f32>(in.fg_color.rgb, 1.0);
         }

@@ -108,6 +108,7 @@ pub struct GridUniforms {
     pub atlas_width: f32,
     /// Atlas texture height in pixels
     pub atlas_height: f32,
-    pub _pad0: f32,
+    /// 0.0 = background pass, 1.0 = foreground pass
+    pub render_phase: f32,
     pub _pad1: f32,
 }

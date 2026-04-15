@@ -1029,25 +1029,36 @@ impl TerminalRenderer {
 
         let instance_count = instances.len() as u32;
         // Viewport is set to content_rect by egui-wgpu, so use its dimensions
-        let uniforms = gpu::instance::GridUniforms {
+        let background_uniforms = gpu::instance::GridUniforms {
             viewport_width: content_rect.width() * ppp,
             viewport_height: content_rect.height() * ppp,
             cell_width: target_cell_width,
             cell_height: target_cell_height,
             atlas_width: atlas_w,
             atlas_height: atlas_h,
-            _pad0: 0.0,
+            render_phase: 0.0,
             _pad1: 0.0,
         };
 
-        let callback = gpu::callback::GridRenderCallback {
-            instances,
-            uniforms,
+        let foreground_uniforms = gpu::instance::GridUniforms {
+            render_phase: 1.0,
+            ..background_uniforms
+        };
+
+        let background_callback = gpu::callback::GridRenderCallback {
+            instances: instances.clone(),
+            uniforms: background_uniforms,
             instance_count,
         };
 
-        let paint_callback = egui_wgpu::Callback::new_paint_callback(content_rect, callback);
-        ui.painter().add(paint_callback);
+        let foreground_callback = gpu::callback::GridRenderCallback {
+            instances,
+            uniforms: foreground_uniforms,
+            instance_count,
+        };
+
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(content_rect, background_callback));
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(content_rect, foreground_callback));
         true
     }
 
