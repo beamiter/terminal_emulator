@@ -46,7 +46,6 @@ impl HelpPanel {
                     // 会话管理
                     ui.collapsing("💬 会话管理 (Sessions)", |ui| {
                         Self::add_keybinding(ui, "Ctrl+T", "新建会话");
-                        Self::add_keybinding(ui, "Ctrl+W", "关闭会话");
                         Self::add_keybinding(ui, "Ctrl+Tab", "下一个会话");
                         Self::add_keybinding(ui, "Ctrl+Shift+Tab", "上一个会话");
                         Self::add_keybinding(ui, "Ctrl+1..9", "快速跳转到第 1-9 个会话");

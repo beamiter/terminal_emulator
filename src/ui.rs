@@ -1298,7 +1298,7 @@ impl TerminalRenderer {
                             egui::Key::T => input.push(0x14), // Ctrl+T
                             egui::Key::U => input.push(0x15), // Ctrl+U (delete line in vim)
                             egui::Key::V => input.push(0x16), // Ctrl+V (visual block in vim)
-                            egui::Key::W => {}, // Ctrl+W (handled by keybindings system - close session)
+                            egui::Key::W => input.push(0x17), // Ctrl+W
                             egui::Key::X => input.push(0x18), // Ctrl+X
                             egui::Key::Y => input.push(0x19), // Ctrl+Y
                             egui::Key::Z => input.push(0x1a), // Ctrl+Z (suspend)
