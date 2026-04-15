@@ -1480,7 +1480,8 @@ impl TerminalApp {
                         let session_idx = pane.session_idx;
                         if let Some(session) = self.session_manager.get_session_mut(session_idx) {
                             let mut terminal_guard = session.terminal.lock();
-                            let links = self.link_detector.detect_all_links(&terminal_guard.grid);
+                            let visible_cells = terminal_guard.get_visible_cells();
+                            let links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
 
                             // 获取当前窗格的渲染器
                             let renderer = &mut self.pane_renderers[pane_idx];
@@ -1550,7 +1551,8 @@ impl TerminalApp {
                         let mut terminal_guard = session.terminal.lock();
 
                         // 获取链接列表用于渲染
-                        let links = self.link_detector.detect_all_links(&terminal_guard.grid);
+                        let visible_cells = terminal_guard.get_visible_cells();
+                        let links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
 
                         // 在渲染终端之前读取滚轮值和 Ctrl 键状态
                         let ctrl_pressed_render = ui.input(|i| i.modifiers.ctrl);
@@ -2850,7 +2852,8 @@ impl eframe::App for TerminalApp {
         // Step 12: 链接检测和交互
         {
             let terminal = session.terminal.lock();
-            let links = self.link_detector.detect_all_links(&terminal.grid);
+            let visible_cells = terminal.get_visible_cells();
+            let links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
             drop(terminal);
 
             // 检测悬停的链接

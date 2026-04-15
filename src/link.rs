@@ -155,6 +155,14 @@ impl LinkDetector {
     fn is_valid_file_path(text: &str) -> bool {
         let trimmed = text.trim();
 
+        if trimmed.is_empty() || matches!(trimmed, "/" | "//" | "./" | "../") {
+            return false;
+        }
+
+        if trimmed.chars().all(|ch| matches!(ch, '/' | '.')) {
+            return false;
+        }
+
         // 必须以 / 或 ./ 或 ../ 开头
         trimmed.starts_with('/')
             || trimmed.starts_with("./")
@@ -167,6 +175,22 @@ impl LinkDetector {
         let mut all_links = Vec::new();
 
         for (line_idx, line) in grid.iter().enumerate() {
+            let line_str: String = line.iter().map(|cell| cell.character).collect();
+            let links = self.detect_links_in_line(&line_str, line_idx);
+            all_links.extend(links);
+        }
+
+        all_links
+    }
+
+    /// 在当前可视内容中检测链接。
+    pub fn detect_links_in_visible_cells(
+        &self,
+        visible_cells: &[Vec<crate::terminal::TerminalCell>],
+    ) -> Vec<Link> {
+        let mut all_links = Vec::new();
+
+        for (line_idx, line) in visible_cells.iter().enumerate() {
             let line_str: String = line.iter().map(|cell| cell.character).collect();
             let links = self.detect_links_in_line(&line_str, line_idx);
             all_links.extend(links);
@@ -345,6 +369,15 @@ mod tests {
         let links = detector.detect_links_in_line(line, 0);
 
         assert!(links.iter().any(|l| l.link_type == LinkType::FilePath));
+    }
+
+    #[test]
+    fn test_comment_slashes_are_not_file_paths() {
+        let detector = LinkDetector::new(LinkDetectionConfig::default());
+        let line = "// Selection rule:";
+        let links = detector.detect_links_in_line(line, 0);
+
+        assert!(!links.iter().any(|l| l.link_type == LinkType::FilePath));
     }
 
     #[test]
