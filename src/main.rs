@@ -466,6 +466,8 @@ struct TerminalApp {
     pending_output: Vec<u8>,
     // 滚轮像素累积器，累积到一行高度才滚动
     scroll_accumulator: f32,
+    // 鼠标报告模式下的滚轮累积器，避免轻微触控板滚动被放大成大量事件
+    mouse_scroll_accumulator: f32,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -861,6 +863,7 @@ impl TerminalApp {
             _lock_file: lock_file,
             pending_output: Vec::new(),
             scroll_accumulator: 0.0,
+            mouse_scroll_accumulator: 0.0,
         }
     }
 
@@ -2851,6 +2854,7 @@ impl eframe::App for TerminalApp {
         let mouse_reports: Vec<String> = {
             let terminal = session.terminal.lock();
             if !terminal.is_mouse_enabled() {
+                self.mouse_scroll_accumulator = 0.0;
                 drop(terminal);
                 Vec::new()
             } else {
@@ -2877,13 +2881,42 @@ impl eframe::App for TerminalApp {
                     };
 
                     // 处理鼠标滚轮（当启用鼠标报告时）
-                    let scroll_delta_for_mouse = ctx.input(|i| i.smooth_scroll_delta.y);
-                    if scroll_delta_for_mouse != 0.0 {
-                        // 滚轮按钮号：64 = 向上滚，65 = 向下滚
-                        let button = if scroll_delta_for_mouse > 0.0 { 64 } else { 65 };
+                    let line_h = self.renderer.line_height.max(1.0);
+                    let mut discrete_scroll_steps: isize = 0;
+                    let mut point_scroll_delta: f32 = 0.0;
 
-                        let scroll_count = self.config.scroll_speed as usize;
-                        for _ in 0..scroll_count {
+                    ctx.input(|i| {
+                        for event in &i.events {
+                            if let egui::Event::MouseWheel { unit, delta, .. } = event {
+                                match unit {
+                                    egui::MouseWheelUnit::Line => {
+                                        discrete_scroll_steps += delta.y.round() as isize;
+                                    }
+                                    egui::MouseWheelUnit::Page => {
+                                        discrete_scroll_steps += delta.y.round() as isize * self.rows.max(1) as isize;
+                                    }
+                                    egui::MouseWheelUnit::Point => {
+                                        point_scroll_delta += delta.y;
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                    if point_scroll_delta != 0.0 {
+                        self.mouse_scroll_accumulator += point_scroll_delta;
+                    }
+
+                    let point_scroll_steps = (self.mouse_scroll_accumulator / line_h) as isize;
+                    if point_scroll_steps != 0 {
+                        self.mouse_scroll_accumulator -= point_scroll_steps as f32 * line_h;
+                    }
+
+                    let total_scroll_steps = discrete_scroll_steps + point_scroll_steps;
+                    if total_scroll_steps != 0 {
+                        let button = if total_scroll_steps > 0 { 64 } else { 65 };
+
+                        for _ in 0..total_scroll_steps.unsigned_abs() {
                             if let Some(report) = terminal.get_mouse_report(button, col, row) {
                                 reports.push(report);
                             }
