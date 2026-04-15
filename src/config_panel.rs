@@ -2,6 +2,18 @@ use crate::config::Config;
 use crate::theme::Theme;
 use egui::{Color32, RichText};
 
+fn accent_color(theme: &Theme) -> Color32 {
+    Theme::rgb_to_color32(theme.tabbar.active_border)
+}
+
+fn muted_text_color(theme: &Theme) -> Color32 {
+    Theme::rgb_to_color32(theme.ui.text_disabled)
+}
+
+fn warning_color(theme: &Theme) -> Color32 {
+    Theme::rgb_to_color32(theme.terminal.ansi_colors[11])
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConfigTab {
     Font,
@@ -151,7 +163,7 @@ impl ConfigPanel {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> Vec<ConfigAction> {
+    pub fn show(&mut self, ctx: &egui::Context, theme: &Theme) -> Vec<ConfigAction> {
         let mut actions = Vec::new();
 
         if !self.is_open {
@@ -173,8 +185,8 @@ impl ConfigPanel {
             .default_pos(panel_pos)
             .fixed_size([panel_width, panel_height])
             .frame(egui::Frame {
-                fill: Color32::from_rgb(45, 45, 48),
-                stroke: egui::Stroke::new(1.0, Color32::from_rgb(120, 120, 120)),
+                fill: Theme::rgb_to_color32(theme.ui.panel_bg),
+                stroke: egui::Stroke::new(1.0, Theme::rgb_to_color32(theme.ui.border)),
                 inner_margin: egui::Margin::same(12),
                 corner_radius: egui::CornerRadius::same(4),
                 ..Default::default()
@@ -207,10 +219,10 @@ impl ConfigPanel {
                     .show(ui, |ui| {
                         match self.active_tab {
                             ConfigTab::Font => {
-                                self.render_font_tab(ui, &mut actions);
+                                self.render_font_tab(ui, &mut actions, theme);
                             }
                             ConfigTab::Appearance => {
-                                self.render_appearance_tab(ui, &mut actions);
+                                self.render_appearance_tab(ui, &mut actions, theme);
                             }
                             ConfigTab::Advanced => {
                                 self.render_advanced_tab(ui, &mut actions);
@@ -226,7 +238,7 @@ impl ConfigPanel {
                         self.has_changes = true;
                     }
                     if self.has_changes {
-                        ui.label(RichText::new("*").color(Color32::from_rgb(200, 150, 0)).size(12.0));
+                        ui.label(RichText::new("*").color(accent_color(theme)).size(12.0));
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.button("Save").clicked() {
@@ -240,7 +252,7 @@ impl ConfigPanel {
         actions
     }
 
-    fn render_font_tab(&mut self, ui: &mut egui::Ui, actions: &mut Vec<ConfigAction>) {
+    fn render_font_tab(&mut self, ui: &mut egui::Ui, actions: &mut Vec<ConfigAction>, theme: &Theme) {
         ui.label(RichText::new("Font Settings").strong().size(14.0));
         ui.separator();
 
@@ -286,7 +298,7 @@ impl ConfigPanel {
         };
         ui.horizontal(|ui| {
             ui.label("Current:");
-            ui.label(RichText::new(&current_display).strong().color(Color32::from_rgb(100, 200, 255)));
+            ui.label(RichText::new(&current_display).strong().color(accent_color(theme)));
         });
 
         ui.add_space(4.0);
@@ -315,7 +327,7 @@ impl ConfigPanel {
             ui.label(
                 RichText::new(format!("({} fonts)", count))
                     .size(11.0)
-                    .color(Color32::from_rgb(140, 140, 140)),
+                    .color(muted_text_color(theme)),
             );
         });
 
@@ -340,7 +352,7 @@ impl ConfigPanel {
             ui.label(
                 RichText::new("No matching fonts")
                     .italics()
-                    .color(Color32::from_rgb(140, 140, 140)),
+                    .color(muted_text_color(theme)),
             );
         } else {
             let row_height = 22.0;
@@ -378,18 +390,18 @@ impl ConfigPanel {
             && !self.monospace_fonts.iter().any(|f| f == &self.edit_font_family)
             && !self.all_fonts.iter().any(|f| f == &self.edit_font_family)
         {
-            ui.colored_label(Color32::YELLOW, "Font not found in system");
+            ui.colored_label(warning_color(theme), "Font not found in system");
         }
 
         ui.add_space(2.0);
         ui.label(
             RichText::new("Note: font change requires restart")
                 .size(10.0)
-                .color(Color32::from_rgb(140, 140, 140)),
+                .color(muted_text_color(theme)),
         );
     }
 
-    fn render_appearance_tab(&mut self, ui: &mut egui::Ui, actions: &mut Vec<ConfigAction>) {
+    fn render_appearance_tab(&mut self, ui: &mut egui::Ui, actions: &mut Vec<ConfigAction>, theme: &Theme) {
         ui.label(RichText::new("Appearance Settings").strong().size(14.0));
         ui.separator();
 
@@ -632,7 +644,7 @@ fn render_theme_editor(
                 "Bright Black", "Bright Red", "Bright Green", "Bright Yellow",
                 "Bright Blue", "Bright Magenta", "Bright Cyan", "Bright White",
             ];
-            ui.label(RichText::new("Normal").size(11.0).color(Color32::from_rgb(160, 160, 160)));
+            ui.label(RichText::new("Normal").size(11.0).color(muted_text_color(theme)));
             egui::Grid::new("ansi_normal").num_columns(8).spacing([4.0, 2.0]).show(ui, |ui| {
                 for i in 0..8 {
                     changed |= color_btn_rgb(ui, names[i], &mut theme.terminal.ansi_colors[i]);
@@ -640,7 +652,7 @@ fn render_theme_editor(
                 ui.end_row();
             });
             ui.add_space(4.0);
-            ui.label(RichText::new("Bright").size(11.0).color(Color32::from_rgb(160, 160, 160)));
+            ui.label(RichText::new("Bright").size(11.0).color(muted_text_color(theme)));
             egui::Grid::new("ansi_bright").num_columns(8).spacing([4.0, 2.0]).show(ui, |ui| {
                 for i in 8..16 {
                     changed |= color_btn_rgb(ui, names[i], &mut theme.terminal.ansi_colors[i]);
@@ -779,6 +791,7 @@ impl ConfigPanel {
 // Helper: RGB color row with label + color picker
 fn color_row_rgb(ui: &mut egui::Ui, label: &str, color: &mut [u8; 3]) -> bool {
     let mut changed = false;
+    let muted = ui.visuals().weak_text_color();
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).size(11.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -789,7 +802,7 @@ fn color_row_rgb(ui: &mut egui::Ui, label: &str, color: &mut [u8; 3]) -> bool {
                 RichText::new(format!("#{:02X}{:02X}{:02X}", color[0], color[1], color[2]))
                     .size(10.0)
                     .monospace()
-                    .color(Color32::from_rgb(140, 140, 140)),
+                    .color(muted),
             );
         });
     });
@@ -799,6 +812,7 @@ fn color_row_rgb(ui: &mut egui::Ui, label: &str, color: &mut [u8; 3]) -> bool {
 // Helper: RGBA color row with label + color picker
 fn color_row_rgba(ui: &mut egui::Ui, label: &str, color: &mut [u8; 4]) -> bool {
     let mut changed = false;
+    let muted = ui.visuals().weak_text_color();
     ui.horizontal(|ui| {
         ui.label(RichText::new(label).size(11.0));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -820,7 +834,7 @@ fn color_row_rgba(ui: &mut egui::Ui, label: &str, color: &mut [u8; 4]) -> bool {
                 ))
                 .size(10.0)
                 .monospace()
-                .color(Color32::from_rgb(140, 140, 140)),
+                .color(muted),
             );
         });
     });

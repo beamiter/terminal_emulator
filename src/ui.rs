@@ -881,15 +881,28 @@ impl TerminalRenderer {
         let ppp = ui.ctx().pixels_per_point();
         let default_bg = self.theme.terminal_background();
         let has_search = !search_state.matches.is_empty() && !search_state.query.is_empty();
+        let target_cell_width = char_width * ppp;
+        let target_cell_height = line_height * ppp;
 
         // Build instance data and rasterize new glyphs via atlas
         let mut instances = Vec::with_capacity(rows * cols);
+        let mut atlas_w = 0.0;
+        let mut atlas_h = 0.0;
+        let mut font_cell_width = target_cell_width;
+        let mut font_cell_height = target_cell_height;
         {
             let mut renderer = render_state.renderer.write();
             let gpu_res = match renderer.callback_resources.get_mut::<gpu::callback::GpuResources>() {
                 Some(r) => r,
                 None => return false,
             };
+            let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
+            atlas_w = gpu_res.atlas.atlas_width() as f32;
+            atlas_h = gpu_res.atlas.atlas_height() as f32;
+            font_cell_width = advance;
+            font_cell_height = ascent - descent;
+            let glyph_offset_x_adjust = ((target_cell_width - font_cell_width) * 0.5).max(0.0);
+            let glyph_offset_y_adjust = ((target_cell_height - font_cell_height) * 0.5).max(0.0);
 
             for row_idx in 0..rows {
                 for col_idx in 0..cols {
@@ -983,7 +996,8 @@ impl TerminalRenderer {
                         if region.width_px > 0.0 && region.height_px > 0.0 {
                             // Use font bearing for glyph positioning within cell (physical pixels)
                             (region.u0, region.v0, region.u1, region.v1,
-                             region.bearing_x, region.bearing_y)
+                             region.bearing_x + glyph_offset_x_adjust,
+                             region.bearing_y + glyph_offset_y_adjust)
                         } else {
                             (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                         }
@@ -1014,24 +1028,12 @@ impl TerminalRenderer {
         } // drop renderer write lock
 
         let instance_count = instances.len() as u32;
-
-        let (atlas_w, atlas_h, gpu_cell_width, gpu_cell_height) = {
-            let renderer = render_state.renderer.read();
-            let gpu_res = renderer.callback_resources.get::<gpu::callback::GpuResources>().unwrap();
-            let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
-            // Use actual font metrics for tighter cell sizing:
-            // cell_height = ascent + |descent| (no extra leading)
-            // cell_width  = advance width of '0'
-            let cell_h = ascent - descent; // descent is negative
-            let cell_w = advance;
-            (gpu_res.atlas.atlas_width() as f32, gpu_res.atlas.atlas_height() as f32, cell_w, cell_h)
-        };
         // Viewport is set to content_rect by egui-wgpu, so use its dimensions
         let uniforms = gpu::instance::GridUniforms {
             viewport_width: content_rect.width() * ppp,
             viewport_height: content_rect.height() * ppp,
-            cell_width: gpu_cell_width,
-            cell_height: gpu_cell_height,
+            cell_width: target_cell_width,
+            cell_height: target_cell_height,
             atlas_width: atlas_w,
             atlas_height: atlas_h,
             _pad0: 0.0,

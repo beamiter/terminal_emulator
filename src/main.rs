@@ -896,6 +896,13 @@ impl TerminalApp {
         ctx.request_repaint();
     }
 
+    fn create_session_with_current_config(&mut self, name: Option<String>, tags: Option<Vec<String>>) -> usize {
+        let cols = self.cols.max(1);
+        let rows = self.rows.max(1);
+        self.session_manager
+            .new_session(name, tags, cols, rows, self.config.scrollback_lines)
+    }
+
     #[allow(deprecated)]
     fn render_ui(&mut self, ctx: &egui::Context) {
         let frame = egui::Frame::NONE
@@ -1447,7 +1454,7 @@ impl TerminalApp {
                     if mouse_released {
                         if let Some(click_pos) = ctx.input(|i| i.pointer.latest_pos()) {
                             if plus_btn_rect.contains(click_pos) {
-                                let new_idx = self.session_manager.new_session(None, None);
+                                let new_idx = self.create_session_with_current_config(None, None);
                                 self.session_manager.switch_session(new_idx);
                                 self.force_resize_session = true;
                                 self.schedule_session_save();
@@ -1890,7 +1897,7 @@ impl TerminalApp {
         self.help_panel.is_open = help_open;
 
         // 配置面板 UI（浮动窗口）
-        let config_actions = self.config_panel.show(ctx);
+        let config_actions = self.config_panel.show(ctx, &self.current_theme);
         for action in config_actions {
             match action {
                 config_panel::ConfigAction::FontSizeChanged(size) => {
@@ -2185,7 +2192,7 @@ impl eframe::App for TerminalApp {
                                             self.search_state.close();
                                         }
                                         keybindings::Command::SessionNew => {
-                                            let new_idx = self.session_manager.new_session(None, None);
+                                            let new_idx = self.create_session_with_current_config(None, None);
                                             self.session_manager.switch_session(new_idx);
                                             self.force_resize_session = true;
                                             self.schedule_session_save();
@@ -2235,14 +2242,14 @@ impl eframe::App for TerminalApp {
                                         // 分屏命令处理
                                         keybindings::Command::TerminalSplitVertical => {
                                             // 垂直分割（左右）
-                                            let new_session_idx = self.session_manager.new_session(None, None);
+                                            let new_session_idx = self.create_session_with_current_config(None, None);
                                             let _ = self.layout_manager.split(new_session_idx, false);
                                             self.status_message = "Split vertically".to_string();
                                             self.schedule_session_save();
                                         }
                                         keybindings::Command::TerminalSplitHorizontal => {
                                             // 水平分割（上下）
-                                            let new_session_idx = self.session_manager.new_session(None, None);
+                                            let new_session_idx = self.create_session_with_current_config(None, None);
                                             let _ = self.layout_manager.split(new_session_idx, true);
                                             self.status_message = "Split horizontally".to_string();
                                             self.schedule_session_save();
@@ -2316,7 +2323,7 @@ impl eframe::App for TerminalApp {
                             self.search_state.close();
                         }
                         keybindings::Command::SessionNew => {
-                            let new_idx = self.session_manager.new_session(None, None);
+                            let new_idx = self.create_session_with_current_config(None, None);
                             self.session_manager.switch_session(new_idx);
                             self.force_resize_session = true;
                             self.schedule_session_save();

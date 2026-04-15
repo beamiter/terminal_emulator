@@ -32,7 +32,14 @@ impl SessionManager {
     }
 
     /// 创建新会话并添加到管理器，继承当前工作目录
-    pub fn new_session(&mut self, name: Option<String>, tags: Option<Vec<String>>) -> usize {
+    pub fn new_session(
+        &mut self,
+        name: Option<String>,
+        tags: Option<Vec<String>>,
+        cols: usize,
+        rows: usize,
+        scrollback_lines: usize,
+    ) -> usize {
         let index = self.sessions.len();
         let name = name.unwrap_or_else(|| format!("Session {}", index + 1));
         let tags = tags.unwrap_or_default();
@@ -48,9 +55,11 @@ impl SessionManager {
 
         // 创建新会话，继承工作目录（新会话不传 session_id，自动生成）
         let cwd_ref = cwd.as_deref();
-        match ShellSession::new_with_cwd(80, 24, cwd_ref, None, self.repaint_ctx.clone()) {
+        match ShellSession::new_with_cwd(cols, rows, cwd_ref, None, self.repaint_ctx.clone()) {
             Ok(shell) => {
-                let terminal = Arc::new(ParkingMutex::new(TerminalState::new(80, 24)));
+                let mut terminal = TerminalState::new(cols, rows);
+                terminal.set_max_scrollback(scrollback_lines);
+                let terminal = Arc::new(ParkingMutex::new(terminal));
                 let session = Session::new(name, tags, terminal, shell);
                 self.sessions.push(session);
                 index
