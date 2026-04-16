@@ -2621,13 +2621,14 @@ impl eframe::App for TerminalApp {
         // 当搜索面板打开时，不处理普通键盘输入（搜索面板会处理输入）
         let mut keyboard_input = Vec::new();
         if !self.search_state.is_open {
-            let (keyboard_enhancement_flags, report_all_keys_mode, xterm_modify_other_keys, xterm_format_other_keys) = {
+            let (keyboard_enhancement_flags, report_all_keys_mode, xterm_modify_other_keys, xterm_format_other_keys, application_cursor_keys) = {
                 let terminal = session.terminal.lock();
                 (
                     terminal.keyboard_enhancement_flags(),
                     terminal.is_report_all_keys_enabled(),
                     terminal.xterm_modify_other_keys(),
                     terminal.xterm_format_other_keys(),
+                    terminal.is_application_cursor_keys(),
                 )
             };
             // 转换 consumed_keys 为需要的格式（HashSet<&str>）
@@ -2645,6 +2646,7 @@ impl eframe::App for TerminalApp {
                     report_all_keys_mode,
                     xterm_modify_other_keys,
                     xterm_format_other_keys,
+                    application_cursor_keys,
                 );
         }
 

@@ -29,7 +29,7 @@ fn cursor_rect(rect: egui::Rect, row: usize, col: usize, char_width: f32, line_h
     egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(width, height))
 }
 
-fn key_to_terminal_sequence(key: egui::Key, modifiers: egui::Modifiers) -> Option<&'static str> {
+fn key_to_terminal_sequence(key: egui::Key, modifiers: egui::Modifiers, application_cursor_keys: bool) -> Option<&'static str> {
     if modifiers.ctrl || modifiers.alt || modifiers.mac_cmd || modifiers.command_only() {
         return None;
     }
@@ -39,12 +39,12 @@ fn key_to_terminal_sequence(key: egui::Key, modifiers: egui::Modifiers) -> Optio
         egui::Key::Escape => Some("\x1b"),
         egui::Key::Backspace => Some("\x7f"),  // Send DEL (0x7f)
         egui::Key::Tab => Some("\t"),
-        egui::Key::ArrowUp => Some("\x1b[A"),
-        egui::Key::ArrowDown => Some("\x1b[B"),
-        egui::Key::ArrowRight => Some("\x1b[C"),
-        egui::Key::ArrowLeft => Some("\x1b[D"),
-        egui::Key::Home => Some("\x1b[H"),
-        egui::Key::End => Some("\x1b[F"),
+        egui::Key::ArrowUp => if application_cursor_keys { Some("\x1bOA") } else { Some("\x1b[A") },
+        egui::Key::ArrowDown => if application_cursor_keys { Some("\x1bOB") } else { Some("\x1b[B") },
+        egui::Key::ArrowRight => if application_cursor_keys { Some("\x1bOC") } else { Some("\x1b[C") },
+        egui::Key::ArrowLeft => if application_cursor_keys { Some("\x1bOD") } else { Some("\x1b[D") },
+        egui::Key::Home => if application_cursor_keys { Some("\x1bOH") } else { Some("\x1b[H") },
+        egui::Key::End => if application_cursor_keys { Some("\x1bOF") } else { Some("\x1b[F") },
         egui::Key::Insert => Some("\x1b[2~"),
         egui::Key::Delete => Some("\x1b[3~"),
         egui::Key::PageUp => Some("\x1b[5~"),
@@ -445,6 +445,18 @@ impl TerminalRenderer {
         }
 
         let has_focus = ctx.memory(|mem| mem.has_focus(response.id));
+        if has_focus {
+            // Tell egui that the terminal widget needs arrow keys, tab, and escape,
+            // so they are NOT consumed by egui's focus navigation system.
+            ctx.memory_mut(|mem| {
+                mem.set_focus_lock_filter(response.id, egui::EventFilter {
+                    tab: true,
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: true,
+                });
+            });
+        }
         if has_focus != self.ime_enabled {
             ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(has_focus));
             if has_focus {
@@ -1217,6 +1229,7 @@ impl TerminalRenderer {
         report_all_keys_mode: bool,
         xterm_modify_other_keys: u16,
         xterm_format_other_keys: u16,
+        application_cursor_keys: bool,
     ) {
         let events = ctx.input(|i| i.events.clone());
         let report_all_keys = report_all_keys_mode || (keyboard_enhancement_flags & 0b1000) != 0;
@@ -1282,7 +1295,7 @@ impl TerminalRenderer {
                     }
 
                     // Handle normal key sequences
-                    let seq = key_to_terminal_sequence(key, modifiers);
+                    let seq = key_to_terminal_sequence(key, modifiers, application_cursor_keys);
 
                     if let Some(s) = seq {
                         input.extend(s.as_bytes());

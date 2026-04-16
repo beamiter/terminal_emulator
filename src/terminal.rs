@@ -1942,6 +1942,10 @@ impl TerminalState {
         self.modes.contains(&2004)
     }
 
+    pub fn is_application_cursor_keys(&self) -> bool {
+        self.modes.contains(&1)
+    }
+
     pub fn is_paste_events_enabled(&self) -> bool {
         self.modes.contains(&5522)
     }
