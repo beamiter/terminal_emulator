@@ -258,6 +258,7 @@ mod unix_pty {
             }
         }
 
+        /// Single non-blocking write. Returns bytes written, or WouldBlock if buffer full.
         pub fn write(&mut self, data: &[u8]) -> Result<usize> {
             unsafe {
                 let n = libc::write(self.master, data.as_ptr() as *const _, data.len());

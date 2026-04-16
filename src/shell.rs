@@ -224,11 +224,59 @@ impl ShellSession {
     }
 
     /// 向 shell 发送输入数据（例如用户输入）
+    /// 处理大数据写入：循环写入并在 poll 等待时释放锁，避免与 io_loop 死锁
     pub fn write(&self, data: &[u8]) -> std::result::Result<(), String> {
-        let mut pty = self.pty.lock().map_err(|_| "Failed to lock PTY for write".to_string())?;
-        pty.write(data)
-            .map(|_| ())
-            .map_err(|e| format!("Write error: {}", e))
+        let mut offset = 0;
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(10);
+
+        // 先获取 master_fd（不需要长期持锁）
+        let master_fd = {
+            let pty = self.pty.lock().map_err(|_| "Failed to lock PTY for fd".to_string())?;
+            pty.master_fd()
+        };
+
+        while offset < data.len() {
+            if start.elapsed() > timeout {
+                return Err(format!(
+                    "PTY write timed out, wrote {}/{} bytes", offset, data.len()
+                ));
+            }
+
+            // 获取锁，尝试写入，然后立即释放锁
+            {
+                let mut pty = self.pty.lock().map_err(|_| "Failed to lock PTY for write".to_string())?;
+                match pty.write(&data[offset..]) {
+                    Ok(n) if n > 0 => {
+                        offset += n;
+                        continue; // 写成功，立刻尝试写更多
+                    }
+                    Ok(_) => break, // wrote 0
+                    Err(e) => {
+                        let msg = e.to_string();
+                        if msg.contains("Resource temporarily unavailable")
+                            || msg.contains("WouldBlock")
+                            || msg.contains("EAGAIN")
+                        {
+                            // 缓冲区满，需要 poll 等待 — 先释放锁（落到下面）
+                        } else {
+                            return Err(format!("Write error: {}", e));
+                        }
+                    }
+                }
+            }
+            // 锁已释放！io_loop 可以读取 PTY 输出，vim 可以排空缓冲区
+            // poll 等待 PTY 可写
+            unsafe {
+                let mut pfd = libc::pollfd {
+                    fd: master_fd,
+                    events: libc::POLLOUT,
+                    revents: 0,
+                };
+                libc::poll(&mut pfd, 1, 50); // 50ms
+            }
+        }
+        Ok(())
     }
 
     pub fn resize(&self, cols: usize, rows: usize) -> std::result::Result<(), String> {
