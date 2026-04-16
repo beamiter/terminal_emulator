@@ -163,6 +163,15 @@ mod unix_pty {
                     let vte_version_value = CString::new(VTE_VERSION).unwrap();
                     libc::setenv(vte_version_name.as_ptr(), vte_version_value.as_ptr(), 1);
 
+                    // Set LESS=FR (without -X) so that programs like git use
+                    // the alternate screen properly. Git defaults to LESS=FRX
+                    // where -X disables alternate screen, causing pager output
+                    // to leak into scrollback. Only set if user hasn't already
+                    // configured LESS.
+                    let less_name = CString::new("LESS").unwrap();
+                    let less_value = CString::new("FR").unwrap();
+                    libc::setenv(less_name.as_ptr(), less_value.as_ptr(), 0); // 0 = don't overwrite
+
                     // 创建 C 字符串
                     let shell_cstr = match CString::new(shell_path.clone()) {
                         Ok(s) => s,
