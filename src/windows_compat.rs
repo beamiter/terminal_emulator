@@ -18,8 +18,8 @@ pub mod windows_support {
 
         /// 启用 Windows 虚拟终端处理
         pub fn enable_vt_sequences() -> std::io::Result<()> {
-            use std::os::windows::ffi::OsStrExt;
             use std::ffi::OsStr;
+            use std::os::windows::ffi::OsStrExt;
 
             #[allow(non_camel_case_types)]
             type HANDLE = *mut std::ffi::c_void;
@@ -65,7 +65,9 @@ pub mod windows_support {
         pub fn get_terminal_path() -> Option<PathBuf> {
             // Windows Terminal 通常在这些位置
             let paths = vec![
-                PathBuf::from("C:\\Program Files\\WindowsApps\\Microsoft.WindowsTerminal_*\\wt.exe"),
+                PathBuf::from(
+                    "C:\\Program Files\\WindowsApps\\Microsoft.WindowsTerminal_*\\wt.exe",
+                ),
                 PathBuf::from("C:\\Program Files\\Windows Terminal\\wt.exe"),
                 PathBuf::from(&std::env::var("LOCALAPPDATA").unwrap_or_default())
                     .join("Microsoft\\WindowsApps\\wt.exe"),
@@ -84,10 +86,7 @@ pub mod windows_support {
         pub fn get_windows_version() -> Option<String> {
             use std::process::Command;
 
-            let output = Command::new("cmd")
-                .args(&["/C", "ver"])
-                .output()
-                .ok()?;
+            let output = Command::new("cmd").args(&["/C", "ver"]).output().ok()?;
 
             String::from_utf8(output.stdout).ok()
         }

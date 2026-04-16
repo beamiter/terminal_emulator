@@ -8,8 +8,8 @@ pub struct TerminalColors {
     pub foreground: [u8; 3],
     pub background: [u8; 3],
     pub cursor: [u8; 3],
-    pub selection: [u8; 4],  // RGBA
-    pub ansi_colors: [[u8; 3]; 16],  // 标准 16 色
+    pub selection: [u8; 4],         // RGBA
+    pub ansi_colors: [[u8; 3]; 16], // 标准 16 色
 }
 
 /// UI 组件颜色
@@ -86,22 +86,22 @@ impl Theme {
                 cursor: [200, 200, 200],
                 selection: [200, 200, 200, 100],
                 ansi_colors: [
-                    [0, 0, 0],           // Black
-                    [205, 49, 49],       // Red
-                    [13, 177, 47],       // Green
-                    [229, 178, 34],      // Yellow
-                    [36, 114, 200],      // Blue
-                    [188, 63, 60],       // Magenta
-                    [17, 168, 205],      // Cyan
-                    [230, 230, 230],     // White
-                    [80, 80, 80],        // Bright Black
-                    [241, 76, 76],       // Bright Red
-                    [35, 209, 139],      // Bright Green
-                    [245, 245, 67],      // Bright Yellow
-                    [59, 142, 234],      // Bright Blue
-                    [214, 112, 214],     // Bright Magenta
-                    [41, 184, 219],      // Bright Cyan
-                    [255, 255, 255],     // Bright White
+                    [0, 0, 0],       // Black
+                    [205, 49, 49],   // Red
+                    [13, 177, 47],   // Green
+                    [229, 178, 34],  // Yellow
+                    [36, 114, 200],  // Blue
+                    [188, 63, 60],   // Magenta
+                    [17, 168, 205],  // Cyan
+                    [230, 230, 230], // White
+                    [80, 80, 80],    // Bright Black
+                    [241, 76, 76],   // Bright Red
+                    [35, 209, 139],  // Bright Green
+                    [245, 245, 67],  // Bright Yellow
+                    [59, 142, 234],  // Bright Blue
+                    [214, 112, 214], // Bright Magenta
+                    [41, 184, 219],  // Bright Cyan
+                    [255, 255, 255], // Bright White
                 ],
             },
             ui: UIColors {
@@ -220,22 +220,22 @@ impl Theme {
                 cursor: [133, 153, 0],
                 selection: [7, 54, 66, 100],
                 ansi_colors: [
-                    [7, 54, 66],         // Black
-                    [220, 50, 47],       // Red
-                    [133, 153, 0],       // Green
-                    [181, 137, 0],       // Yellow
-                    [38, 139, 210],      // Blue
-                    [108, 113, 196],     // Magenta
-                    [42, 161, 152],      // Cyan
-                    [131, 148, 150],     // White
-                    [101, 123, 131],     // Bright Black
-                    [203, 75, 75],       // Bright Red
-                    [88, 110, 117],      // Bright Green
-                    [101, 123, 131],     // Bright Yellow
-                    [131, 148, 150],     // Bright Blue
-                    [108, 113, 196],     // Bright Magenta
-                    [147, 161, 161],     // Bright Cyan
-                    [253, 246, 227],     // Bright White
+                    [7, 54, 66],     // Black
+                    [220, 50, 47],   // Red
+                    [133, 153, 0],   // Green
+                    [181, 137, 0],   // Yellow
+                    [38, 139, 210],  // Blue
+                    [108, 113, 196], // Magenta
+                    [42, 161, 152],  // Cyan
+                    [131, 148, 150], // White
+                    [101, 123, 131], // Bright Black
+                    [203, 75, 75],   // Bright Red
+                    [88, 110, 117],  // Bright Green
+                    [101, 123, 131], // Bright Yellow
+                    [131, 148, 150], // Bright Blue
+                    [108, 113, 196], // Bright Magenta
+                    [147, 161, 161], // Bright Cyan
+                    [253, 246, 227], // Bright White
                 ],
             },
             ui: UIColors {
@@ -287,22 +287,22 @@ impl Theme {
                 cursor: [248, 248, 240],
                 selection: [73, 72, 62, 120],
                 ansi_colors: [
-                    [39, 40, 34],        // Black
-                    [249, 38, 114],      // Red
-                    [166, 226, 46],      // Green
-                    [244, 191, 117],     // Yellow
-                    [102, 217, 239],     // Blue
-                    [174, 129, 255],     // Magenta
-                    [161, 239, 228],     // Cyan
-                    [248, 248, 242],     // White
-                    [117, 113, 94],      // Bright Black
-                    [249, 38, 114],      // Bright Red
-                    [166, 226, 46],      // Bright Green
-                    [253, 151, 31],      // Bright Yellow
-                    [102, 217, 239],     // Bright Blue
-                    [174, 129, 255],     // Bright Magenta
-                    [161, 239, 228],     // Bright Cyan
-                    [249, 248, 245],     // Bright White
+                    [39, 40, 34],    // Black
+                    [249, 38, 114],  // Red
+                    [166, 226, 46],  // Green
+                    [244, 191, 117], // Yellow
+                    [102, 217, 239], // Blue
+                    [174, 129, 255], // Magenta
+                    [161, 239, 228], // Cyan
+                    [248, 248, 242], // White
+                    [117, 113, 94],  // Bright Black
+                    [249, 38, 114],  // Bright Red
+                    [166, 226, 46],  // Bright Green
+                    [253, 151, 31],  // Bright Yellow
+                    [102, 217, 239], // Bright Blue
+                    [174, 129, 255], // Bright Magenta
+                    [161, 239, 228], // Bright Cyan
+                    [249, 248, 245], // Bright White
                 ],
             },
             ui: UIColors {
@@ -354,22 +354,22 @@ impl Theme {
                 cursor: [248, 248, 242],
                 selection: [68, 71, 90, 140],
                 ansi_colors: [
-                    [33, 34, 44],        // Black
-                    [255, 85, 85],       // Red
-                    [80, 250, 123],      // Green
-                    [241, 250, 140],     // Yellow
-                    [189, 147, 249],     // Blue (purple accent)
-                    [255, 121, 198],     // Magenta (pink)
-                    [139, 233, 253],     // Cyan
-                    [248, 248, 242],     // White
-                    [98, 114, 164],      // Bright Black (comment)
-                    [255, 110, 110],     // Bright Red
-                    [105, 255, 148],     // Bright Green
-                    [255, 255, 165],     // Bright Yellow
-                    [210, 172, 255],     // Bright Blue
-                    [255, 146, 213],     // Bright Magenta
-                    [164, 255, 255],     // Bright Cyan
-                    [255, 255, 255],     // Bright White
+                    [33, 34, 44],    // Black
+                    [255, 85, 85],   // Red
+                    [80, 250, 123],  // Green
+                    [241, 250, 140], // Yellow
+                    [189, 147, 249], // Blue (purple accent)
+                    [255, 121, 198], // Magenta (pink)
+                    [139, 233, 253], // Cyan
+                    [248, 248, 242], // White
+                    [98, 114, 164],  // Bright Black (comment)
+                    [255, 110, 110], // Bright Red
+                    [105, 255, 148], // Bright Green
+                    [255, 255, 165], // Bright Yellow
+                    [210, 172, 255], // Bright Blue
+                    [255, 146, 213], // Bright Magenta
+                    [164, 255, 255], // Bright Cyan
+                    [255, 255, 255], // Bright White
                 ],
             },
             ui: UIColors {
@@ -421,22 +421,22 @@ impl Theme {
                 cursor: [216, 222, 233],
                 selection: [67, 76, 94, 140],
                 ansi_colors: [
-                    [59, 66, 82],        // Black (nord1)
-                    [191, 97, 106],      // Red (nord11)
-                    [163, 190, 140],     // Green (nord14)
-                    [235, 203, 139],     // Yellow (nord13)
-                    [129, 161, 193],     // Blue (nord9)
-                    [180, 142, 173],     // Magenta (nord15)
-                    [136, 192, 208],     // Cyan (nord8)
-                    [229, 233, 240],     // White (nord5)
-                    [76, 86, 106],       // Bright Black (nord3)
-                    [191, 97, 106],      // Bright Red
-                    [163, 190, 140],     // Bright Green
-                    [235, 203, 139],     // Bright Yellow
-                    [129, 161, 193],     // Bright Blue
-                    [180, 142, 173],     // Bright Magenta
-                    [143, 188, 187],     // Bright Cyan (nord7)
-                    [236, 239, 244],     // Bright White (nord6)
+                    [59, 66, 82],    // Black (nord1)
+                    [191, 97, 106],  // Red (nord11)
+                    [163, 190, 140], // Green (nord14)
+                    [235, 203, 139], // Yellow (nord13)
+                    [129, 161, 193], // Blue (nord9)
+                    [180, 142, 173], // Magenta (nord15)
+                    [136, 192, 208], // Cyan (nord8)
+                    [229, 233, 240], // White (nord5)
+                    [76, 86, 106],   // Bright Black (nord3)
+                    [191, 97, 106],  // Bright Red
+                    [163, 190, 140], // Bright Green
+                    [235, 203, 139], // Bright Yellow
+                    [129, 161, 193], // Bright Blue
+                    [180, 142, 173], // Bright Magenta
+                    [143, 188, 187], // Bright Cyan (nord7)
+                    [236, 239, 244], // Bright White (nord6)
                 ],
             },
             ui: UIColors {
@@ -488,22 +488,22 @@ impl Theme {
                 cursor: [235, 219, 178],
                 selection: [80, 73, 69, 140],
                 ansi_colors: [
-                    [40, 40, 40],        // Black
-                    [204, 36, 29],       // Red
-                    [152, 151, 26],      // Green
-                    [215, 153, 33],      // Yellow
-                    [69, 133, 136],      // Blue
-                    [177, 98, 134],      // Magenta
-                    [104, 157, 106],     // Cyan (aqua)
-                    [168, 153, 132],     // White (fg4)
-                    [146, 131, 116],     // Bright Black (gray)
-                    [251, 73, 52],       // Bright Red
-                    [184, 187, 38],      // Bright Green
-                    [250, 189, 47],      // Bright Yellow
-                    [131, 165, 152],     // Bright Blue
-                    [211, 134, 155],     // Bright Magenta
-                    [142, 192, 124],     // Bright Cyan
-                    [235, 219, 178],     // Bright White (fg)
+                    [40, 40, 40],    // Black
+                    [204, 36, 29],   // Red
+                    [152, 151, 26],  // Green
+                    [215, 153, 33],  // Yellow
+                    [69, 133, 136],  // Blue
+                    [177, 98, 134],  // Magenta
+                    [104, 157, 106], // Cyan (aqua)
+                    [168, 153, 132], // White (fg4)
+                    [146, 131, 116], // Bright Black (gray)
+                    [251, 73, 52],   // Bright Red
+                    [184, 187, 38],  // Bright Green
+                    [250, 189, 47],  // Bright Yellow
+                    [131, 165, 152], // Bright Blue
+                    [211, 134, 155], // Bright Magenta
+                    [142, 192, 124], // Bright Cyan
+                    [235, 219, 178], // Bright White (fg)
                 ],
             },
             ui: UIColors {
@@ -555,22 +555,22 @@ impl Theme {
                 cursor: [192, 202, 245],
                 selection: [43, 48, 82, 140],
                 ansi_colors: [
-                    [21, 22, 30],        // Black
-                    [247, 118, 142],     // Red
-                    [158, 206, 106],     // Green
-                    [224, 175, 104],     // Yellow
-                    [122, 162, 247],     // Blue
-                    [187, 154, 247],     // Magenta
-                    [125, 207, 255],     // Cyan
-                    [192, 202, 245],     // White
-                    [65, 72, 104],       // Bright Black (comment)
-                    [247, 118, 142],     // Bright Red
-                    [158, 206, 106],     // Bright Green
-                    [224, 175, 104],     // Bright Yellow
-                    [122, 162, 247],     // Bright Blue
-                    [187, 154, 247],     // Bright Magenta
-                    [125, 207, 255],     // Bright Cyan
-                    [200, 211, 245],     // Bright White
+                    [21, 22, 30],    // Black
+                    [247, 118, 142], // Red
+                    [158, 206, 106], // Green
+                    [224, 175, 104], // Yellow
+                    [122, 162, 247], // Blue
+                    [187, 154, 247], // Magenta
+                    [125, 207, 255], // Cyan
+                    [192, 202, 245], // White
+                    [65, 72, 104],   // Bright Black (comment)
+                    [247, 118, 142], // Bright Red
+                    [158, 206, 106], // Bright Green
+                    [224, 175, 104], // Bright Yellow
+                    [122, 162, 247], // Bright Blue
+                    [187, 154, 247], // Bright Magenta
+                    [125, 207, 255], // Bright Cyan
+                    [200, 211, 245], // Bright White
                 ],
             },
             ui: UIColors {
@@ -622,22 +622,22 @@ impl Theme {
                 cursor: [171, 178, 191],
                 selection: [62, 68, 81, 140],
                 ansi_colors: [
-                    [40, 44, 52],        // Black
-                    [224, 108, 117],     // Red
-                    [152, 195, 121],     // Green
-                    [229, 192, 123],     // Yellow
-                    [97, 175, 239],      // Blue
-                    [198, 120, 221],     // Magenta
-                    [86, 182, 194],      // Cyan
-                    [171, 178, 191],     // White
-                    [92, 99, 112],       // Bright Black (comment)
-                    [224, 108, 117],     // Bright Red
-                    [152, 195, 121],     // Bright Green
-                    [229, 192, 123],     // Bright Yellow
-                    [97, 175, 239],      // Bright Blue
-                    [198, 120, 221],     // Bright Magenta
-                    [86, 182, 194],      // Bright Cyan
-                    [200, 204, 212],     // Bright White
+                    [40, 44, 52],    // Black
+                    [224, 108, 117], // Red
+                    [152, 195, 121], // Green
+                    [229, 192, 123], // Yellow
+                    [97, 175, 239],  // Blue
+                    [198, 120, 221], // Magenta
+                    [86, 182, 194],  // Cyan
+                    [171, 178, 191], // White
+                    [92, 99, 112],   // Bright Black (comment)
+                    [224, 108, 117], // Bright Red
+                    [152, 195, 121], // Bright Green
+                    [229, 192, 123], // Bright Yellow
+                    [97, 175, 239],  // Bright Blue
+                    [198, 120, 221], // Bright Magenta
+                    [86, 182, 194],  // Bright Cyan
+                    [200, 204, 212], // Bright White
                 ],
             },
             ui: UIColors {
@@ -689,22 +689,22 @@ impl Theme {
                 cursor: [245, 224, 220],
                 selection: [88, 91, 112, 140],
                 ansi_colors: [
-                    [69, 71, 90],        // Black (surface1)
-                    [243, 139, 168],     // Red
-                    [166, 227, 161],     // Green
-                    [249, 226, 175],     // Yellow
-                    [137, 180, 250],     // Blue
-                    [203, 166, 247],     // Magenta (mauve)
-                    [148, 226, 213],     // Cyan (teal)
-                    [186, 194, 222],     // White (subtext1)
-                    [88, 91, 112],       // Bright Black (surface2)
-                    [243, 139, 168],     // Bright Red
-                    [166, 227, 161],     // Bright Green
-                    [249, 226, 175],     // Bright Yellow
-                    [137, 180, 250],     // Bright Blue
-                    [203, 166, 247],     // Bright Magenta
-                    [148, 226, 213],     // Bright Cyan
-                    [205, 214, 244],     // Bright White (text)
+                    [69, 71, 90],    // Black (surface1)
+                    [243, 139, 168], // Red
+                    [166, 227, 161], // Green
+                    [249, 226, 175], // Yellow
+                    [137, 180, 250], // Blue
+                    [203, 166, 247], // Magenta (mauve)
+                    [148, 226, 213], // Cyan (teal)
+                    [186, 194, 222], // White (subtext1)
+                    [88, 91, 112],   // Bright Black (surface2)
+                    [243, 139, 168], // Bright Red
+                    [166, 227, 161], // Bright Green
+                    [249, 226, 175], // Bright Yellow
+                    [137, 180, 250], // Bright Blue
+                    [203, 166, 247], // Bright Magenta
+                    [148, 226, 213], // Bright Cyan
+                    [205, 214, 244], // Bright White (text)
                 ],
             },
             ui: UIColors {
@@ -756,22 +756,22 @@ impl Theme {
                 cursor: [101, 123, 131],
                 selection: [238, 232, 213, 140],
                 ansi_colors: [
-                    [7, 54, 66],         // Black (base02)
-                    [220, 50, 47],       // Red
-                    [133, 153, 0],       // Green
-                    [181, 137, 0],       // Yellow
-                    [38, 139, 210],      // Blue
-                    [108, 113, 196],     // Magenta (violet)
-                    [42, 161, 152],      // Cyan
-                    [238, 232, 213],     // White (base2)
-                    [0, 43, 54],         // Bright Black (base03)
-                    [203, 75, 22],       // Bright Red (orange)
-                    [88, 110, 117],      // Bright Green (base01)
-                    [101, 123, 131],     // Bright Yellow (base00)
-                    [131, 148, 150],     // Bright Blue (base0)
-                    [108, 113, 196],     // Bright Magenta
-                    [147, 161, 161],     // Bright Cyan (base1)
-                    [253, 246, 227],     // Bright White (base3)
+                    [7, 54, 66],     // Black (base02)
+                    [220, 50, 47],   // Red
+                    [133, 153, 0],   // Green
+                    [181, 137, 0],   // Yellow
+                    [38, 139, 210],  // Blue
+                    [108, 113, 196], // Magenta (violet)
+                    [42, 161, 152],  // Cyan
+                    [238, 232, 213], // White (base2)
+                    [0, 43, 54],     // Bright Black (base03)
+                    [203, 75, 22],   // Bright Red (orange)
+                    [88, 110, 117],  // Bright Green (base01)
+                    [101, 123, 131], // Bright Yellow (base00)
+                    [131, 148, 150], // Bright Blue (base0)
+                    [108, 113, 196], // Bright Magenta
+                    [147, 161, 161], // Bright Cyan (base1)
+                    [253, 246, 227], // Bright White (base3)
                 ],
             },
             ui: UIColors {
@@ -855,8 +855,7 @@ impl Theme {
 
     /// Save this theme as a custom theme file
     pub fn save_custom_theme(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let dir = Self::custom_themes_dir()
-            .ok_or("Cannot determine config directory")?;
+        let dir = Self::custom_themes_dir().ok_or("Cannot determine config directory")?;
         std::fs::create_dir_all(&dir)?;
         let filename = format!("{}.toml", self.name);
         let path = dir.join(filename);
@@ -865,8 +864,7 @@ impl Theme {
 
     /// Delete a custom theme file
     pub fn delete_custom_theme(name: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let dir = Self::custom_themes_dir()
-            .ok_or("Cannot determine config directory")?;
+        let dir = Self::custom_themes_dir().ok_or("Cannot determine config directory")?;
         let filename = format!("{}.toml", name);
         let path = dir.join(filename);
         if path.exists() {
@@ -880,7 +878,9 @@ impl Theme {
         if let Some(t) = Self::get_builtin(name) {
             return Some(t);
         }
-        Self::load_custom_themes().into_iter().find(|t| t.name == name)
+        Self::load_custom_themes()
+            .into_iter()
+            .find(|t| t.name == name)
     }
 
     /// Check if a theme name is a builtin
@@ -936,10 +936,16 @@ impl Theme {
     /// 获取可用的主题列表
     pub fn available_themes() -> Vec<&'static str> {
         vec![
-            "dark", "light",
-            "solarized-dark", "solarized-light",
-            "monokai", "dracula", "nord",
-            "gruvbox-dark", "tokyo-night", "one-dark",
+            "dark",
+            "light",
+            "solarized-dark",
+            "solarized-light",
+            "monokai",
+            "dracula",
+            "nord",
+            "gruvbox-dark",
+            "tokyo-night",
+            "one-dark",
             "catppuccin-mocha",
         ]
     }

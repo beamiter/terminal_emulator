@@ -104,8 +104,7 @@ impl SearchAndReplaceEngine {
     ) -> Result<(String, usize), String> {
         use regex::Regex;
 
-        let regex = Regex::new(pattern)
-            .map_err(|e| format!("Invalid regex: {}", e))?;
+        let regex = Regex::new(pattern).map_err(|e| format!("Invalid regex: {}", e))?;
 
         let result = if options.replace_all {
             regex.replace_all(text, replacement).to_string()
@@ -116,7 +115,11 @@ impl SearchAndReplaceEngine {
         let count = if options.replace_all {
             regex.find_iter(text).count()
         } else {
-            if regex.is_match(text) { 1 } else { 0 }
+            if regex.is_match(text) {
+                1
+            } else {
+                0
+            }
         };
 
         Ok((result, count))
@@ -159,7 +162,8 @@ mod tests {
             "hi",
             &config,
             &options,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(count, 1);
         assert_eq!(result, "hi world hello");
@@ -177,7 +181,8 @@ mod tests {
             "hi",
             &config,
             &options,
-        ).unwrap();
+        )
+        .unwrap();
 
         assert_eq!(count, 2);
         assert_eq!(result, "hi world hi");

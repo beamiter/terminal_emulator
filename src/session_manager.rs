@@ -1,10 +1,10 @@
 use crate::session::Session;
 use crate::session_persistence;
-use crate::terminal::TerminalState;
 use crate::shell::ShellSession;
+use crate::terminal::TerminalState;
 use eframe::egui;
-use std::sync::Arc;
 use parking_lot::Mutex as ParkingMutex;
+use std::sync::Arc;
 
 /// 获取指定进程的工作目录
 pub fn get_process_cwd(pid: i32) -> Option<String> {

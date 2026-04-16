@@ -163,9 +163,7 @@ impl LayoutManager {
 
     /// 获取焦点窗格会话索引
     pub fn focused_session_idx(&self) -> usize {
-        self.focused_pane()
-            .map(|p| p.session_idx)
-            .unwrap_or(0)
+        self.focused_pane().map(|p| p.session_idx).unwrap_or(0)
     }
 
     /// 计算窗格矩形（基于容器矩形和分割比例）

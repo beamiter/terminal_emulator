@@ -1,47 +1,47 @@
-mod color;
-mod debug;
-mod terminal;
-mod ui;
+mod ansi_advanced;
+mod char_width; // P5：字符宽度缓存
 mod clipboard;
-mod pty;
-mod shell;
+mod color;
+mod command_palette;
 mod config;
+mod config_panel;
+mod debug;
+mod debug_panel;
+mod glyph_cache; // P2：字形缓存
+mod gpu;
+mod help;
+mod image_cache;
+mod keybindings;
+mod kitty_graphics;
+mod layout;
+mod link;
+mod pty;
+mod scripting;
+mod search;
+mod search_replace;
 mod session;
 mod session_manager;
-mod search;
-mod link;
-mod keybindings;
-mod command_palette;
-mod theme;
-mod layout;
 mod session_persistence;
+mod shell;
 mod sidebar;
-mod search_replace;
-mod scripting;
-mod ansi_advanced;
+mod terminal;
+mod theme;
+mod ui;
 mod windows_compat;
-mod help;
-mod config_panel;
-mod debug_panel;
-mod kitty_graphics;
-mod image_cache;
-mod char_width;  // P5：字符宽度缓存
-mod glyph_cache;  // P2：字形缓存
-mod gpu;
 
 use base64::Engine;
+use clipboard::{ClipboardContent, ClipboardManager};
 use eframe::egui;
+use parking_lot::Mutex as ParkingMutex;
+use session::Session;
+use session_manager::SessionManager;
+use shell::{ShellEvent, ShellSession};
 use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 use terminal::TerminalState;
 use ui::TerminalRenderer;
-use clipboard::{ClipboardContent, ClipboardManager};
-use parking_lot::Mutex as ParkingMutex;
-use shell::{ShellSession, ShellEvent};
-use session_manager::SessionManager;
-use session::Session;
 
 fn detect_image_mime_type(data: &[u8]) -> Option<&'static str> {
     if data.len() < 4 {
@@ -81,11 +81,24 @@ fn detect_image_mime_type(data: &[u8]) -> Option<&'static str> {
 
     // 未识别的格式，显示前几个字节
     let hex_preview = if data.len() >= 8 {
-        format!("{:02X} {:02X} {:02X} {:02X} ...", data[0], data[1], data[2], data[3])
+        format!(
+            "{:02X} {:02X} {:02X} {:02X} ...",
+            data[0], data[1], data[2], data[3]
+        )
     } else {
-        format!("{}", data.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" "))
+        format!(
+            "{}",
+            data.iter()
+                .map(|b| format!("{:02X}", b))
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
     };
-    crate::debug_log!("[MIME] unknown format ({}bytes): {}", data.len(), hex_preview);
+    crate::debug_log!(
+        "[MIME] unknown format ({}bytes): {}",
+        data.len(),
+        hex_preview
+    );
     None
 }
 
@@ -247,10 +260,17 @@ fn extract_png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 
 /// 生成 Kitty 图像协议数据包
 fn kitty_graphics_payload(mime_type: &str, data: &[u8]) -> Vec<u8> {
-    crate::debug_log!("[KITTY] generating payload: mime_type={}, data_size={}", mime_type, data.len());
+    crate::debug_log!(
+        "[KITTY] generating payload: mime_type={}, data_size={}",
+        mime_type,
+        data.len()
+    );
 
     let encoded = base64::engine::general_purpose::STANDARD_NO_PAD.encode(data);
-    crate::debug_log!("[KITTY] encoded data size (base64): {} bytes", encoded.len());
+    crate::debug_log!(
+        "[KITTY] encoded data size (base64): {} bytes",
+        encoded.len()
+    );
 
     let mut output = Vec::new();
 
@@ -268,10 +288,11 @@ fn kitty_graphics_payload(mime_type: &str, data: &[u8]) -> Vec<u8> {
         output.extend_from_slice(format!("s={},v={},", width, height).as_bytes());
     }
 
-    output.extend_from_slice(b"m=1,");  // m=1: more data coming (or action)
+    output.extend_from_slice(b"m=1,"); // m=1: more data coming (or action)
 
     // 添加 mime 类型（可选，但有助于解析）
-    let mime_encoded = base64::engine::general_purpose::STANDARD_NO_PAD.encode(mime_type.as_bytes());
+    let mime_encoded =
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(mime_type.as_bytes());
     output.extend_from_slice(format!("m={};", mime_encoded).as_bytes());
 
     // 添加 base64 编码的数据
@@ -380,7 +401,9 @@ fn configure_fonts_and_gpu(
             }
         }
         if data.is_none() {
-            eprintln!("[Fonts] Warning: no bold font variant found, bold text will use regular weight");
+            eprintln!(
+                "[Fonts] Warning: no bold font variant found, bold text will use regular weight"
+            );
         }
         data
     };
@@ -406,7 +429,10 @@ fn configure_fonts_and_gpu(
         );
 
         let mut renderer = render_state.renderer.write();
-        if let Some(gpu_res) = renderer.callback_resources.get_mut::<gpu::callback::GpuResources>() {
+        if let Some(gpu_res) = renderer
+            .callback_resources
+            .get_mut::<gpu::callback::GpuResources>()
+        {
             gpu_res.atlas = atlas;
             gpu_res.pipeline = pipeline;
         } else {
@@ -414,7 +440,10 @@ fn configure_fonts_and_gpu(
             renderer.callback_resources.insert(gpu_resources);
         }
 
-        eprintln!("[GPU] Configured GPU terminal renderer (font_size_px={:.1})", font_size_px);
+        eprintln!(
+            "[GPU] Configured GPU terminal renderer (font_size_px={:.1})",
+            font_size_px
+        );
     } else {
         eprintln!("[GPU] Warning: wgpu render state or font data not available, falling back to CPU rendering");
     }
@@ -422,7 +451,8 @@ fn configure_fonts_and_gpu(
 
 fn apply_theme_visuals(ctx: &egui::Context, theme: &theme::Theme) {
     let ui = &theme.ui;
-    let brightness = u16::from(ui.window_bg[0]) + u16::from(ui.window_bg[1]) + u16::from(ui.window_bg[2]);
+    let brightness =
+        u16::from(ui.window_bg[0]) + u16::from(ui.window_bg[1]) + u16::from(ui.window_bg[2]);
     let mut visuals = if brightness > 382 {
         egui::Visuals::light()
     } else {
@@ -464,7 +494,11 @@ fn main() -> Result<(), eframe::Error> {
             let initial_theme = theme::Theme::get_theme(&cfg_clone.theme).unwrap_or_default();
             apply_theme_visuals(&cc.egui_ctx, &initial_theme);
 
-            Ok(Box::new(TerminalApp::new(&cfg_clone, cc.egui_ctx.clone(), cc.wgpu_render_state.clone())))
+            Ok(Box::new(TerminalApp::new(
+                &cfg_clone,
+                cc.egui_ctx.clone(),
+                cc.wgpu_render_state.clone(),
+            )))
         }),
     )
 }
@@ -533,7 +567,10 @@ fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::
     !ctx.text_edit_focused() && modifiers.command && !modifiers.alt
 }
 
-fn shortcut_event_to_key_event(event: egui::Event, modifiers: egui::Modifiers) -> Option<egui::Event> {
+fn shortcut_event_to_key_event(
+    event: egui::Event,
+    modifiers: egui::Modifiers,
+) -> Option<egui::Event> {
     let key = match event {
         egui::Event::Copy => {
             crate::debug_log!("[EVENT] converting Copy to Key::C");
@@ -566,8 +603,12 @@ fn normalize_terminal_shortcut_events(
     restore_shortcuts: bool,
     preserve_paste_event: bool,
 ) {
-    crate::debug_log!("[NORMALIZE] input: {} events, restore_shortcuts={}, preserve_paste_event={}",
-                      events.len(), restore_shortcuts, preserve_paste_event);
+    crate::debug_log!(
+        "[NORMALIZE] input: {} events, restore_shortcuts={}, preserve_paste_event={}",
+        events.len(),
+        restore_shortcuts,
+        preserve_paste_event
+    );
 
     let mut normalized_events = Vec::with_capacity(events.len());
 
@@ -582,9 +623,19 @@ fn normalize_terminal_shortcut_events(
             egui::Event::Cut => {
                 crate::debug_log!("[NORMALIZE] found Cut event");
             }
-            egui::Event::Key { key, modifiers: key_mods, pressed, .. } => {
-                crate::debug_log!("[NORMALIZE] found Key event: {:?} pressed={} ctrl={} shift={}",
-                                 key, pressed, key_mods.ctrl, key_mods.shift);
+            egui::Event::Key {
+                key,
+                modifiers: key_mods,
+                pressed,
+                ..
+            } => {
+                crate::debug_log!(
+                    "[NORMALIZE] found Key event: {:?} pressed={} ctrl={} shift={}",
+                    key,
+                    pressed,
+                    key_mods.ctrl,
+                    key_mods.shift
+                );
             }
             _ => {}
         }
@@ -662,13 +713,20 @@ fn clipboard_5522_response_for_mime(mime_type: &str, data: &[u8]) -> Vec<u8> {
 
 /// 生成 OSC 5522 主动粘贴数据包（type=write，用于向应用发送剪贴板内容）
 fn clipboard_5522_write_for_mime(mime_type: &str, data: &[u8]) -> Vec<u8> {
-    crate::debug_log!("[OSC5522] generating write packet: mime_type={}, data_size={}", mime_type, data.len());
+    crate::debug_log!(
+        "[OSC5522] generating write packet: mime_type={}, data_size={}",
+        mime_type,
+        data.len()
+    );
 
     let encoded_mime = base64::engine::general_purpose::STANDARD.encode(mime_type.as_bytes());
     crate::debug_log!("[OSC5522] encoded mime (base64): {}", encoded_mime);
 
     let encoded_data = base64::engine::general_purpose::STANDARD.encode(data);
-    crate::debug_log!("[OSC5522] encoded data size (base64): {} bytes", encoded_data.len());
+    crate::debug_log!(
+        "[OSC5522] encoded data size (base64): {} bytes",
+        encoded_data.len()
+    );
 
     let mut output = Vec::new();
 
@@ -787,12 +845,23 @@ fn build_keybinding_string(key: egui::Key, modifiers: egui::Modifiers) -> Option
 
     parts.push(&key_str);
     let result = parts.join("+");
-    crate::debug_log!("[KEYBINDING] key={:?}, shift={}, ctrl={}, alt={} => {}", key, modifiers.shift, modifiers.ctrl, modifiers.alt, result);
+    crate::debug_log!(
+        "[KEYBINDING] key={:?}, shift={}, ctrl={}, alt={} => {}",
+        key,
+        modifiers.shift,
+        modifiers.ctrl,
+        modifiers.alt,
+        result
+    );
     Some(result)
 }
 
 impl TerminalApp {
-    fn new(cfg: &config::Config, repaint_ctx: egui::Context, wgpu_render_state: Option<egui_wgpu::RenderState>) -> Self {
+    fn new(
+        cfg: &config::Config,
+        repaint_ctx: egui::Context,
+        wgpu_render_state: Option<egui_wgpu::RenderState>,
+    ) -> Self {
         let cols = cfg.cols;
         let rows = cfg.rows;
 
@@ -814,21 +883,33 @@ impl TerminalApp {
         };
 
         // 创建首个会话，使用保存的 cwd 和 session_id（如果有）
-        let first_cwd = saved_snapshot.as_ref().and_then(|s| s.sessions.first()?.cwd.as_deref().map(String::from));
-        let first_session_id = saved_snapshot.as_ref().and_then(|s| s.sessions.first()?.session_id.as_deref().map(String::from));
+        let first_cwd = saved_snapshot
+            .as_ref()
+            .and_then(|s| s.sessions.first()?.cwd.as_deref().map(String::from));
+        let first_session_id = saved_snapshot
+            .as_ref()
+            .and_then(|s| s.sessions.first()?.session_id.as_deref().map(String::from));
         let saved_active_index = saved_snapshot.as_ref().and_then(|s| s.active_index);
         let terminal = TerminalState::new(cols, rows);
 
-        let shell = match ShellSession::new_with_cwd(cols, rows, first_cwd.as_deref(), first_session_id.as_deref(), repaint_ctx.clone()) {
+        let shell = match ShellSession::new_with_cwd(
+            cols,
+            rows,
+            first_cwd.as_deref(),
+            first_session_id.as_deref(),
+            repaint_ctx.clone(),
+        ) {
             Ok(session) => {
                 eprintln!("✓ Shell session started successfully");
                 session
             }
             Err(e) => {
-                eprintln!("✗ Failed to start shell with saved cwd, falling back: {}", e);
-                ShellSession::new(cols, rows, repaint_ctx.clone()).unwrap_or_else(|e| {
-                    panic!("Cannot create shell session: {}", e)
-                })
+                eprintln!(
+                    "✗ Failed to start shell with saved cwd, falling back: {}",
+                    e
+                );
+                ShellSession::new(cols, rows, repaint_ctx.clone())
+                    .unwrap_or_else(|e| panic!("Cannot create shell session: {}", e))
             }
         };
 
@@ -838,7 +919,10 @@ impl TerminalApp {
         // 恢复额外的会话（包括 restorable commands 回放）
         if let Some(snap) = saved_snapshot {
             session_manager.restore_from_snapshots(snap.sessions, saved_active_index);
-            eprintln!("[SessionPersistence] Restored {} sessions", session_manager.len());
+            eprintln!(
+                "[SessionPersistence] Restored {} sessions",
+                session_manager.len()
+            );
         }
 
         for session in session_manager.sessions_mut() {
@@ -851,8 +935,7 @@ impl TerminalApp {
         let keybindings = keybindings::KeyBindings::load().unwrap_or_default();
 
         // Load theme
-        let current_theme = theme::Theme::get_theme(&cfg.theme)
-            .unwrap_or_default();
+        let current_theme = theme::Theme::get_theme(&cfg.theme).unwrap_or_default();
 
         let mut renderer = TerminalRenderer::new(
             cfg.font_size,
@@ -958,7 +1041,11 @@ impl TerminalApp {
         ctx.request_repaint();
     }
 
-    fn create_session_with_current_config(&mut self, name: Option<String>, tags: Option<Vec<String>>) -> usize {
+    fn create_session_with_current_config(
+        &mut self,
+        name: Option<String>,
+        tags: Option<Vec<String>>,
+    ) -> usize {
         let cols = self.cols.max(1);
         let rows = self.rows.max(1);
         self.session_manager
@@ -967,217 +1054,251 @@ impl TerminalApp {
 
     #[allow(deprecated)]
     fn render_ui(&mut self, ctx: &egui::Context) {
-        let frame = egui::Frame::NONE
-            .inner_margin(0.0);
+        let frame = egui::Frame::NONE.inner_margin(0.0);
 
-        egui::CentralPanel::default()
-            .frame(frame)
-            .show(ctx, |ui| {
-                // 消除 tab 栏与终端之间的间距
-                ui.spacing_mut().item_spacing.y = 0.0;
+        egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
+            // 消除 tab 栏与终端之间的间距
+            ui.spacing_mut().item_spacing.y = 0.0;
 
-                // 渲染会话标签栏（仅在多会话时显示，单会话进入 zen 模式）
-                let show_tab_bar = self.session_manager.sessions().len() > 1;
+            // 渲染会话标签栏（仅在多会话时显示，单会话进入 zen 模式）
+            let show_tab_bar = self.session_manager.sessions().len() > 1;
 
-                // Tab 栏 - 绘制标签和按钮
-                if show_tab_bar {
-                    let tab_height = 30.0;
-                    let close_btn_size = 14.0;
-                    let tab_rect = egui::Rect::from_min_size(
-                        ui.cursor().left_top(),
-                        egui::vec2(ui.available_width(), tab_height),
-                    );
+            // Tab 栏 - 绘制标签和按钮
+            if show_tab_bar {
+                let tab_height = 30.0;
+                let close_btn_size = 14.0;
+                let tab_rect = egui::Rect::from_min_size(
+                    ui.cursor().left_top(),
+                    egui::vec2(ui.available_width(), tab_height),
+                );
 
-                    let painter = ui.painter();
+                let painter = ui.painter();
 
-                    // 背景
-                    let tab_alpha = (self.renderer.opacity * 255.0) as u8;
-                    painter.rect_filled(tab_rect, 0.0, egui::Color32::from_rgba_unmultiplied(40, 40, 40, tab_alpha));
+                // 背景
+                let tab_alpha = (self.renderer.opacity * 255.0) as u8;
+                painter.rect_filled(
+                    tab_rect,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(40, 40, 40, tab_alpha),
+                );
 
-                    // === Tab 布局常量 ===
-                    let tab_padding = 20.0 + close_btn_size + 4.0; // 文本左右 padding + 关闭按钮
-                    let min_tab_width: f32 = 60.0;
-                    let max_tab_width: f32 = 200.0;
-                    let active_tab_extra: f32 = 60.0;
-                    let active_min_width: f32 = min_tab_width * 2.0; // 当前 session 最小宽度，更突出
-                    let tab_spacing: f32 = 1.0;
-                    let left_margin: f32 = 5.0;
-                    let reserved_right: f32 = 80.0; // "+"按钮 + 关闭窗口按钮 + margin
+                // === Tab 布局常量 ===
+                let tab_padding = 20.0 + close_btn_size + 4.0; // 文本左右 padding + 关闭按钮
+                let min_tab_width: f32 = 60.0;
+                let max_tab_width: f32 = 200.0;
+                let active_tab_extra: f32 = 60.0;
+                let active_min_width: f32 = min_tab_width * 2.0; // 当前 session 最小宽度，更突出
+                let tab_spacing: f32 = 1.0;
+                let left_margin: f32 = 5.0;
+                let reserved_right: f32 = 80.0; // "+"按钮 + 关闭窗口按钮 + margin
 
-                    let active_idx_for_layout = self.session_manager.active_index();
+                let active_idx_for_layout = self.session_manager.active_index();
 
-                    // 文本测量闭包
-                    let measure = |text: &str| -> f32 {
-                        painter.layout_no_wrap(
+                // 文本测量闭包
+                let measure = |text: &str| -> f32 {
+                    painter
+                        .layout_no_wrap(
                             text.to_string(),
                             egui::FontId::monospace(12.0),
                             egui::Color32::WHITE,
-                        ).rect.width()
-                    };
+                        )
+                        .rect
+                        .width()
+                };
 
-                    // 路径缩略闭包：将 CWD 路径缩略到 max_text_w 像素以内
-                    let abbreviate_path = |title: &str, max_text_w: f32| -> String {
-                        if measure(title) <= max_text_w {
-                            return title.to_string();
-                        }
-                        let (prefix, path_part) = if let Some(rest) = title.strip_prefix("~/") {
-                            ("~/", rest)
-                        } else if let Some(rest) = title.strip_prefix('/') {
-                            ("/", rest)
-                        } else {
-                            ("", title)
-                        };
-                        let parts: Vec<&str> = path_part.split('/').collect();
-                        if parts.len() <= 1 {
-                            let ellipsis = "...";
-                            let mut truncated = String::new();
-                            for ch in title.chars() {
-                                let test = format!("{}{}{}", truncated, ch, ellipsis);
-                                if measure(&test) > max_text_w { break; }
-                                truncated.push(ch);
-                            }
-                            return format!("{}{}", truncated, ellipsis);
-                        }
-                        let last = parts[parts.len() - 1];
-                        let abbreviated_middle: Vec<String> = parts[..parts.len() - 1]
-                            .iter()
-                            .map(|p| p.chars().next().map(|c| c.to_string()).unwrap_or_default())
-                            .collect();
-                        let short_path = format!("{}{}/{}", prefix, abbreviated_middle.join("/"), last);
-                        if measure(&short_path) <= max_text_w {
-                            return short_path;
-                        }
-                        let short_prefix = format!("{}{}/", prefix, abbreviated_middle.join("/"));
+                // 路径缩略闭包：将 CWD 路径缩略到 max_text_w 像素以内
+                let abbreviate_path = |title: &str, max_text_w: f32| -> String {
+                    if measure(title) <= max_text_w {
+                        return title.to_string();
+                    }
+                    let (prefix, path_part) = if let Some(rest) = title.strip_prefix("~/") {
+                        ("~/", rest)
+                    } else if let Some(rest) = title.strip_prefix('/') {
+                        ("/", rest)
+                    } else {
+                        ("", title)
+                    };
+                    let parts: Vec<&str> = path_part.split('/').collect();
+                    if parts.len() <= 1 {
                         let ellipsis = "...";
-                        let mut truncated = short_prefix.clone();
-                        for ch in last.chars() {
+                        let mut truncated = String::new();
+                        for ch in title.chars() {
                             let test = format!("{}{}{}", truncated, ch, ellipsis);
-                            if measure(&test) > max_text_w { break; }
+                            if measure(&test) > max_text_w {
+                                break;
+                            }
                             truncated.push(ch);
                         }
-                        format!("{}{}", truncated, ellipsis)
-                    };
-
-                    // === 第一阶段：收集原始路径 + 为每个 tab 生成 display_text ===
-                    // 活跃 tab 允许更大的文本宽度
-                    let active_max_text = max_tab_width + active_tab_extra - tab_padding;
-                    let inactive_max_text = max_tab_width - tab_padding;
-
-                    let tab_infos: Vec<(usize, String, f32)> = self.session_manager.sessions()
+                        return format!("{}{}", truncated, ellipsis);
+                    }
+                    let last = parts[parts.len() - 1];
+                    let abbreviated_middle: Vec<String> = parts[..parts.len() - 1]
                         .iter()
-                        .enumerate()
-                        .map(|(idx, session)| {
-                            let pid = session.get_shell_pid();
-                            let tab_title = crate::session_manager::get_process_cwd(pid)
-                                .map(|cwd| {
-                                    if let Ok(home) = std::env::var("HOME") {
-                                        if cwd == home {
-                                            "~".to_string()
-                                        } else if let Some(rest) = cwd.strip_prefix(&home) {
-                                            format!("~{}", rest)
-                                        } else {
-                                            cwd
-                                        }
+                        .map(|p| p.chars().next().map(|c| c.to_string()).unwrap_or_default())
+                        .collect();
+                    let short_path = format!("{}{}/{}", prefix, abbreviated_middle.join("/"), last);
+                    if measure(&short_path) <= max_text_w {
+                        return short_path;
+                    }
+                    let short_prefix = format!("{}{}/", prefix, abbreviated_middle.join("/"));
+                    let ellipsis = "...";
+                    let mut truncated = short_prefix.clone();
+                    for ch in last.chars() {
+                        let test = format!("{}{}{}", truncated, ch, ellipsis);
+                        if measure(&test) > max_text_w {
+                            break;
+                        }
+                        truncated.push(ch);
+                    }
+                    format!("{}{}", truncated, ellipsis)
+                };
+
+                // === 第一阶段：收集原始路径 + 为每个 tab 生成 display_text ===
+                // 活跃 tab 允许更大的文本宽度
+                let active_max_text = max_tab_width + active_tab_extra - tab_padding;
+                let inactive_max_text = max_tab_width - tab_padding;
+
+                let tab_infos: Vec<(usize, String, f32)> = self
+                    .session_manager
+                    .sessions()
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, session)| {
+                        let pid = session.get_shell_pid();
+                        let tab_title = crate::session_manager::get_process_cwd(pid)
+                            .map(|cwd| {
+                                if let Ok(home) = std::env::var("HOME") {
+                                    if cwd == home {
+                                        "~".to_string()
+                                    } else if let Some(rest) = cwd.strip_prefix(&home) {
+                                        format!("~{}", rest)
                                     } else {
                                         cwd
                                     }
-                                })
-                                .unwrap_or_else(|| session.metadata.name.clone());
+                                } else {
+                                    cwd
+                                }
+                            })
+                            .unwrap_or_else(|| session.metadata.name.clone());
 
-                            let max_text_w = if idx == active_idx_for_layout { active_max_text } else { inactive_max_text };
-                            let display_text = abbreviate_path(&tab_title, max_text_w);
-                            let ideal_width = if idx == active_idx_for_layout {
-                                (measure(&display_text) + tab_padding).max(active_min_width)
-                            } else {
-                                (measure(&display_text) + tab_padding).clamp(min_tab_width, max_tab_width)
-                            };
-                            (idx, display_text, ideal_width)
-                        })
-                        .collect();
-
-                    // === 第二阶段：布局分配 —— 计算每个 tab 的最终宽度 ===
-                    let available_width = tab_rect.width() - left_margin - reserved_right;
-                    let n = tab_infos.len();
-                    let total_spacing = if n > 1 { (n - 1) as f32 * tab_spacing } else { 0.0 };
-
-                    let tab_widths: Vec<f32> = {
-                        let total_ideal: f32 = tab_infos.iter().map(|(_, _, w)| w).sum::<f32>() + total_spacing;
-
-                        if total_ideal <= available_width {
-                            // 空间足够，各自用理想宽度
-                            tab_infos.iter().map(|(_, _, w)| *w).collect()
+                        let max_text_w = if idx == active_idx_for_layout {
+                            active_max_text
                         } else {
-                            // 空间不足：先保障活跃 tab，压缩非活跃 tab
-                            let active_w = tab_infos.iter()
-                                .find(|(idx, _, _)| *idx == active_idx_for_layout)
-                                .map(|(_, _, w)| *w)
-                                .unwrap_or(min_tab_width);
-                            let remaining = (available_width - active_w - total_spacing).max(0.0);
-                            let inactive_count = if n > 1 { n - 1 } else { 0 };
+                            inactive_max_text
+                        };
+                        let display_text = abbreviate_path(&tab_title, max_text_w);
+                        let ideal_width = if idx == active_idx_for_layout {
+                            (measure(&display_text) + tab_padding).max(active_min_width)
+                        } else {
+                            (measure(&display_text) + tab_padding)
+                                .clamp(min_tab_width, max_tab_width)
+                        };
+                        (idx, display_text, ideal_width)
+                    })
+                    .collect();
 
-                            if inactive_count == 0 {
-                                // 只有一个 tab
-                                vec![available_width.max(min_tab_width)]
-                            } else {
-                                let per_inactive = (remaining / inactive_count as f32).max(min_tab_width);
-                                tab_infos.iter().map(|(idx, _, w)| {
+                // === 第二阶段：布局分配 —— 计算每个 tab 的最终宽度 ===
+                let available_width = tab_rect.width() - left_margin - reserved_right;
+                let n = tab_infos.len();
+                let total_spacing = if n > 1 {
+                    (n - 1) as f32 * tab_spacing
+                } else {
+                    0.0
+                };
+
+                let tab_widths: Vec<f32> = {
+                    let total_ideal: f32 =
+                        tab_infos.iter().map(|(_, _, w)| w).sum::<f32>() + total_spacing;
+
+                    if total_ideal <= available_width {
+                        // 空间足够，各自用理想宽度
+                        tab_infos.iter().map(|(_, _, w)| *w).collect()
+                    } else {
+                        // 空间不足：先保障活跃 tab，压缩非活跃 tab
+                        let active_w = tab_infos
+                            .iter()
+                            .find(|(idx, _, _)| *idx == active_idx_for_layout)
+                            .map(|(_, _, w)| *w)
+                            .unwrap_or(min_tab_width);
+                        let remaining = (available_width - active_w - total_spacing).max(0.0);
+                        let inactive_count = if n > 1 { n - 1 } else { 0 };
+
+                        if inactive_count == 0 {
+                            // 只有一个 tab
+                            vec![available_width.max(min_tab_width)]
+                        } else {
+                            let per_inactive =
+                                (remaining / inactive_count as f32).max(min_tab_width);
+                            tab_infos
+                                .iter()
+                                .map(|(idx, _, w)| {
                                     if *idx == active_idx_for_layout {
                                         // 活跃 tab 也不能超过可用空间
                                         active_w.min(available_width - total_spacing)
                                     } else {
                                         (*w).min(per_inactive).max(min_tab_width)
                                     }
-                                }).collect()
-                            }
-                        }
-                    };
-
-                    // === 第三阶段：滚动偏移 —— 保证活跃 tab 可见 ===
-                    {
-                        let total_width: f32 = tab_widths.iter().sum::<f32>() + total_spacing;
-                        let max_scroll = (total_width - available_width).max(0.0);
-
-                        if total_width <= available_width {
-                            self.tab_scroll_offset = 0.0;
-                        } else {
-                            // 计算活跃 tab 的位置
-                            let mut active_left: f32 = 0.0;
-                            for (i, tw) in tab_widths.iter().enumerate() {
-                                if i == active_idx_for_layout { break; }
-                                active_left += tw + tab_spacing;
-                            }
-                            let active_right = active_left + tab_widths.get(active_idx_for_layout).copied().unwrap_or(0.0);
-
-                            // 如果活跃 tab 左边超出可视区
-                            if active_left < self.tab_scroll_offset {
-                                self.tab_scroll_offset = active_left;
-                            }
-                            // 如果活跃 tab 右边超出可视区
-                            if active_right > self.tab_scroll_offset + available_width {
-                                self.tab_scroll_offset = active_right - available_width;
-                            }
-                            self.tab_scroll_offset = self.tab_scroll_offset.clamp(0.0, max_scroll);
+                                })
+                                .collect()
                         }
                     }
+                };
 
-                    // 检测悬停位置（在绘制之前）
-                    let hover_pos = ctx.input(|i| i.pointer.hover_pos());
-                    self.hovered_tab_index = None;
+                // === 第三阶段：滚动偏移 —— 保证活跃 tab 可见 ===
+                {
+                    let total_width: f32 = tab_widths.iter().sum::<f32>() + total_spacing;
+                    let max_scroll = (total_width - available_width).max(0.0);
 
-                    // 更新当前鼠标x位置（用于拖拽动画）
-                    if let Some(pos) = hover_pos {
-                        self.current_mouse_x = pos.x;
+                    if total_width <= available_width {
+                        self.tab_scroll_offset = 0.0;
+                    } else {
+                        // 计算活跃 tab 的位置
+                        let mut active_left: f32 = 0.0;
+                        for (i, tw) in tab_widths.iter().enumerate() {
+                            if i == active_idx_for_layout {
+                                break;
+                            }
+                            active_left += tw + tab_spacing;
+                        }
+                        let active_right = active_left
+                            + tab_widths
+                                .get(active_idx_for_layout)
+                                .copied()
+                                .unwrap_or(0.0);
+
+                        // 如果活跃 tab 左边超出可视区
+                        if active_left < self.tab_scroll_offset {
+                            self.tab_scroll_offset = active_left;
+                        }
+                        // 如果活跃 tab 右边超出可视区
+                        if active_right > self.tab_scroll_offset + available_width {
+                            self.tab_scroll_offset = active_right - available_width;
+                        }
+                        self.tab_scroll_offset = self.tab_scroll_offset.clamp(0.0, max_scroll);
                     }
+                }
 
-                    // 检测鼠标释放（点击完成或拖拽结束）
-                    let mouse_released = ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
-                    let mouse_pressed = ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+                // 检测悬停位置（在绘制之前）
+                let hover_pos = ctx.input(|i| i.pointer.hover_pos());
+                self.hovered_tab_index = None;
 
-                    // 检查是否发生了实际的拖拽（超过阈值距离）
-                    let is_actually_dragging = if let (Some(_), Some(start_x)) = (self.dragging_tab, self.drag_start_pos) {
+                // 更新当前鼠标x位置（用于拖拽动画）
+                if let Some(pos) = hover_pos {
+                    self.current_mouse_x = pos.x;
+                }
+
+                // 检测鼠标释放（点击完成或拖拽结束）
+                let mouse_released =
+                    ctx.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+                let mouse_pressed =
+                    ctx.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary));
+
+                // 检查是否发生了实际的拖拽（超过阈值距离）
+                let is_actually_dragging =
+                    if let (Some(_), Some(start_x)) = (self.dragging_tab, self.drag_start_pos) {
                         if let Some(current_pos) = ctx.input(|i| i.pointer.latest_pos()) {
                             let distance = (current_pos.x - start_x).abs();
-                            distance > 5.0  // 5px拖拽阈值
+                            distance > 5.0 // 5px拖拽阈值
                         } else {
                             false
                         }
@@ -1185,91 +1306,43 @@ impl TerminalApp {
                         false
                     };
 
-                    // === 交互辅助：用 tab_widths 计算 tab 位置的宏 ===
-                    // scroll_base: 绝对坐标 x 基准（减去滚动偏移）
-                    let scroll_base = tab_rect.left() + left_margin - self.tab_scroll_offset;
+                // === 交互辅助：用 tab_widths 计算 tab 位置的宏 ===
+                // scroll_base: 绝对坐标 x 基准（减去滚动偏移）
+                let scroll_base = tab_rect.left() + left_margin - self.tab_scroll_offset;
 
-                    // 处理拖拽结束或点击
-                    if mouse_released {
-                        if is_actually_dragging {
-                            // 实际拖拽结束 - 计算drop目标并执行重排
-                            if let Some(from_idx) = self.dragging_tab {
-                                if let Some(hover_pos) = hover_pos {
-                                    if tab_rect.contains(hover_pos) {
-                                        let mut x_off = scroll_base;
-                                        let mut target_idx = from_idx;
-
-                                        for (i, &tw) in tab_widths.iter().enumerate() {
-                                            if hover_pos.x >= x_off && hover_pos.x < x_off + tw {
-                                                target_idx = i;
-                                                break;
-                                            }
-                                            x_off += tw + tab_spacing;
-                                        }
-
-                                        // 执行重排
-                                        if target_idx != from_idx {
-                                            self.session_manager.reorder_sessions(from_idx, target_idx);
-                                        }
-                                    }
-                                }
-                            }
-                            self.dragging_tab = None;
-                            self.drag_start_pos = None;
-                        } else {
-                            // 简单点击（没有发生实际拖拽）
-                            if let Some(click_pos) = hover_pos.or_else(|| ctx.input(|i| i.pointer.latest_pos())) {
-                                if tab_rect.contains(click_pos) {
+                // 处理拖拽结束或点击
+                if mouse_released {
+                    if is_actually_dragging {
+                        // 实际拖拽结束 - 计算drop目标并执行重排
+                        if let Some(from_idx) = self.dragging_tab {
+                            if let Some(hover_pos) = hover_pos {
+                                if tab_rect.contains(hover_pos) {
                                     let mut x_off = scroll_base;
+                                    let mut target_idx = from_idx;
+
                                     for (i, &tw) in tab_widths.iter().enumerate() {
-                                        let tab_rect_item = egui::Rect::from_min_size(
-                                            egui::pos2(x_off, tab_rect.top() + 5.0),
-                                            egui::vec2(tw, tab_height - 10.0),
-                                        );
-
-                                        let close_btn_rect = egui::Rect::from_min_size(
-                                            egui::pos2(
-                                                tab_rect_item.right() - close_btn_size - 3.0,
-                                                tab_rect_item.center().y - close_btn_size / 2.0,
-                                            ),
-                                            egui::vec2(close_btn_size, close_btn_size),
-                                        );
-
-                                        if close_btn_rect.contains(click_pos) {
-                                            if self.session_manager.len() > 1 {
-                                                self.session_manager.close_session(i);
-                                                self.schedule_session_save();
-                                            } else {
-                                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                                                return;
-                                            }
-                                            self.dragging_tab = None;
-                                            self.drag_start_pos = None;
-                                            break;
-                                        } else if tab_rect_item.contains(click_pos) {
-                                            self.session_manager.switch_session(i);
-                                            self.force_resize_session = true;
-                                            self.dragging_tab = None;
-                                            self.drag_start_pos = None;
+                                        if hover_pos.x >= x_off && hover_pos.x < x_off + tw {
+                                            target_idx = i;
                                             break;
                                         }
-
                                         x_off += tw + tab_spacing;
                                     }
+
+                                    // 执行重排
+                                    if target_idx != from_idx {
+                                        self.session_manager.reorder_sessions(from_idx, target_idx);
+                                    }
                                 }
                             }
-                            // 清除拖拽状态（即使没有找到点击的tab）
-                            if self.dragging_tab.is_some() {
-                                self.dragging_tab = None;
-                                self.drag_start_pos = None;
-                            }
                         }
-                    }
-
-                    // 检测拖拽开始（鼠标按下且移动）
-                    if mouse_pressed {
-                        if let Some(press_pos) = ctx.input(|i| i.pointer.press_origin()) {
-                            if self.dragging_tab.is_none() {
+                        self.dragging_tab = None;
+                        self.drag_start_pos = None;
+                    } else {
+                        // 简单点击（没有发生实际拖拽）
+                        if let Some(click_pos) =
+                            hover_pos.or_else(|| ctx.input(|i| i.pointer.latest_pos()))
+                        {
+                            if tab_rect.contains(click_pos) {
                                 let mut x_off = scroll_base;
                                 for (i, &tw) in tab_widths.iter().enumerate() {
                                     let tab_rect_item = egui::Rect::from_min_size(
@@ -1285,9 +1358,22 @@ impl TerminalApp {
                                         egui::vec2(close_btn_size, close_btn_size),
                                     );
 
-                                    if tab_rect_item.contains(press_pos) && !close_btn_rect.contains(press_pos) {
-                                        self.dragging_tab = Some(i);
-                                        self.drag_start_pos = Some(press_pos.x);
+                                    if close_btn_rect.contains(click_pos) {
+                                        if self.session_manager.len() > 1 {
+                                            self.session_manager.close_session(i);
+                                            self.schedule_session_save();
+                                        } else {
+                                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                                            return;
+                                        }
+                                        self.dragging_tab = None;
+                                        self.drag_start_pos = None;
+                                        break;
+                                    } else if tab_rect_item.contains(click_pos) {
+                                        self.session_manager.switch_session(i);
+                                        self.force_resize_session = true;
+                                        self.dragging_tab = None;
+                                        self.drag_start_pos = None;
                                         break;
                                     }
 
@@ -1295,453 +1381,564 @@ impl TerminalApp {
                                 }
                             }
                         }
+                        // 清除拖拽状态（即使没有找到点击的tab）
+                        if self.dragging_tab.is_some() {
+                            self.dragging_tab = None;
+                            self.drag_start_pos = None;
+                        }
                     }
+                }
 
-                    // 计算拖拽过程中的动画效果
-                    let mut drag_target_idx: Option<usize> = None;
-                    if is_actually_dragging {
-                        if let Some(hover_pos) = hover_pos {
-                            if let Some(_from_idx) = self.dragging_tab {
-                                let mut x_off = scroll_base;
-                                for (i, &tw) in tab_widths.iter().enumerate() {
-                                    if hover_pos.x >= x_off && hover_pos.x < x_off + tw {
-                                        drag_target_idx = Some(i);
-                                        break;
-                                    }
-                                    x_off += tw + tab_spacing;
-                                }
-                            }
-                        }
-                        // 请求持续重绘以显示动画
-                        ctx.request_repaint();
-                    }
-
-                    // === 渲染 Tab 栏（使用 clip rect 裁剪溢出内容）===
-                    let tab_clip_rect = egui::Rect::from_min_max(
-                        egui::pos2(tab_rect.left() + left_margin, tab_rect.top()),
-                        egui::pos2(tab_rect.right() - reserved_right, tab_rect.bottom()),
-                    );
-                    let clipped_painter = painter.with_clip_rect(tab_clip_rect);
-
-                    let mut x_offset = scroll_base;
-                    let active_idx = self.session_manager.active_index();
-
-                    // 绘制每个标签
-                    for (i, (_, display_text, _)) in tab_infos.iter().enumerate() {
-                        let tab_width = tab_widths[i];
-                        let mut tab_rect_item = egui::Rect::from_min_size(
-                            egui::pos2(x_offset, tab_rect.top() + 5.0),
-                            egui::vec2(tab_width, tab_height - 10.0),
-                        );
-
-                        let is_active = i == active_idx;
-                        let is_dragging = self.dragging_tab == Some(i);
-                        let is_drag_target = drag_target_idx == Some(i);
-
-                        // 计算拖拽过程中的动画位移
-                        if is_actually_dragging {
-                            if is_dragging {
-                                // 被拖拽的Tab跟随鼠标移动
-                                if let Some(start_x) = self.drag_start_pos {
-                                    let offset = self.current_mouse_x - start_x;
-                                    tab_rect_item = tab_rect_item.translate(egui::vec2(offset, 0.0));
-                                }
-                            } else if let Some(from_idx) = self.dragging_tab {
-                                // 其他Tabs根据拖拽目标位置进行动画插入
-                                let drag_to_left = is_drag_target && drag_target_idx.map(|t| t < from_idx).unwrap_or(false);
-                                let drag_to_right = is_drag_target && drag_target_idx.map(|t| t > from_idx).unwrap_or(false);
-
-                                if drag_to_left {
-                                    if i > from_idx {
-                                        let push_offset = tab_width + tab_spacing;
-                                        tab_rect_item = tab_rect_item.translate(egui::vec2(push_offset, 0.0));
-                                    }
-                                } else if drag_to_right {
-                                    if i < from_idx {
-                                        let push_offset = -(tab_width + tab_spacing);
-                                        tab_rect_item = tab_rect_item.translate(egui::vec2(push_offset, 0.0));
-                                    }
-                                }
-                            }
-                        }
-
-                        // 检测悬停
-                        let is_hovered = if let Some(hover_pos) = hover_pos {
-                            tab_rect_item.contains(hover_pos) && tab_clip_rect.contains(hover_pos)
-                        } else {
-                            false
-                        };
-
-                        if is_hovered && !is_actually_dragging {
-                            self.hovered_tab_index = Some(i);
-                        }
-
-                        // 背景色：无边框风格，通过背景色差异区分状态
-                        let bg_color = if is_active {
-                            egui::Color32::from_rgb(50, 50, 60)
-                        } else if is_hovered || is_dragging {
-                            egui::Color32::from_rgb(55, 55, 65)
-                        } else {
-                            egui::Color32::TRANSPARENT
-                        };
-
-                        // 绘制Tab背景（无边框）
-                        if is_dragging && is_actually_dragging {
-                            let drag_bg = if is_active {
-                                egui::Color32::from_rgba_premultiplied(50, 50, 60, 140)
-                            } else {
-                                egui::Color32::from_rgba_premultiplied(55, 55, 65, 140)
-                            };
-                            clipped_painter.rect_filled(tab_rect_item, 4.0, drag_bg);
-                        } else {
-                            clipped_painter.rect_filled(tab_rect_item, 4.0, bg_color);
-
-                            // Active Tab 底部高亮指示线
-                            if is_active {
-                                clipped_painter.hline(
-                                    (tab_rect_item.left() + 4.0)..=(tab_rect_item.right() - 4.0),
-                                    tab_rect_item.bottom() - 1.0,
-                                    egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 160, 255)),
+                // 检测拖拽开始（鼠标按下且移动）
+                if mouse_pressed {
+                    if let Some(press_pos) = ctx.input(|i| i.pointer.press_origin()) {
+                        if self.dragging_tab.is_none() {
+                            let mut x_off = scroll_base;
+                            for (i, &tw) in tab_widths.iter().enumerate() {
+                                let tab_rect_item = egui::Rect::from_min_size(
+                                    egui::pos2(x_off, tab_rect.top() + 5.0),
+                                    egui::vec2(tw, tab_height - 10.0),
                                 );
-                            }
 
-                            // 拖拽过程中，在目标Tab位置显示插入指示线
-                            if is_drag_target && is_actually_dragging {
-                                let insert_line_x = if self.current_mouse_x - tab_rect_item.center().x < 0.0 {
-                                    tab_rect_item.left()
-                                } else {
-                                    tab_rect_item.right()
-                                };
-                                clipped_painter.vline(insert_line_x, tab_rect_item.top()..=tab_rect_item.bottom(), egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)));
+                                let close_btn_rect = egui::Rect::from_min_size(
+                                    egui::pos2(
+                                        tab_rect_item.right() - close_btn_size - 3.0,
+                                        tab_rect_item.center().y - close_btn_size / 2.0,
+                                    ),
+                                    egui::vec2(close_btn_size, close_btn_size),
+                                );
+
+                                if tab_rect_item.contains(press_pos)
+                                    && !close_btn_rect.contains(press_pos)
+                                {
+                                    self.dragging_tab = Some(i);
+                                    self.drag_start_pos = Some(press_pos.x);
+                                    break;
+                                }
+
+                                x_off += tw + tab_spacing;
                             }
                         }
-
-                        // 绘制文本（使用 tab 内部 clip 防止文本溢出 tab 边界）
-                        let text_clip = egui::Rect::from_min_max(
-                            tab_rect_item.left_top(),
-                            egui::pos2(tab_rect_item.right() - close_btn_size - 6.0, tab_rect_item.bottom()),
-                        );
-                        let text_painter = painter.with_clip_rect(text_clip.intersect(tab_clip_rect));
-                        text_painter.text(
-                            egui::pos2(tab_rect_item.left() + 10.0, tab_rect_item.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            display_text,
-                            egui::FontId::monospace(12.0),
-                            if is_active { egui::Color32::WHITE } else { egui::Color32::from_rgb(180, 180, 190) },
-                        );
-
-                        // 绘制关闭按钮（仅在悬停Tab时显示）
-                        let close_btn_rect = egui::Rect::from_min_size(
-                            egui::pos2(
-                                tab_rect_item.right() - close_btn_size - 3.0,
-                                tab_rect_item.center().y - close_btn_size / 2.0,
-                            ),
-                            egui::vec2(close_btn_size, close_btn_size),
-                        );
-
-                        if is_hovered && !is_dragging {
-                            let close_btn_hovered = if let Some(hover_pos) = hover_pos {
-                                close_btn_rect.contains(hover_pos)
-                            } else {
-                                false
-                            };
-
-                            if close_btn_hovered {
-                                clipped_painter.circle_filled(close_btn_rect.center(), close_btn_size / 2.0 + 2.0, egui::Color32::from_rgb(100, 50, 50));
-                            }
-
-                            let close_x_color = if close_btn_hovered {
-                                egui::Color32::from_rgb(255, 150, 150)
-                            } else {
-                                egui::Color32::from_rgb(150, 150, 150)
-                            };
-
-                            let cross_offset = close_btn_size / 3.0;
-                            clipped_painter.line_segment(
-                                [
-                                    egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y - cross_offset),
-                                    egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y + cross_offset),
-                                ],
-                                egui::Stroke::new(1.5, close_x_color),
-                            );
-                            clipped_painter.line_segment(
-                                [
-                                    egui::pos2(close_btn_rect.center().x + cross_offset, close_btn_rect.center().y - cross_offset),
-                                    egui::pos2(close_btn_rect.center().x - cross_offset, close_btn_rect.center().y + cross_offset),
-                                ],
-                                egui::Stroke::new(1.5, close_x_color),
-                            );
-                        }
-
-                        x_offset += tab_width + tab_spacing;
                     }
+                }
 
-                    // "+" 按钮 - 新建会话（紧跟最后一个 Tab，但不超过 clip 区域）
-                    let plus_btn_x = x_offset.max(tab_rect.left() + left_margin).min(tab_clip_rect.right());
-                    let plus_btn_rect = egui::Rect::from_min_size(
-                        egui::pos2(plus_btn_x + 4.0, tab_rect.top() + 5.0),
-                        egui::vec2(25.0, tab_height - 10.0),
+                // 计算拖拽过程中的动画效果
+                let mut drag_target_idx: Option<usize> = None;
+                if is_actually_dragging {
+                    if let Some(hover_pos) = hover_pos {
+                        if let Some(_from_idx) = self.dragging_tab {
+                            let mut x_off = scroll_base;
+                            for (i, &tw) in tab_widths.iter().enumerate() {
+                                if hover_pos.x >= x_off && hover_pos.x < x_off + tw {
+                                    drag_target_idx = Some(i);
+                                    break;
+                                }
+                                x_off += tw + tab_spacing;
+                            }
+                        }
+                    }
+                    // 请求持续重绘以显示动画
+                    ctx.request_repaint();
+                }
+
+                // === 渲染 Tab 栏（使用 clip rect 裁剪溢出内容）===
+                let tab_clip_rect = egui::Rect::from_min_max(
+                    egui::pos2(tab_rect.left() + left_margin, tab_rect.top()),
+                    egui::pos2(tab_rect.right() - reserved_right, tab_rect.bottom()),
+                );
+                let clipped_painter = painter.with_clip_rect(tab_clip_rect);
+
+                let mut x_offset = scroll_base;
+                let active_idx = self.session_manager.active_index();
+
+                // 绘制每个标签
+                for (i, (_, display_text, _)) in tab_infos.iter().enumerate() {
+                    let tab_width = tab_widths[i];
+                    let mut tab_rect_item = egui::Rect::from_min_size(
+                        egui::pos2(x_offset, tab_rect.top() + 5.0),
+                        egui::vec2(tab_width, tab_height - 10.0),
                     );
 
-                    // 检测"+"按钮悬停
-                    let plus_btn_hovered = if let Some(hover_pos) = hover_pos {
-                        plus_btn_rect.contains(hover_pos)
+                    let is_active = i == active_idx;
+                    let is_dragging = self.dragging_tab == Some(i);
+                    let is_drag_target = drag_target_idx == Some(i);
+
+                    // 计算拖拽过程中的动画位移
+                    if is_actually_dragging {
+                        if is_dragging {
+                            // 被拖拽的Tab跟随鼠标移动
+                            if let Some(start_x) = self.drag_start_pos {
+                                let offset = self.current_mouse_x - start_x;
+                                tab_rect_item = tab_rect_item.translate(egui::vec2(offset, 0.0));
+                            }
+                        } else if let Some(from_idx) = self.dragging_tab {
+                            // 其他Tabs根据拖拽目标位置进行动画插入
+                            let drag_to_left = is_drag_target
+                                && drag_target_idx.map(|t| t < from_idx).unwrap_or(false);
+                            let drag_to_right = is_drag_target
+                                && drag_target_idx.map(|t| t > from_idx).unwrap_or(false);
+
+                            if drag_to_left {
+                                if i > from_idx {
+                                    let push_offset = tab_width + tab_spacing;
+                                    tab_rect_item =
+                                        tab_rect_item.translate(egui::vec2(push_offset, 0.0));
+                                }
+                            } else if drag_to_right {
+                                if i < from_idx {
+                                    let push_offset = -(tab_width + tab_spacing);
+                                    tab_rect_item =
+                                        tab_rect_item.translate(egui::vec2(push_offset, 0.0));
+                                }
+                            }
+                        }
+                    }
+
+                    // 检测悬停
+                    let is_hovered = if let Some(hover_pos) = hover_pos {
+                        tab_rect_item.contains(hover_pos) && tab_clip_rect.contains(hover_pos)
                     } else {
                         false
                     };
 
-                    let plus_btn_color = if plus_btn_hovered {
+                    if is_hovered && !is_actually_dragging {
+                        self.hovered_tab_index = Some(i);
+                    }
+
+                    // 背景色：无边框风格，通过背景色差异区分状态
+                    let bg_color = if is_active {
+                        egui::Color32::from_rgb(50, 50, 60)
+                    } else if is_hovered || is_dragging {
                         egui::Color32::from_rgb(55, 55, 65)
                     } else {
                         egui::Color32::TRANSPARENT
                     };
 
-                    painter.rect_filled(plus_btn_rect, 4.0, plus_btn_color);
-
-                    let plus_text_color = if plus_btn_hovered {
-                        egui::Color32::from_rgb(220, 220, 220)
+                    // 绘制Tab背景（无边框）
+                    if is_dragging && is_actually_dragging {
+                        let drag_bg = if is_active {
+                            egui::Color32::from_rgba_premultiplied(50, 50, 60, 140)
+                        } else {
+                            egui::Color32::from_rgba_premultiplied(55, 55, 65, 140)
+                        };
+                        clipped_painter.rect_filled(tab_rect_item, 4.0, drag_bg);
                     } else {
-                        egui::Color32::from_rgb(180, 180, 190)
-                    };
+                        clipped_painter.rect_filled(tab_rect_item, 4.0, bg_color);
 
-                    painter.text(
-                        plus_btn_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "+",
-                        egui::FontId::monospace(14.0),
-                        plus_text_color,
-                    );
-
-                    // 检测 "+" 按钮点击（在鼠标释放时）
-                    if mouse_released {
-                        if let Some(click_pos) = ctx.input(|i| i.pointer.latest_pos()) {
-                            if plus_btn_rect.contains(click_pos) {
-                                let new_idx = self.create_session_with_current_config(None, None);
-                                self.session_manager.switch_session(new_idx);
-                                self.force_resize_session = true;
-                                self.schedule_session_save();
-                            }
-                        }
-                    }
-
-                    // 关闭窗口按钮（最右侧）
-                    let close_win_size = 25.0;
-                    let close_win_rect = egui::Rect::from_min_size(
-                        egui::pos2(tab_rect.right() - close_win_size - 5.0, tab_rect.top() + 5.0),
-                        egui::vec2(close_win_size, tab_height - 10.0),
-                    );
-
-                    let close_win_hovered = if let Some(hover_pos) = hover_pos {
-                        close_win_rect.contains(hover_pos)
-                    } else {
-                        false
-                    };
-
-                    let close_win_bg = if close_win_hovered {
-                        egui::Color32::from_rgb(180, 50, 50)
-                    } else {
-                        egui::Color32::TRANSPARENT
-                    };
-
-                    painter.rect_filled(close_win_rect, 4.0, close_win_bg);
-
-                    // 绘制 X 符号
-                    let cw_cross = 5.0;
-                    let cw_center = close_win_rect.center();
-                    let cw_x_color = if close_win_hovered {
-                        egui::Color32::WHITE
-                    } else {
-                        egui::Color32::from_rgb(180, 180, 190)
-                    };
-                    painter.line_segment(
-                        [egui::pos2(cw_center.x - cw_cross, cw_center.y - cw_cross),
-                         egui::pos2(cw_center.x + cw_cross, cw_center.y + cw_cross)],
-                        egui::Stroke::new(1.5, cw_x_color),
-                    );
-                    painter.line_segment(
-                        [egui::pos2(cw_center.x + cw_cross, cw_center.y - cw_cross),
-                         egui::pos2(cw_center.x - cw_cross, cw_center.y + cw_cross)],
-                        egui::Stroke::new(1.5, cw_x_color),
-                    );
-
-                    // 检测关闭窗口按钮点击
-                    if mouse_released {
-                        if let Some(click_pos) = ctx.input(|i| i.pointer.latest_pos()) {
-                            if close_win_rect.contains(click_pos) {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                            }
-                        }
-                    }
-
-                    // 向下移动光标
-                    ui.allocate_exact_size(egui::vec2(ui.available_width(), tab_height), egui::Sense::hover());
-                }
-
-                // 终端显示区域
-                self.renderer.sync_font_metrics(ctx);
-                let (cols, rows) = self.renderer.grid_dimensions(ui.available_size());
-
-                if cols != self.cols || rows != self.rows || self.force_resize_session {
-                    let session = self.session_manager.get_active_session_mut();
-                    let _ = session.shell.resize(cols, rows);
-                    let mut terminal = session.terminal.lock();
-                    terminal.on_resize(cols, rows);
-                    self.cols = cols;
-                    self.rows = rows;
-                    if self.force_resize_session {
-                        // Session 切换时重置 renderer 的 IME 状态缓存
-                        // 这样下一帧会重新发送 IMEAllowed(true)，确保 IME 不会丢失
-                        self.renderer.reset_ime_state();
-                    }
-                    self.force_resize_session = false;
-                }
-
-                // 多窗格支持：如果有多于一个窗格，则进行分屏渲染
-                if self.layout_manager.panes().len() > 1 {
-                    let available_rect = ui.available_rect_before_wrap();
-
-                    // 计算窗格矩形
-                    self.layout_manager.compute_pane_rects(available_rect);
-
-                    // 获取所有窗格信息
-                    let panes = self.layout_manager.panes().to_vec();
-                    let divider_rect = self.layout_manager.get_divider_rect();
-
-                    // 为每个窗格渲染
-                    for (pane_idx, pane) in panes.iter().enumerate() {
-                        if pane_idx >= self.pane_renderers.len() {
-                            break;
+                        // Active Tab 底部高亮指示线
+                        if is_active {
+                            clipped_painter.hline(
+                                (tab_rect_item.left() + 4.0)..=(tab_rect_item.right() - 4.0),
+                                tab_rect_item.bottom() - 1.0,
+                                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 160, 255)),
+                            );
                         }
 
-                        let session_idx = pane.session_idx;
-                        if let Some(session) = self.session_manager.get_session_mut(session_idx) {
-                            let mut terminal_guard = session.terminal.lock();
-                            let visible_cells = terminal_guard.get_visible_cells();
-                            let links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
-
-                            // 获取当前窗格的渲染器
-                            let renderer = &mut self.pane_renderers[pane_idx];
-
-                            // 在指定矩形内渲染（多窗格模式专用方法）
-                            renderer.render_in_rect(
-                                ui,
-                                &mut terminal_guard,
-                                self.cursor_visible,
-                                &self.search_state,
-                                &links,
-                                &self.hovered_link,
-                                pane.rect,
+                        // 拖拽过程中，在目标Tab位置显示插入指示线
+                        if is_drag_target && is_actually_dragging {
+                            let insert_line_x =
+                                if self.current_mouse_x - tab_rect_item.center().x < 0.0 {
+                                    tab_rect_item.left()
+                                } else {
+                                    tab_rect_item.right()
+                                };
+                            clipped_painter.vline(
+                                insert_line_x,
+                                tab_rect_item.top()..=tab_rect_item.bottom(),
+                                egui::Stroke::new(2.0, egui::Color32::from_rgb(100, 200, 255)),
                             );
                         }
                     }
 
-                    // 绘制分隔线
-                    if let Some(divider) = divider_rect {
-                        let painter = ui.painter();
-                        let divider_color = if self.dragging_divider {
-                            egui::Color32::from_rgb(100, 150, 200)
+                    // 绘制文本（使用 tab 内部 clip 防止文本溢出 tab 边界）
+                    let text_clip = egui::Rect::from_min_max(
+                        tab_rect_item.left_top(),
+                        egui::pos2(
+                            tab_rect_item.right() - close_btn_size - 6.0,
+                            tab_rect_item.bottom(),
+                        ),
+                    );
+                    let text_painter = painter.with_clip_rect(text_clip.intersect(tab_clip_rect));
+                    text_painter.text(
+                        egui::pos2(tab_rect_item.left() + 10.0, tab_rect_item.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        display_text,
+                        egui::FontId::monospace(12.0),
+                        if is_active {
+                            egui::Color32::WHITE
                         } else {
-                            egui::Color32::from_rgb(80, 80, 80)
+                            egui::Color32::from_rgb(180, 180, 190)
+                        },
+                    );
+
+                    // 绘制关闭按钮（仅在悬停Tab时显示）
+                    let close_btn_rect = egui::Rect::from_min_size(
+                        egui::pos2(
+                            tab_rect_item.right() - close_btn_size - 3.0,
+                            tab_rect_item.center().y - close_btn_size / 2.0,
+                        ),
+                        egui::vec2(close_btn_size, close_btn_size),
+                    );
+
+                    if is_hovered && !is_dragging {
+                        let close_btn_hovered = if let Some(hover_pos) = hover_pos {
+                            close_btn_rect.contains(hover_pos)
+                        } else {
+                            false
                         };
 
-                        painter.rect_filled(divider, 0.0, divider_color);
-
-                        // 处理分隔线拖拽
-                        if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
-                            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                                if divider.contains(pos) {
-                                    self.dragging_divider = true;
-                                }
-                            }
+                        if close_btn_hovered {
+                            clipped_painter.circle_filled(
+                                close_btn_rect.center(),
+                                close_btn_size / 2.0 + 2.0,
+                                egui::Color32::from_rgb(100, 50, 50),
+                            );
                         }
 
-                        if self.dragging_divider {
-                            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                                // 计算新的分割比例
-                                match self.layout_manager.mode {
-                                    layout::SplitMode::VerticalSplit { .. } => {
-                                        let delta = pos.x - divider.center().x;
-                                        let total_width = available_rect.width();
-                                        let ratio_delta = delta / total_width * 0.1; // 降低灵敏度
-                                        self.layout_manager.adjust_split_ratio(ratio_delta);
-                                    }
-                                    layout::SplitMode::HorizontalSplit { .. } => {
-                                        let delta = pos.y - divider.center().y;
-                                        let total_height = available_rect.height();
-                                        let ratio_delta = delta / total_height * 0.1;
-                                        self.layout_manager.adjust_split_ratio(ratio_delta);
-                                    }
-                                    _ => {}
-                                }
-                            }
+                        let close_x_color = if close_btn_hovered {
+                            egui::Color32::from_rgb(255, 150, 150)
+                        } else {
+                            egui::Color32::from_rgb(150, 150, 150)
+                        };
 
-                            if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
-                                self.dragging_divider = false;
-                            }
-                        }
+                        let cross_offset = close_btn_size / 3.0;
+                        clipped_painter.line_segment(
+                            [
+                                egui::pos2(
+                                    close_btn_rect.center().x - cross_offset,
+                                    close_btn_rect.center().y - cross_offset,
+                                ),
+                                egui::pos2(
+                                    close_btn_rect.center().x + cross_offset,
+                                    close_btn_rect.center().y + cross_offset,
+                                ),
+                            ],
+                            egui::Stroke::new(1.5, close_x_color),
+                        );
+                        clipped_painter.line_segment(
+                            [
+                                egui::pos2(
+                                    close_btn_rect.center().x + cross_offset,
+                                    close_btn_rect.center().y - cross_offset,
+                                ),
+                                egui::pos2(
+                                    close_btn_rect.center().x - cross_offset,
+                                    close_btn_rect.center().y + cross_offset,
+                                ),
+                            ],
+                            egui::Stroke::new(1.5, close_x_color),
+                        );
                     }
+
+                    x_offset += tab_width + tab_spacing;
+                }
+
+                // "+" 按钮 - 新建会话（紧跟最后一个 Tab，但不超过 clip 区域）
+                let plus_btn_x = x_offset
+                    .max(tab_rect.left() + left_margin)
+                    .min(tab_clip_rect.right());
+                let plus_btn_rect = egui::Rect::from_min_size(
+                    egui::pos2(plus_btn_x + 4.0, tab_rect.top() + 5.0),
+                    egui::vec2(25.0, tab_height - 10.0),
+                );
+
+                // 检测"+"按钮悬停
+                let plus_btn_hovered = if let Some(hover_pos) = hover_pos {
+                    plus_btn_rect.contains(hover_pos)
                 } else {
-                    // 单窗格渲染（原有逻辑）
-                    {
-                        let session = self.session_manager.get_active_session_mut();
-                        let mut terminal_guard = session.terminal.lock();
+                    false
+                };
 
-                        // 获取链接列表用于渲染
-                        let visible_cells = terminal_guard.get_visible_cells();
-                        let links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
+                let plus_btn_color = if plus_btn_hovered {
+                    egui::Color32::from_rgb(55, 55, 65)
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
 
-                        // 在渲染终端之前读取滚轮值和 Ctrl 键状态
-                        let ctrl_pressed_render = ui.input(|i| i.modifiers.ctrl);
+                painter.rect_filled(plus_btn_rect, 4.0, plus_btn_color);
 
-                        // 从原始 MouseWheel 事件中提取 delta（因为 smooth_scroll_delta 被 egui 消费了）
-                        let mut scroll_delta_from_event = 0.0;
-                        if ctrl_pressed_render {
-                            let all_events = ui.input(|i| i.events.clone());
-                            for evt in &all_events {
-                                if let egui::Event::MouseWheel { delta, modifiers, .. } = evt {
-                                    if modifiers.ctrl {
-                                        scroll_delta_from_event += delta.y;
-                                    }
-                                }
-                            }
+                let plus_text_color = if plus_btn_hovered {
+                    egui::Color32::from_rgb(220, 220, 220)
+                } else {
+                    egui::Color32::from_rgb(180, 180, 190)
+                };
+
+                painter.text(
+                    plus_btn_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "+",
+                    egui::FontId::monospace(14.0),
+                    plus_text_color,
+                );
+
+                // 检测 "+" 按钮点击（在鼠标释放时）
+                if mouse_released {
+                    if let Some(click_pos) = ctx.input(|i| i.pointer.latest_pos()) {
+                        if plus_btn_rect.contains(click_pos) {
+                            let new_idx = self.create_session_with_current_config(None, None);
+                            self.session_manager.switch_session(new_idx);
+                            self.force_resize_session = true;
+                            self.schedule_session_save();
                         }
-
-                        // Ctrl+滚轮在此处理
-                        if scroll_delta_from_event != 0.0 && ctrl_pressed_render {
-                            let font_size_delta = if scroll_delta_from_event > 0.0 { 1.0 } else { -1.0 };
-                            drop(terminal_guard); // 先释放锁
-                            let new_font_size = config::Config::clamp_font_size(self.renderer.font_size + font_size_delta);
-                            self.renderer.font_size = new_font_size;
-                            self.renderer.char_width = new_font_size * 0.62;
-                            self.renderer.line_height = new_font_size * self.renderer.line_spacing;
-                            for pane_renderer in &mut self.pane_renderers {
-                                pane_renderer.font_size = new_font_size;
-                                pane_renderer.char_width = new_font_size * 0.62;
-                                pane_renderer.line_height = new_font_size * pane_renderer.line_spacing;
-                            }
-                            // Reset GPU glyph atlas with new font size
-                            if let Some(ref render_state) = self.renderer.wgpu_render_state {
-                                let ppp = ui.ctx().pixels_per_point();
-                                let font_size_px = new_font_size * ppp;
-                                let mut renderer = render_state.renderer.write();
-                                if let Some(gpu_res) = renderer.callback_resources.get_mut::<gpu::callback::GpuResources>() {
-                                    gpu_res.atlas.reset(&render_state.device, &render_state.queue, font_size_px, self.config.font_weight);
-                                }
-                            }
-                            // 同步到 config 并触发保存
-                            self.config.font_size = new_font_size;
-                            // 释放 session 引用，允许调用 &mut self 方法
-                            let _ = session;
-                            self.schedule_config_save();
-                            // 重新获取
-                            let session = self.session_manager.get_active_session_mut();
-                            terminal_guard = session.terminal.lock();
-                        }
-
-                        self.renderer.render(ui, &mut terminal_guard, self.cursor_visible, &self.search_state, &links, &self.hovered_link);
                     }
                 }
-            });
+
+                // 关闭窗口按钮（最右侧）
+                let close_win_size = 25.0;
+                let close_win_rect = egui::Rect::from_min_size(
+                    egui::pos2(
+                        tab_rect.right() - close_win_size - 5.0,
+                        tab_rect.top() + 5.0,
+                    ),
+                    egui::vec2(close_win_size, tab_height - 10.0),
+                );
+
+                let close_win_hovered = if let Some(hover_pos) = hover_pos {
+                    close_win_rect.contains(hover_pos)
+                } else {
+                    false
+                };
+
+                let close_win_bg = if close_win_hovered {
+                    egui::Color32::from_rgb(180, 50, 50)
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+
+                painter.rect_filled(close_win_rect, 4.0, close_win_bg);
+
+                // 绘制 X 符号
+                let cw_cross = 5.0;
+                let cw_center = close_win_rect.center();
+                let cw_x_color = if close_win_hovered {
+                    egui::Color32::WHITE
+                } else {
+                    egui::Color32::from_rgb(180, 180, 190)
+                };
+                painter.line_segment(
+                    [
+                        egui::pos2(cw_center.x - cw_cross, cw_center.y - cw_cross),
+                        egui::pos2(cw_center.x + cw_cross, cw_center.y + cw_cross),
+                    ],
+                    egui::Stroke::new(1.5, cw_x_color),
+                );
+                painter.line_segment(
+                    [
+                        egui::pos2(cw_center.x + cw_cross, cw_center.y - cw_cross),
+                        egui::pos2(cw_center.x - cw_cross, cw_center.y + cw_cross),
+                    ],
+                    egui::Stroke::new(1.5, cw_x_color),
+                );
+
+                // 检测关闭窗口按钮点击
+                if mouse_released {
+                    if let Some(click_pos) = ctx.input(|i| i.pointer.latest_pos()) {
+                        if close_win_rect.contains(click_pos) {
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    }
+                }
+
+                // 向下移动光标
+                ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), tab_height),
+                    egui::Sense::hover(),
+                );
+            }
+
+            // 终端显示区域
+            self.renderer.sync_font_metrics(ctx);
+            let (cols, rows) = self.renderer.grid_dimensions(ui.available_size());
+
+            if cols != self.cols || rows != self.rows || self.force_resize_session {
+                let session = self.session_manager.get_active_session_mut();
+                let _ = session.shell.resize(cols, rows);
+                let mut terminal = session.terminal.lock();
+                terminal.on_resize(cols, rows);
+                self.cols = cols;
+                self.rows = rows;
+                if self.force_resize_session {
+                    // Session 切换时重置 renderer 的 IME 状态缓存
+                    // 这样下一帧会重新发送 IMEAllowed(true)，确保 IME 不会丢失
+                    self.renderer.reset_ime_state();
+                }
+                self.force_resize_session = false;
+            }
+
+            // 多窗格支持：如果有多于一个窗格，则进行分屏渲染
+            if self.layout_manager.panes().len() > 1 {
+                let available_rect = ui.available_rect_before_wrap();
+
+                // 计算窗格矩形
+                self.layout_manager.compute_pane_rects(available_rect);
+
+                // 获取所有窗格信息
+                let panes = self.layout_manager.panes().to_vec();
+                let divider_rect = self.layout_manager.get_divider_rect();
+
+                // 为每个窗格渲染
+                for (pane_idx, pane) in panes.iter().enumerate() {
+                    if pane_idx >= self.pane_renderers.len() {
+                        break;
+                    }
+
+                    let session_idx = pane.session_idx;
+                    if let Some(session) = self.session_manager.get_session_mut(session_idx) {
+                        let mut terminal_guard = session.terminal.lock();
+                        let visible_cells = terminal_guard.get_visible_cells();
+                        let links = self
+                            .link_detector
+                            .detect_links_in_visible_cells(&visible_cells);
+
+                        // 获取当前窗格的渲染器
+                        let renderer = &mut self.pane_renderers[pane_idx];
+
+                        // 在指定矩形内渲染（多窗格模式专用方法）
+                        renderer.render_in_rect(
+                            ui,
+                            &mut terminal_guard,
+                            self.cursor_visible,
+                            &self.search_state,
+                            &links,
+                            &self.hovered_link,
+                            pane.rect,
+                        );
+                    }
+                }
+
+                // 绘制分隔线
+                if let Some(divider) = divider_rect {
+                    let painter = ui.painter();
+                    let divider_color = if self.dragging_divider {
+                        egui::Color32::from_rgb(100, 150, 200)
+                    } else {
+                        egui::Color32::from_rgb(80, 80, 80)
+                    };
+
+                    painter.rect_filled(divider, 0.0, divider_color);
+
+                    // 处理分隔线拖拽
+                    if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
+                        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                            if divider.contains(pos) {
+                                self.dragging_divider = true;
+                            }
+                        }
+                    }
+
+                    if self.dragging_divider {
+                        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                            // 计算新的分割比例
+                            match self.layout_manager.mode {
+                                layout::SplitMode::VerticalSplit { .. } => {
+                                    let delta = pos.x - divider.center().x;
+                                    let total_width = available_rect.width();
+                                    let ratio_delta = delta / total_width * 0.1; // 降低灵敏度
+                                    self.layout_manager.adjust_split_ratio(ratio_delta);
+                                }
+                                layout::SplitMode::HorizontalSplit { .. } => {
+                                    let delta = pos.y - divider.center().y;
+                                    let total_height = available_rect.height();
+                                    let ratio_delta = delta / total_height * 0.1;
+                                    self.layout_manager.adjust_split_ratio(ratio_delta);
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        if ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary)) {
+                            self.dragging_divider = false;
+                        }
+                    }
+                }
+            } else {
+                // 单窗格渲染（原有逻辑）
+                {
+                    let session = self.session_manager.get_active_session_mut();
+                    let mut terminal_guard = session.terminal.lock();
+
+                    // 获取链接列表用于渲染
+                    let visible_cells = terminal_guard.get_visible_cells();
+                    let links = self
+                        .link_detector
+                        .detect_links_in_visible_cells(&visible_cells);
+
+                    // 在渲染终端之前读取滚轮值和 Ctrl 键状态
+                    let ctrl_pressed_render = ui.input(|i| i.modifiers.ctrl);
+
+                    // 从原始 MouseWheel 事件中提取 delta（因为 smooth_scroll_delta 被 egui 消费了）
+                    let mut scroll_delta_from_event = 0.0;
+                    if ctrl_pressed_render {
+                        let all_events = ui.input(|i| i.events.clone());
+                        for evt in &all_events {
+                            if let egui::Event::MouseWheel {
+                                delta, modifiers, ..
+                            } = evt
+                            {
+                                if modifiers.ctrl {
+                                    scroll_delta_from_event += delta.y;
+                                }
+                            }
+                        }
+                    }
+
+                    // Ctrl+滚轮在此处理
+                    if scroll_delta_from_event != 0.0 && ctrl_pressed_render {
+                        let font_size_delta = if scroll_delta_from_event > 0.0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        drop(terminal_guard); // 先释放锁
+                        let new_font_size = config::Config::clamp_font_size(
+                            self.renderer.font_size + font_size_delta,
+                        );
+                        self.renderer.font_size = new_font_size;
+                        self.renderer.char_width = new_font_size * 0.62;
+                        self.renderer.line_height = new_font_size * self.renderer.line_spacing;
+                        for pane_renderer in &mut self.pane_renderers {
+                            pane_renderer.font_size = new_font_size;
+                            pane_renderer.char_width = new_font_size * 0.62;
+                            pane_renderer.line_height = new_font_size * pane_renderer.line_spacing;
+                        }
+                        // Reset GPU glyph atlas with new font size
+                        if let Some(ref render_state) = self.renderer.wgpu_render_state {
+                            let ppp = ui.ctx().pixels_per_point();
+                            let font_size_px = new_font_size * ppp;
+                            let mut renderer = render_state.renderer.write();
+                            if let Some(gpu_res) = renderer
+                                .callback_resources
+                                .get_mut::<gpu::callback::GpuResources>()
+                            {
+                                gpu_res.atlas.reset(
+                                    &render_state.device,
+                                    &render_state.queue,
+                                    font_size_px,
+                                    self.config.font_weight,
+                                );
+                            }
+                        }
+                        // 同步到 config 并触发保存
+                        self.config.font_size = new_font_size;
+                        // 释放 session 引用，允许调用 &mut self 方法
+                        let _ = session;
+                        self.schedule_config_save();
+                        // 重新获取
+                        let session = self.session_manager.get_active_session_mut();
+                        terminal_guard = session.terminal.lock();
+                    }
+
+                    self.renderer.render(
+                        ui,
+                        &mut terminal_guard,
+                        self.cursor_visible,
+                        &self.search_state,
+                        &links,
+                        &self.hovered_link,
+                    );
+                }
+            }
+        });
 
         // 搜索面板 UI（浮动窗口，右上角）
         if self.search_state.is_open {
@@ -1841,7 +2038,8 @@ impl TerminalApp {
                     // 搜索输入框
                     ui.horizontal(|ui| {
                         ui.label("🔍");
-                        let search_response = ui.text_edit_singleline(&mut self.command_palette.search_query);
+                        let search_response =
+                            ui.text_edit_singleline(&mut self.command_palette.search_query);
                         if search_response.changed() {
                             self.command_palette.update_search_results();
                         }
@@ -1849,7 +2047,9 @@ impl TerminalApp {
                             search_response.request_focus();
                             self.command_palette.needs_focus = false;
                         }
-                        if search_response.has_focus() && self.command_palette.search_query.is_empty() {
+                        if search_response.has_focus()
+                            && self.command_palette.search_query.is_empty()
+                        {
                             ui.label("Search commands...");
                         }
                     });
@@ -1878,15 +2078,30 @@ impl TerminalApp {
 
                                     // 分类标签
                                     let category_color = match cmd_info.category {
-                                        command_palette::CommandCategory::Session => egui::Color32::from_rgb(100, 150, 255),
-                                        command_palette::CommandCategory::Edit => egui::Color32::from_rgb(100, 200, 100),
-                                        command_palette::CommandCategory::Search => egui::Color32::from_rgb(255, 200, 100),
-                                        command_palette::CommandCategory::Terminal => egui::Color32::from_rgb(150, 150, 255),
-                                        command_palette::CommandCategory::Window => egui::Color32::from_rgb(200, 100, 200),
-                                        command_palette::CommandCategory::Config => egui::Color32::from_rgb(200, 180, 100),
+                                        command_palette::CommandCategory::Session => {
+                                            egui::Color32::from_rgb(100, 150, 255)
+                                        }
+                                        command_palette::CommandCategory::Edit => {
+                                            egui::Color32::from_rgb(100, 200, 100)
+                                        }
+                                        command_palette::CommandCategory::Search => {
+                                            egui::Color32::from_rgb(255, 200, 100)
+                                        }
+                                        command_palette::CommandCategory::Terminal => {
+                                            egui::Color32::from_rgb(150, 150, 255)
+                                        }
+                                        command_palette::CommandCategory::Window => {
+                                            egui::Color32::from_rgb(200, 100, 200)
+                                        }
+                                        command_palette::CommandCategory::Config => {
+                                            egui::Color32::from_rgb(200, 180, 100)
+                                        }
                                     };
 
-                                    ui.colored_label(category_color, format!("[{}]", cmd_info.category));
+                                    ui.colored_label(
+                                        category_color,
+                                        format!("[{}]", cmd_info.category),
+                                    );
 
                                     ui.vertical(|ui| {
                                         ui.label(egui::RichText::new(&cmd_info.name).strong());
@@ -1903,7 +2118,9 @@ impl TerminalApp {
                                         .bindings
                                         .iter()
                                         .find(|(_, cmd)| {
-                                            if let Ok(parsed_cmd) = cmd.parse::<keybindings::Command>() {
+                                            if let Ok(parsed_cmd) =
+                                                cmd.parse::<keybindings::Command>()
+                                            {
                                                 parsed_cmd == cmd_info.command
                                             } else {
                                                 false
@@ -1926,7 +2143,9 @@ impl TerminalApp {
 
                                 // Auto-scroll to keep selected item visible
                                 if is_selected {
-                                    item_response.response.scroll_to_me(Some(egui::Align::Center));
+                                    item_response
+                                        .response
+                                        .scroll_to_me(Some(egui::Align::Center));
                                 }
 
                                 ui.separator();
@@ -2022,7 +2241,8 @@ impl TerminalApp {
                 }
                 config_panel::ConfigAction::ResetToDefaults => {
                     self.config = config::Config::default();
-                    self.current_theme = theme::Theme::get_theme(&self.config.theme).unwrap_or_default();
+                    self.current_theme =
+                        theme::Theme::get_theme(&self.config.theme).unwrap_or_default();
                     self.apply_runtime_config(ctx);
                     self.config_panel.sync_from_config(&self.config);
                     self.config_panel.edit_debug_overlay = self.debug_panel.is_open;
@@ -2059,7 +2279,8 @@ impl TerminalApp {
     // 配置保存相关方法
     fn schedule_config_save(&mut self) {
         self.config_save_pending = true;
-        self.config_save_deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        self.config_save_deadline =
+            std::time::Instant::now() + std::time::Duration::from_millis(500);
     }
 
     fn flush_config_save(&mut self) {
@@ -2083,7 +2304,8 @@ impl TerminalApp {
                 let _ = session_persistence::ensure_session_history_dir(&path);
                 let snapshots = self.session_manager.get_session_snapshots();
                 let active_index = Some(self.session_manager.active_index());
-                let snapshot = session_persistence::SessionsSnapshot::from_snapshots(snapshots, active_index);
+                let snapshot =
+                    session_persistence::SessionsSnapshot::from_snapshots(snapshots, active_index);
                 if let Err(e) = snapshot.save(&path) {
                     eprintln!("[SessionPersistence] Failed to save: {}", e);
                 }
@@ -2104,7 +2326,11 @@ impl eframe::App for TerminalApp {
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         let preserve_paste_event = {
-            let terminal = self.session_manager.get_active_session_mut().terminal.lock();
+            let terminal = self
+                .session_manager
+                .get_active_session_mut()
+                .terminal
+                .lock();
             terminal.is_paste_events_enabled()
         };
 
@@ -2112,25 +2338,35 @@ impl eframe::App for TerminalApp {
         // It calls `return` after checking clipboard, so neither Paste nor Key::V pressed
         // appears in raw_input — only Key::V released survives.
         // Detect this case and inject Key::V pressed so the terminal receives 0x16.
-        let has_ctrl_v_release = raw_input.events.iter().any(|evt| matches!(evt,
-            egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. }
-            if modifiers.ctrl && !modifiers.shift
-        ));
-        let has_ctrl_v_press = raw_input.events.iter().any(|evt| matches!(evt,
-            egui::Event::Key { key: egui::Key::V, pressed: true, modifiers, .. }
-            if modifiers.ctrl && !modifiers.shift
-        ));
-        let has_paste_event = raw_input.events.iter().any(|evt| matches!(evt, egui::Event::Paste(_)));
+        let has_ctrl_v_release = raw_input.events.iter().any(|evt| {
+            matches!(evt,
+                egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. }
+                if modifiers.ctrl && !modifiers.shift
+            )
+        });
+        let has_ctrl_v_press = raw_input.events.iter().any(|evt| {
+            matches!(evt,
+                egui::Event::Key { key: egui::Key::V, pressed: true, modifiers, .. }
+                if modifiers.ctrl && !modifiers.shift
+            )
+        });
+        let has_paste_event = raw_input
+            .events
+            .iter()
+            .any(|evt| matches!(evt, egui::Event::Paste(_)));
 
         if has_ctrl_v_release && !has_ctrl_v_press && !has_paste_event {
             // Insert Key::V pressed before the release event
-            raw_input.events.insert(0, egui::Event::Key {
-                key: egui::Key::V,
-                physical_key: Some(egui::Key::V),
-                pressed: true,
-                repeat: false,
-                modifiers: raw_input.modifiers,
-            });
+            raw_input.events.insert(
+                0,
+                egui::Event::Key {
+                    key: egui::Key::V,
+                    physical_key: Some(egui::Key::V),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: raw_input.modifiers,
+                },
+            );
         }
 
         // egui-winit turns Ctrl/Cmd+C/X/V into semantic clipboard events and skips the
@@ -2230,7 +2466,12 @@ impl eframe::App for TerminalApp {
 
             for evt in &all_events {
                 match evt {
-                    egui::Event::Key { key, modifiers: _, pressed, .. } if *pressed => {
+                    egui::Event::Key {
+                        key,
+                        modifiers: _,
+                        pressed,
+                        ..
+                    } if *pressed => {
                         match key {
                             egui::Key::Escape => {
                                 self.command_palette.close();
@@ -2254,14 +2495,16 @@ impl eframe::App for TerminalApp {
                                             self.search_state.close();
                                         }
                                         keybindings::Command::SessionNew => {
-                                            let new_idx = self.create_session_with_current_config(None, None);
+                                            let new_idx =
+                                                self.create_session_with_current_config(None, None);
                                             self.session_manager.switch_session(new_idx);
                                             self.force_resize_session = true;
                                             self.schedule_session_save();
                                         }
                                         keybindings::Command::SessionClose => {
                                             if self.session_manager.len() > 1 {
-                                                let active_idx = self.session_manager.active_index();
+                                                let active_idx =
+                                                    self.session_manager.active_index();
                                                 self.session_manager.close_session(active_idx);
                                                 self.schedule_session_save();
                                             } else {
@@ -2270,8 +2513,10 @@ impl eframe::App for TerminalApp {
                                             }
                                         }
                                         keybindings::Command::TerminalSendEof => {
-                                            let session = self.session_manager.get_active_session_mut();
-                                            let _ = session.shell.write(&[0x04]); // EOF (Ctrl+D)
+                                            let session =
+                                                self.session_manager.get_active_session_mut();
+                                            let _ = session.shell.write(&[0x04]);
+                                            // EOF (Ctrl+D)
                                         }
                                         keybindings::Command::SessionNext => {
                                             self.session_manager.switch_to_next_session();
@@ -2288,14 +2533,16 @@ impl eframe::App for TerminalApp {
                                             }
                                         }
                                         keybindings::Command::TerminalScrollUp => {
-                                            let session = self.session_manager.get_active_session_mut();
+                                            let session =
+                                                self.session_manager.get_active_session_mut();
                                             let mut terminal = session.terminal.lock();
                                             if !terminal.is_alt_buffer_active() {
                                                 terminal.scroll(3);
                                             }
                                         }
                                         keybindings::Command::TerminalScrollDown => {
-                                            let session = self.session_manager.get_active_session_mut();
+                                            let session =
+                                                self.session_manager.get_active_session_mut();
                                             let mut terminal = session.terminal.lock();
                                             if !terminal.is_alt_buffer_active() {
                                                 terminal.scroll(-3);
@@ -2304,35 +2551,43 @@ impl eframe::App for TerminalApp {
                                         // 分屏命令处理
                                         keybindings::Command::TerminalSplitVertical => {
                                             // 垂直分割（左右）
-                                            let new_session_idx = self.create_session_with_current_config(None, None);
-                                            let _ = self.layout_manager.split(new_session_idx, false);
+                                            let new_session_idx =
+                                                self.create_session_with_current_config(None, None);
+                                            let _ =
+                                                self.layout_manager.split(new_session_idx, false);
                                             self.status_message = "Split vertically".to_string();
                                             self.schedule_session_save();
                                         }
                                         keybindings::Command::TerminalSplitHorizontal => {
                                             // 水平分割（上下）
-                                            let new_session_idx = self.create_session_with_current_config(None, None);
-                                            let _ = self.layout_manager.split(new_session_idx, true);
+                                            let new_session_idx =
+                                                self.create_session_with_current_config(None, None);
+                                            let _ =
+                                                self.layout_manager.split(new_session_idx, true);
                                             self.status_message = "Split horizontally".to_string();
                                             self.schedule_session_save();
                                         }
                                         keybindings::Command::TerminalClosePane => {
                                             // 关闭当前窗格
-                                            if let Err(e) = self.layout_manager.close_focused_pane() {
+                                            if let Err(e) = self.layout_manager.close_focused_pane()
+                                            {
                                                 self.status_message = e;
                                             }
                                         }
                                         keybindings::Command::PaneFocusNext => {
                                             // 切换到下一个窗格
-                                            self.layout_manager.focus_pane(layout::PaneDirection::Next);
+                                            self.layout_manager
+                                                .focus_pane(layout::PaneDirection::Next);
                                         }
                                         keybindings::Command::PaneFocusPrev => {
                                             // 切换到前一个窗格
-                                            self.layout_manager.focus_pane(layout::PaneDirection::Prev);
+                                            self.layout_manager
+                                                .focus_pane(layout::PaneDirection::Prev);
                                         }
                                         keybindings::Command::ConfigOpen => {
                                             self.config_panel.open(&self.config);
-                                            self.config_panel.edit_debug_overlay = self.debug_panel.is_open;
+                                            self.config_panel.edit_debug_overlay =
+                                                self.debug_panel.is_open;
                                         }
                                         keybindings::Command::ConfigClose => {
                                             self.config_panel.close();
@@ -2362,20 +2617,33 @@ impl eframe::App for TerminalApp {
 
         // 收集所有按下的快捷键
         let pressed_keys: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
-            i.events.iter().filter_map(|evt| {
-                if let egui::Event::Key { key, modifiers, pressed: true, .. } = evt {
-                    Some((*key, *modifiers))
-                } else {
-                    None
-                }
-            }).collect()
+            i.events
+                .iter()
+                .filter_map(|evt| {
+                    if let egui::Event::Key {
+                        key,
+                        modifiers,
+                        pressed: true,
+                        ..
+                    } = evt
+                    {
+                        Some((*key, *modifiers))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
         });
 
         // 处理每个按下的快捷键
         for (key, modifiers) in pressed_keys {
             if let Some(keybinding_str) = build_keybinding_string(key, modifiers) {
                 let command = self.keybindings.get_command(&keybinding_str);
-                crate::debug_log!("[KEYBINDING] Looking up: '{}' => {:?}", keybinding_str, command);
+                crate::debug_log!(
+                    "[KEYBINDING] Looking up: '{}' => {:?}",
+                    keybinding_str,
+                    command
+                );
                 if let Some(command) = command {
                     match command {
                         keybindings::Command::SearchOpen => {
@@ -2433,7 +2701,7 @@ impl eframe::App for TerminalApp {
                         }
                         keybindings::Command::ConfigOpen => {
                             self.config_panel.open(&self.config);
-                                            self.config_panel.edit_debug_overlay = self.debug_panel.is_open;
+                            self.config_panel.edit_debug_overlay = self.debug_panel.is_open;
                         }
                         keybindings::Command::ConfigClose => {
                             self.config_panel.close();
@@ -2448,7 +2716,6 @@ impl eframe::App for TerminalApp {
             }
         }
 
-
         // 获取当前活跃会话（在所有快捷键处理完后）
         let session_count_before = self.session_manager.len();
         let mut shell_exited = false;
@@ -2460,27 +2727,30 @@ impl eframe::App for TerminalApp {
 
             for evt in &all_events {
                 match evt {
-                    egui::Event::Key { key, modifiers, pressed, .. } if *pressed => {
-                        match key {
-                            egui::Key::Escape => {
-                                self.search_state.close();
-                            }
-                            egui::Key::Enter => {
-                                if !modifiers.shift {
-                                    self.search_state.next_match();
-                                } else {
-                                    self.search_state.prev_match();
-                                }
-                            }
-                            egui::Key::ArrowUp => {
-                                self.search_state.history_prev();
-                            }
-                            egui::Key::ArrowDown => {
-                                self.search_state.history_next();
-                            }
-                            _ => {}
+                    egui::Event::Key {
+                        key,
+                        modifiers,
+                        pressed,
+                        ..
+                    } if *pressed => match key {
+                        egui::Key::Escape => {
+                            self.search_state.close();
                         }
-                    }
+                        egui::Key::Enter => {
+                            if !modifiers.shift {
+                                self.search_state.next_match();
+                            } else {
+                                self.search_state.prev_match();
+                            }
+                        }
+                        egui::Key::ArrowUp => {
+                            self.search_state.history_prev();
+                        }
+                        egui::Key::ArrowDown => {
+                            self.search_state.history_next();
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 }
             }
@@ -2496,7 +2766,12 @@ impl eframe::App for TerminalApp {
 
         for evt in &all_events {
             match evt {
-                egui::Event::Key { key, modifiers, pressed, .. } => {
+                egui::Event::Key {
+                    key,
+                    modifiers,
+                    pressed,
+                    ..
+                } => {
                     // 检查 Ctrl+Shift+C/V（按下事件）
                     if *pressed {
                         if *key == egui::Key::C && modifiers.ctrl && modifiers.shift {
@@ -2517,7 +2792,14 @@ impl eframe::App for TerminalApp {
                     // Ctrl+V 粘贴只应通过 Ctrl+Shift+V（显式）或 semantic Paste 事件处理。
                 }
                 egui::Event::Paste(content) => {
-                    crate::debug_log!("[EVENT] detected Paste event: {:?}", if content.is_empty() { "empty" } else { "has content" });
+                    crate::debug_log!(
+                        "[EVENT] detected Paste event: {:?}",
+                        if content.is_empty() {
+                            "empty"
+                        } else {
+                            "has content"
+                        }
+                    );
                     saw_semantic_paste = true;
                 }
                 _ => {}
@@ -2550,7 +2832,11 @@ impl eframe::App for TerminalApp {
                                     terminal.is_bracketed_paste_enabled()
                                 };
 
-                                crate::debug_log!("[PASTE] sending {} bytes (bracketed={})", bytes.len(), bracketed_paste);
+                                crate::debug_log!(
+                                    "[PASTE] sending {} bytes (bracketed={})",
+                                    bytes.len(),
+                                    bracketed_paste
+                                );
                                 let paste_bytes = if bracketed_paste {
                                     wrap_bracketed_paste(bytes)
                                 } else {
@@ -2563,10 +2849,16 @@ impl eframe::App for TerminalApp {
                             }
                         }
                         ClipboardContent::Binary(bytes) => {
-                            crate::debug_log!("[PASTE] content type: BINARY ({} bytes)", bytes.len());
+                            crate::debug_log!(
+                                "[PASTE] content type: BINARY ({} bytes)",
+                                bytes.len()
+                            );
                             // 二进制内容（如图像）：使用 Kitty 图像协议
                             if !bytes.is_empty() {
-                                crate::debug_log!("[PASTE] detecting MIME type for {} bytes...", bytes.len());
+                                crate::debug_log!(
+                                    "[PASTE] detecting MIME type for {} bytes...",
+                                    bytes.len()
+                                );
                                 if let Some(mime_type) = detect_image_mime_type(&bytes) {
                                     crate::debug_log!("[PASTE] MIME type detected: {}", mime_type);
                                     let paste_packet = kitty_graphics_payload(mime_type, &bytes);
@@ -2576,7 +2868,9 @@ impl eframe::App for TerminalApp {
                                     crate::debug_log!("[KITTY] write result: {:?}", write_result);
                                     consumed_keys.insert("Ctrl+Shift+V".to_string());
                                 } else {
-                                    crate::debug_log!("[PASTE] MIME type NOT detected, ignoring binary data");
+                                    crate::debug_log!(
+                                        "[PASTE] MIME type NOT detected, ignoring binary data"
+                                    );
                                 }
                             } else {
                                 crate::debug_log!("[PASTE] binary content is empty");
@@ -2599,7 +2893,10 @@ impl eframe::App for TerminalApp {
                 crate::debug_log!("[PASTE] available MIME types: {:?}", mime_types);
                 let mut terminal = session.terminal.lock();
                 let paste_events_enabled = terminal.is_paste_events_enabled();
-                crate::debug_log!("[PASTE] terminal paste_events_enabled (mode 5522): {}", paste_events_enabled);
+                crate::debug_log!(
+                    "[PASTE] terminal paste_events_enabled (mode 5522): {}",
+                    paste_events_enabled
+                );
                 if paste_events_enabled {
                     // 应用支持粘贴事件协议，发送 MIME 类型列表，让应用请求
                     crate::debug_log!("[PASTE] app supports paste events, building paste event");
@@ -2614,17 +2911,25 @@ impl eframe::App for TerminalApp {
             };
 
             if let Some(bytes) = unsolicited_paste {
-                crate::debug_log!("[OSC5522] sending unsolicited paste MIME list ({} bytes)", bytes.len());
+                crate::debug_log!(
+                    "[OSC5522] sending unsolicited paste MIME list ({} bytes)",
+                    bytes.len()
+                );
                 let _ = session.shell.write(&bytes);
                 consumed_keys.insert("PasteEvent".to_string());
             } else {
                 // 应用不支持粘贴事件协议，需要特殊处理不同类型的内容
-                crate::debug_log!("[PASTE] fallback: app doesn't support paste events, handling content directly");
+                crate::debug_log!(
+                    "[PASTE] fallback: app doesn't support paste events, handling content directly"
+                );
                 if let Some(clipboard) = &self.clipboard {
                     if let Ok(content) = clipboard.paste_contents() {
                         match content {
                             ClipboardContent::Text(text) => {
-                                crate::debug_log!("[PASTE] fallback: TEXT content ({} chars)", text.len());
+                                crate::debug_log!(
+                                    "[PASTE] fallback: TEXT content ({} chars)",
+                                    text.len()
+                                );
                                 // 文本内容：按原来的方式处理（支持括号粘贴）
                                 let bytes = text.replace("\r\n", "\n").into_bytes();
                                 if !bytes.is_empty() {
@@ -2633,7 +2938,11 @@ impl eframe::App for TerminalApp {
                                         terminal.is_bracketed_paste_enabled()
                                     };
 
-                                    crate::debug_log!("[PASTE] fallback: sending text {} bytes (bracketed={})", bytes.len(), bracketed_paste);
+                                    crate::debug_log!(
+                                        "[PASTE] fallback: sending text {} bytes (bracketed={})",
+                                        bytes.len(),
+                                        bracketed_paste
+                                    );
                                     let paste_bytes = if bracketed_paste {
                                         wrap_bracketed_paste(bytes)
                                     } else {
@@ -2646,16 +2955,23 @@ impl eframe::App for TerminalApp {
                                 }
                             }
                             ClipboardContent::Binary(bytes) => {
-                                crate::debug_log!("[PASTE] fallback: BINARY content ({} bytes)", bytes.len());
+                                crate::debug_log!(
+                                    "[PASTE] fallback: BINARY content ({} bytes)",
+                                    bytes.len()
+                                );
                                 // 二进制内容（如图像）：使用 Kitty 图像协议
                                 if !bytes.is_empty() {
                                     crate::debug_log!("[PASTE] fallback: detecting MIME type...");
                                     if let Some(mime_type) = detect_image_mime_type(&bytes) {
-                                        let paste_packet = kitty_graphics_payload(mime_type, &bytes);
+                                        let paste_packet =
+                                            kitty_graphics_payload(mime_type, &bytes);
                                         crate::debug_log!("[KITTY] fallback: pasting {} bytes with mime_type={}, packet_size={}",
                                                         bytes.len(), mime_type, paste_packet.len());
                                         let write_result = session.shell.write(&paste_packet);
-                                        crate::debug_log!("[KITTY] fallback: write result: {:?}", write_result);
+                                        crate::debug_log!(
+                                            "[KITTY] fallback: write result: {:?}",
+                                            write_result
+                                        );
                                         consumed_keys.insert("PasteEvent".to_string());
                                     } else {
                                         // 未知的二进制格式，不发送（防止破坏终端）
@@ -2680,7 +2996,13 @@ impl eframe::App for TerminalApp {
         // 当搜索面板打开时，不处理普通键盘输入（搜索面板会处理输入）
         let mut keyboard_input = Vec::new();
         if !self.search_state.is_open {
-            let (keyboard_enhancement_flags, report_all_keys_mode, xterm_modify_other_keys, xterm_format_other_keys, application_cursor_keys) = {
+            let (
+                keyboard_enhancement_flags,
+                report_all_keys_mode,
+                xterm_modify_other_keys,
+                xterm_format_other_keys,
+                application_cursor_keys,
+            ) = {
                 let terminal = session.terminal.lock();
                 (
                     terminal.keyboard_enhancement_flags(),
@@ -2691,22 +3013,19 @@ impl eframe::App for TerminalApp {
                 )
             };
             // 转换 consumed_keys 为需要的格式（HashSet<&str>）
-            let consumed_keys_refs: std::collections::HashSet<&str> = consumed_keys
-                .iter()
-                .map(|s| s.as_str())
-                .collect();
-            self.renderer
-                .handle_keyboard_input(
-                    ctx,
-                    &mut keyboard_input,
-                    &consumed_keys_refs,
-                    has_preedit,
-                    keyboard_enhancement_flags,
-                    report_all_keys_mode,
-                    xterm_modify_other_keys,
-                    xterm_format_other_keys,
-                    application_cursor_keys,
-                );
+            let consumed_keys_refs: std::collections::HashSet<&str> =
+                consumed_keys.iter().map(|s| s.as_str()).collect();
+            self.renderer.handle_keyboard_input(
+                ctx,
+                &mut keyboard_input,
+                &consumed_keys_refs,
+                has_preedit,
+                keyboard_enhancement_flags,
+                report_all_keys_mode,
+                xterm_modify_other_keys,
+                xterm_format_other_keys,
+                application_cursor_keys,
+            );
         }
 
         let has_keyboard_input = !keyboard_input.is_empty();
@@ -2843,8 +3162,10 @@ impl eframe::App for TerminalApp {
                     self.cursor_visible = !self.cursor_visible;
                     cursor_state_changed = true;
 
-                    debug_log!("[CURSOR] blink toggle: {}, next in 1000ms",
-                        self.cursor_visible);
+                    debug_log!(
+                        "[CURSOR] blink toggle: {}, next in 1000ms",
+                        self.cursor_visible
+                    );
 
                     // 计算下一次改变的时间
                     self.next_cursor_blink_time = now + Duration::from_millis(1000);
@@ -2946,7 +3267,8 @@ impl eframe::App for TerminalApp {
                                         discrete_scroll_steps += delta.y.round() as isize;
                                     }
                                     egui::MouseWheelUnit::Page => {
-                                        discrete_scroll_steps += delta.y.round() as isize * self.rows.max(1) as isize;
+                                        discrete_scroll_steps +=
+                                            delta.y.round() as isize * self.rows.max(1) as isize;
                                     }
                                     egui::MouseWheelUnit::Point => {
                                         point_scroll_delta += delta.y;
@@ -3014,7 +3336,9 @@ impl eframe::App for TerminalApp {
         {
             let terminal = session.terminal.lock();
             let visible_cells = terminal.get_visible_cells();
-            let links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
+            let links = self
+                .link_detector
+                .detect_links_in_visible_cells(&visible_cells);
             drop(terminal);
 
             // 检测悬停的链接
@@ -3024,8 +3348,10 @@ impl eframe::App for TerminalApp {
                     let char_width = self.renderer.char_width;
                     let line_height = self.renderer.line_height;
 
-                    let clamped_x = (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
-                    let clamped_y = (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
+                    let clamped_x =
+                        (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
+                    let clamped_y =
+                        (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
 
                     let col = if char_width > 0.0 {
                         ((clamped_x / char_width) as usize).min(self.cols - 1)
@@ -3053,7 +3379,9 @@ impl eframe::App for TerminalApp {
             }
 
             // 处理 Ctrl+Click 打开链接
-            if ctx.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary) && i.modifiers.ctrl) {
+            if ctx.input(|i| {
+                i.pointer.button_clicked(egui::PointerButton::Primary) && i.modifiers.ctrl
+            }) {
                 if let Some(link) = &self.hovered_link {
                     match link::open_link(link) {
                         Ok(_) => {
@@ -3121,12 +3449,18 @@ impl eframe::App for TerminalApp {
 
         // Handle shell exit: close current session
         if shell_exited {
-            crate::debug_log!("[SHELL EXIT] handling shell exit, session_count: {}", session_count_before);
+            crate::debug_log!(
+                "[SHELL EXIT] handling shell exit, session_count: {}",
+                session_count_before
+            );
             if session_count_before > 1 {
                 // Close the current session if there are multiple sessions
                 self.session_manager.close_session(active_session_idx);
                 self.schedule_session_save();
-                crate::debug_log!("[SHELL EXIT] closed session, remaining: {}", self.session_manager.len());
+                crate::debug_log!(
+                    "[SHELL EXIT] closed session, remaining: {}",
+                    self.session_manager.len()
+                );
             } else {
                 // Close the window if this is the only session
                 crate::debug_log!("[SHELL EXIT] closing window");
@@ -3151,14 +3485,14 @@ impl Drop for TerminalApp {
 
             let snapshots = self.session_manager.get_session_snapshots();
             let active_index = Some(self.session_manager.active_index());
-            let snapshot = session_persistence::SessionsSnapshot::from_snapshots(snapshots, active_index);
+            let snapshot =
+                session_persistence::SessionsSnapshot::from_snapshots(snapshots, active_index);
             if let Err(e) = snapshot.save(&session_history_path) {
                 eprintln!("[SessionPersistence] Failed to save sessions: {}", e);
             }
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests {

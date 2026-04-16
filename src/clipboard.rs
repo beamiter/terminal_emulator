@@ -44,11 +44,17 @@ mod unix_clipboard {
             let _ = stdin.write_all(input);
         }
 
-        child.wait().ok().filter(|status| status.success()).map(|_| ())
+        child
+            .wait()
+            .ok()
+            .filter(|status| status.success())
+            .map(|_| ())
     }
 
     fn detect_wayland_clipboard() -> bool {
-        std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("XDG_SESSION_TYPE").as_deref() == Some(std::ffi::OsStr::new("wayland"))
+        std::env::var_os("WAYLAND_DISPLAY").is_some()
+            || std::env::var_os("XDG_SESSION_TYPE").as_deref()
+                == Some(std::ffi::OsStr::new("wayland"))
     }
 
     fn wl_list_types() -> Option<Vec<String>> {
@@ -96,11 +102,19 @@ mod unix_clipboard {
 
         /// 复制文本到系统剪贴板
         pub fn copy(&self, text: &str) -> Result<()> {
-            if detect_wayland_clipboard() && command_with_stdin("wl-copy", &["--type", "text/plain;charset=utf-8"], text.as_bytes()).is_some() {
+            if detect_wayland_clipboard()
+                && command_with_stdin(
+                    "wl-copy",
+                    &["--type", "text/plain;charset=utf-8"],
+                    text.as_bytes(),
+                )
+                .is_some()
+            {
                 return Ok(());
             }
 
-            if command_with_stdin("xclip", &["-selection", "clipboard"], text.as_bytes()).is_some() {
+            if command_with_stdin("xclip", &["-selection", "clipboard"], text.as_bytes()).is_some()
+            {
                 return Ok(());
             }
 
@@ -123,15 +137,23 @@ mod unix_clipboard {
             if detect_wayland_clipboard() {
                 if let Some(types) = wl_list_types() {
                     for mime_type in IMAGE_MIME_TYPES {
-                        if types.iter().any(|entry| entry.eq_ignore_ascii_case(mime_type)) {
-                            if let Some(bytes) = read_wayland_type(mime_type).filter(|bytes| !bytes.is_empty()) {
+                        if types
+                            .iter()
+                            .any(|entry| entry.eq_ignore_ascii_case(mime_type))
+                        {
+                            if let Some(bytes) =
+                                read_wayland_type(mime_type).filter(|bytes| !bytes.is_empty())
+                            {
                                 return Ok(ClipboardContent::Binary(bytes));
                             }
                         }
                     }
 
                     for mime_type in TEXT_MIME_TYPES {
-                        if types.iter().any(|entry| entry.eq_ignore_ascii_case(mime_type)) {
+                        if types
+                            .iter()
+                            .any(|entry| entry.eq_ignore_ascii_case(mime_type))
+                        {
                             if let Some(bytes) = read_wayland_type(mime_type) {
                                 return Ok(read_text_from_bytes(bytes));
                             }
@@ -146,15 +168,23 @@ mod unix_clipboard {
 
             if let Some(types) = xclip_list_types() {
                 for mime_type in IMAGE_MIME_TYPES {
-                    if types.iter().any(|entry| entry.eq_ignore_ascii_case(mime_type)) {
-                        if let Some(bytes) = read_xclip_type(mime_type).filter(|bytes| !bytes.is_empty()) {
+                    if types
+                        .iter()
+                        .any(|entry| entry.eq_ignore_ascii_case(mime_type))
+                    {
+                        if let Some(bytes) =
+                            read_xclip_type(mime_type).filter(|bytes| !bytes.is_empty())
+                        {
                             return Ok(ClipboardContent::Binary(bytes));
                         }
                     }
                 }
 
                 for mime_type in TEXT_MIME_TYPES {
-                    if types.iter().any(|entry| entry.eq_ignore_ascii_case(mime_type)) {
+                    if types
+                        .iter()
+                        .any(|entry| entry.eq_ignore_ascii_case(mime_type))
+                    {
                         if let Some(bytes) = read_xclip_type(mime_type) {
                             return Ok(read_text_from_bytes(bytes));
                         }
@@ -198,7 +228,10 @@ mod unix_clipboard {
                 return Ok(bytes);
             }
 
-            if TEXT_MIME_TYPES.iter().any(|candidate| candidate.eq_ignore_ascii_case(mime_type)) {
+            if TEXT_MIME_TYPES
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(mime_type))
+            {
                 return Ok(self.paste()?.into_bytes());
             }
 

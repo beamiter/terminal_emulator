@@ -102,16 +102,23 @@ impl HelpPanel {
                     ui.separator();
 
                     // 提示信息
-                    ui.label(RichText::new("💡 提示: 用鼠标拖拽分隔线调整窗格大小，用鼠标点击标签页关闭会话")
+                    ui.label(
+                        RichText::new(
+                            "💡 提示: 用鼠标拖拽分隔线调整窗格大小，用鼠标点击标签页关闭会话")
                         .size(11.0)
-                        .color(Color32::from_rgb(150, 150, 150)));
+                        .color(Color32::from_rgb(150, 150, 150))
+                    );
                 });
             });
     }
 
     fn add_keybinding(ui: &mut egui::Ui, key: &str, description: &str) {
         ui.horizontal(|ui| {
-            ui.label(RichText::new(key).monospace().color(Color32::from_rgb(100, 200, 255)));
+            ui.label(
+                RichText::new(key)
+                    .monospace()
+                    .color(Color32::from_rgb(100, 200, 255)),
+            );
             ui.label(RichText::new(description).color(Color32::from_rgb(200, 200, 200)));
         });
     }

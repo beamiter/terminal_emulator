@@ -60,7 +60,12 @@ mod unix_pty {
             Self::new_with_cwd(cols, rows, None, None)
         }
 
-        pub fn new_with_cwd(cols: usize, rows: usize, cwd: Option<&str>, session_id: Option<&str>) -> Result<Self> {
+        pub fn new_with_cwd(
+            cols: usize,
+            rows: usize,
+            cwd: Option<&str>,
+            session_id: Option<&str>,
+        ) -> Result<Self> {
             unsafe {
                 // 1. 创建 PTY
                 let mut master = 0;
@@ -73,7 +78,14 @@ mod unix_pty {
                     ws_ypixel: 0,
                 };
 
-                if libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), &win_size) != 0 {
+                if libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &win_size,
+                ) != 0
+                {
                     return Err(anyhow!("Failed to open PTY"));
                 }
 
@@ -259,7 +271,10 @@ mod unix_pty {
 
             let ready = unsafe { libc::poll(&mut poll_fd, 1, timeout_ms) };
             if ready < 0 {
-                Err(anyhow!("Failed to poll PTY: {}", std::io::Error::last_os_error()))
+                Err(anyhow!(
+                    "Failed to poll PTY: {}",
+                    std::io::Error::last_os_error()
+                ))
             } else if ready == 0 {
                 Ok(false)
             } else {
@@ -272,7 +287,10 @@ mod unix_pty {
             unsafe {
                 let n = libc::write(self.master, data.as_ptr() as *const _, data.len());
                 if n < 0 {
-                    Err(anyhow!("Failed to write to PTY: {}", std::io::Error::last_os_error()))
+                    Err(anyhow!(
+                        "Failed to write to PTY: {}",
+                        std::io::Error::last_os_error()
+                    ))
                 } else {
                     Ok(n as usize)
                 }
@@ -325,7 +343,7 @@ mod unix_pty {
             unsafe {
                 let mut status = 0;
                 let result = libc::waitpid(self.child_pid, &mut status, libc::WNOHANG);
-                result == 0  // 0 表示子进程还活着
+                result == 0 // 0 表示子进程还活着
             }
         }
 

@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
-use base64::Engine;
 use crate::kitty_graphics::KittyGraphicsState;
+use base64::Engine;
+use std::collections::VecDeque;
 
 /// Character class for word selection boundaries.
 #[derive(PartialEq)]
@@ -29,7 +29,10 @@ fn char_class(c: char) -> CharClass {
 }
 
 fn is_extended_token_separator(c: char) -> bool {
-    matches!(c, '/' | '\\' | '.' | ':' | '-' | '~' | '?' | '&' | '=' | '#' | '%' | '+' | '@')
+    matches!(
+        c,
+        '/' | '\\' | '.' | ':' | '-' | '~' | '?' | '&' | '=' | '#' | '%' | '+' | '@'
+    )
 }
 
 fn is_extended_token_char(c: char) -> bool {
@@ -41,7 +44,10 @@ fn is_token_prefix_wrapper(c: char) -> bool {
 }
 
 fn is_token_suffix_wrapper(c: char) -> bool {
-    matches!(c, '"' | '\'' | '`' | ')' | ']' | '}' | '>' | ',' | ';' | '!')
+    matches!(
+        c,
+        '"' | '\'' | '`' | ')' | ']' | '}' | '>' | ',' | ';' | '!'
+    )
 }
 
 const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
@@ -245,9 +251,22 @@ impl TerminalGrid {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Color {
-    Black, Red, Green, Yellow, Blue, Magenta, Cyan, White,
-    BrightBlack, BrightRed, BrightGreen, BrightYellow,
-    BrightBlue, BrightMagenta, BrightCyan, BrightWhite,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    BrightBlack,
+    BrightRed,
+    BrightGreen,
+    BrightYellow,
+    BrightBlue,
+    BrightMagenta,
+    BrightCyan,
+    BrightWhite,
     Indexed(u8),
     Rgb(u8, u8, u8),
     Default,
@@ -255,9 +274,9 @@ pub enum Color {
 
 #[derive(Clone, Debug)]
 pub enum CursorShape {
-    Block,      // 0 or 1 - block cursor (default)
-    Underline,  // 2 - underline cursor
-    Beam,       // 3 - beam/vertical line cursor
+    Block,     // 0 or 1 - block cursor (default)
+    Underline, // 2 - underline cursor
+    Beam,      // 3 - beam/vertical line cursor
 }
 
 impl Default for CursorShape {
@@ -303,7 +322,7 @@ impl Default for TerminalCell {
 /// 追踪改变的行和列区间（脏矩形）
 #[derive(Clone, Debug)]
 pub struct DirtyRegion {
-    pub rows: Vec<(usize, usize)>,  // (row_start, row_end)，包含端点
+    pub rows: Vec<(usize, usize)>, // (row_start, row_end)，包含端点
     pub col_start: usize,
     pub col_end: usize,
 }
@@ -452,8 +471,8 @@ pub struct TerminalState {
     pub dirty_region: DirtyRegion,
 
     // P4 优化：行版本化追踪
-    pub grid_version: u64,  // 全局网格版本号
-    pub row_versions: Vec<u64>,  // 每行的修改版本号
+    pub grid_version: u64,      // 全局网格版本号
+    pub row_versions: Vec<u64>, // 每行的修改版本号
 }
 
 impl TerminalState {
@@ -487,7 +506,7 @@ impl TerminalState {
 
         let mut modes = std::collections::HashSet::new();
         modes.insert(25); // Cursor visible by default
-        modes.insert(7);  // Autowrap mode enabled by default (DECAWM)
+        modes.insert(7); // Autowrap mode enabled by default (DECAWM)
 
         let mut dirty_region = DirtyRegion::new(cols);
         // Mark all rows as dirty on initialization to ensure first frame renders correctly
@@ -537,13 +556,15 @@ impl TerminalState {
             pending_paste_password: None,
             kitty_graphics: KittyGraphicsState::new(),
             dirty_region,
-            grid_version: 1,  // P4：初始化网格版本号（1=所有行初始dirty）
-            row_versions: vec![1; rows],  // P4：初始化每行版本号（与grid_version同步）
+            grid_version: 1,             // P4：初始化网格版本号（1=所有行初始dirty）
+            row_versions: vec![1; rows], // P4：初始化每行版本号（与grid_version同步）
         }
     }
 
     fn decode_base64(value: &str) -> Option<String> {
-        let bytes = base64::engine::general_purpose::STANDARD.decode(value).ok()?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(value)
+            .ok()?;
         String::from_utf8(bytes).ok()
     }
 
@@ -597,7 +618,8 @@ impl TerminalState {
             ClipboardReadKind::MimeList
         };
 
-        self.pending_clipboard_requests.push(ClipboardReadRequest { kind });
+        self.pending_clipboard_requests
+            .push(ClipboardReadRequest { kind });
     }
 
     fn set_keyboard_enhancement_flags(&mut self, flags: u16, mode: u16) {
@@ -613,7 +635,8 @@ impl TerminalState {
         if self.keyboard_enhancement_stack.len() >= 32 {
             self.keyboard_enhancement_stack.remove(0);
         }
-        self.keyboard_enhancement_stack.push(self.keyboard_enhancement_flags);
+        self.keyboard_enhancement_stack
+            .push(self.keyboard_enhancement_flags);
         self.keyboard_enhancement_flags = flags;
     }
 
@@ -657,7 +680,12 @@ impl TerminalState {
         }
 
         // If current position has a continuation cell to its left, clear the wide character
-        if self.cursor_col > 0 && self.grid.get(self.cursor_row, self.cursor_col).wide_continuation {
+        if self.cursor_col > 0
+            && self
+                .grid
+                .get(self.cursor_row, self.cursor_col)
+                .wide_continuation
+        {
             *self.grid.get_mut(self.cursor_row, self.cursor_col - 1) = blank_cell.clone();
         }
 
@@ -692,7 +720,7 @@ impl TerminalState {
         TerminalCell {
             character: ' ',
             foreground: Color::Default,
-            background: self.current_bg,  // Preserve current background color
+            background: self.current_bg, // Preserve current background color
             flags: StyleFlags::default(),
             wide: false,
             wide_continuation: false,
@@ -843,9 +871,16 @@ impl TerminalState {
 
     /// P4：获取上次渲染后修改过的行索引
     pub fn get_dirty_rows(&self, last_rendered_version: u64) -> Vec<usize> {
-        self.row_versions.iter()
+        self.row_versions
+            .iter()
             .enumerate()
-            .filter_map(|(i, &v)| if v > last_rendered_version { Some(i) } else { None })
+            .filter_map(|(i, &v)| {
+                if v > last_rendered_version {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
             .collect()
     }
 
@@ -853,7 +888,6 @@ impl TerminalState {
     pub fn get_grid_version(&self) -> u64 {
         self.grid_version
     }
-
 
     pub fn process_input(&mut self, input: &[u8]) {
         let mut data = Vec::with_capacity(self.pending_escape.len() + input.len());
@@ -945,7 +979,10 @@ impl TerminalState {
                                     i += 1;
                                     terminated = true;
                                     break;
-                                } else if i + 1 < data.len() && data[i] == 0x1b && data[i + 1] == 0x5c {
+                                } else if i + 1 < data.len()
+                                    && data[i] == 0x1b
+                                    && data[i + 1] == 0x5c
+                                {
                                     i += 2;
                                     terminated = true;
                                     break;
@@ -961,17 +998,22 @@ impl TerminalState {
 
                             let payload_end = if data[i - 1] == 0x07 { i - 1 } else { i - 2 };
                             if payload_end >= payload_start {
-                                if let Ok(payload) = std::str::from_utf8(&data[payload_start..payload_end]) {
+                                if let Ok(payload) =
+                                    std::str::from_utf8(&data[payload_start..payload_end])
+                                {
                                     if let Some((command, value)) = payload.split_once(';') {
                                         if command == "0" || command == "2" {
                                             self.window_title.clear();
                                             self.window_title.push_str(value);
                                         } else if command == "5522" {
-                                            let (metadata, osc_payload) = if let Some((metadata, osc_payload)) = value.split_once(';') {
-                                                (metadata, Some(osc_payload))
-                                            } else {
-                                                (value, None)
-                                            };
+                                            let (metadata, osc_payload) =
+                                                if let Some((metadata, osc_payload)) =
+                                                    value.split_once(';')
+                                                {
+                                                    (metadata, Some(osc_payload))
+                                                } else {
+                                                    (value, None)
+                                                };
                                             self.handle_osc_5522(metadata, osc_payload);
                                         }
                                     }
@@ -991,11 +1033,18 @@ impl TerminalState {
                                     // Check if this is a Kitty graphics protocol DCS
                                     if let Ok(payload_str) = std::str::from_utf8(payload) {
                                         // Kitty graphics protocol starts with @ or other specific markers
-                                        if payload_str.starts_with('@') ||
-                                           payload_str.contains("a=") ||
-                                           payload_str.starts_with("kitty") {
-                                            if let Err(e) = self.kitty_graphics.parse_graphics_payload(payload_str) {
-                                                crate::debug_log!("[DCS] Kitty graphics error: {}", e);
+                                        if payload_str.starts_with('@')
+                                            || payload_str.contains("a=")
+                                            || payload_str.starts_with("kitty")
+                                        {
+                                            if let Err(e) = self
+                                                .kitty_graphics
+                                                .parse_graphics_payload(payload_str)
+                                            {
+                                                crate::debug_log!(
+                                                    "[DCS] Kitty graphics error: {}",
+                                                    e
+                                                );
                                             }
                                         }
                                     }
@@ -1039,11 +1088,13 @@ impl TerminalState {
                             let designator = data[i + 2];
                             let charset = Self::charset_from_designator(designator);
 
-                            crate::debug_log!("[CHARSET] ESC {} designator={} (0x{:02x}) charset={:?}",
+                            crate::debug_log!(
+                                "[CHARSET] ESC {} designator={} (0x{:02x}) charset={:?}",
                                 if is_g0 { '(' } else { ')' },
                                 designator as char,
                                 designator,
-                                charset);
+                                charset
+                            );
 
                             if is_g0 {
                                 self.g0_charset = charset;
@@ -1060,7 +1111,10 @@ impl TerminalState {
                             if self.cursor_row > self.scroll_region_top {
                                 self.cursor_row -= 1;
                             } else {
-                                if self.scroll_region_top < self.grid.rows() && self.scroll_region_bottom < self.grid.rows() && self.scroll_region_top <= self.scroll_region_bottom {
+                                if self.scroll_region_top < self.grid.rows()
+                                    && self.scroll_region_bottom < self.grid.rows()
+                                    && self.scroll_region_top <= self.scroll_region_bottom
+                                {
                                     let cols = self.grid.row_len();
                                     let mut new_lines = vec![self.blank_line(cols)];
 
@@ -1071,8 +1125,13 @@ impl TerminalState {
                                     }
 
                                     for (offset, line) in new_lines.iter().enumerate() {
-                                        if self.scroll_region_top + offset <= self.scroll_region_bottom {
-                                            self.grid.set_row(self.scroll_region_top + offset, line.clone());
+                                        if self.scroll_region_top + offset
+                                            <= self.scroll_region_bottom
+                                        {
+                                            self.grid.set_row(
+                                                self.scroll_region_top + offset,
+                                                line.clone(),
+                                            );
                                         }
                                     }
                                 }
@@ -1084,7 +1143,10 @@ impl TerminalState {
                             if self.cursor_row < self.scroll_region_bottom {
                                 self.cursor_row += 1;
                             } else {
-                                self.scroll_region_up(self.scroll_region_top, self.scroll_region_bottom);
+                                self.scroll_region_up(
+                                    self.scroll_region_top,
+                                    self.scroll_region_bottom,
+                                );
                             }
                         }
                         b'[' => {
@@ -1122,7 +1184,12 @@ impl TerminalState {
                             let params = Self::parse_csi_params(&param_bytes);
                             let cmd = final_byte as char;
 
-                            self.handle_escape_sequence(&params, cmd, private_prefix, &intermediates);
+                            self.handle_escape_sequence(
+                                &params,
+                                cmd,
+                                private_prefix,
+                                &intermediates,
+                            );
                             i += 1;
                         }
                         _ => {
@@ -1164,7 +1231,9 @@ impl TerminalState {
                         self.utf8_len += 1;
                         if self.utf8_len == self.utf8_expected {
                             // Sequence complete, decode it
-                            if let Ok(s) = std::str::from_utf8(&self.utf8_buf[..self.utf8_len as usize]) {
+                            if let Ok(s) =
+                                std::str::from_utf8(&self.utf8_buf[..self.utf8_len as usize])
+                            {
                                 if let Some(ch) = s.chars().next() {
                                     self.put_char(ch);
                                 }
@@ -1199,7 +1268,9 @@ impl TerminalState {
                         self.cursor_row -= 1;
                     } else {
                         // Cursor is at top of scroll region, scroll the region down
-                        if self.scroll_region_top < self.grid.rows() && self.scroll_region_bottom < self.grid.rows() {
+                        if self.scroll_region_top < self.grid.rows()
+                            && self.scroll_region_bottom < self.grid.rows()
+                        {
                             let cols = self.grid.row_len();
                             let mut new_lines = vec![self.blank_line(cols)]; // New blank line at top
 
@@ -1288,7 +1359,8 @@ impl TerminalState {
                             }
                         }
                         // Mark affected rows as dirty
-                        self.dirty_region.mark_rows(self.cursor_row, self.grid.rows().saturating_sub(1));
+                        self.dirty_region
+                            .mark_rows(self.cursor_row, self.grid.rows().saturating_sub(1));
                         self.mark_rows_dirty(self.cursor_row, self.grid.rows().saturating_sub(1));
                     }
                     1 => {
@@ -1351,7 +1423,9 @@ impl TerminalState {
                 // Insert line(s) at cursor position (push lines down)
                 let n = params.first().copied().unwrap_or(1) as usize;
                 for _ in 0..n {
-                    if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
+                    if self.cursor_row >= self.scroll_region_top
+                        && self.cursor_row <= self.scroll_region_bottom
+                    {
                         let cols = self.grid.row_len();
                         // Shift lines down within scroll region: move cursor_row..bottom-1 to cursor_row+1..bottom
                         for row in (self.cursor_row..self.scroll_region_bottom).rev() {
@@ -1367,7 +1441,9 @@ impl TerminalState {
                 // Delete line(s) at cursor position (pull lines up)
                 let n = params.first().copied().unwrap_or(1) as usize;
                 for _ in 0..n {
-                    if self.cursor_row >= self.scroll_region_top && self.cursor_row <= self.scroll_region_bottom {
+                    if self.cursor_row >= self.scroll_region_top
+                        && self.cursor_row <= self.scroll_region_bottom
+                    {
                         let cols = self.grid.row_len();
                         // Shift lines up within scroll region: move cursor_row+1..bottom to cursor_row..bottom-1
                         for row in self.cursor_row..self.scroll_region_bottom {
@@ -1375,7 +1451,8 @@ impl TerminalState {
                             self.grid.set_row(row, src);
                         }
                         // Insert blank line at bottom of region
-                        self.grid.set_row(self.scroll_region_bottom, self.blank_line(cols));
+                        self.grid
+                            .set_row(self.scroll_region_bottom, self.blank_line(cols));
                     }
                 }
             }
@@ -1472,7 +1549,10 @@ impl TerminalState {
                 let n = params.first().copied().unwrap_or(1) as usize;
                 // Scroll within the scroll region by moving lines
                 for _ in 0..n {
-                    if self.scroll_region_top < self.grid.rows() && self.scroll_region_bottom < self.grid.rows() && self.scroll_region_top <= self.scroll_region_bottom {
+                    if self.scroll_region_top < self.grid.rows()
+                        && self.scroll_region_bottom < self.grid.rows()
+                        && self.scroll_region_top <= self.scroll_region_bottom
+                    {
                         let cols = self.grid.row_len();
 
                         // Shift lines down within the region by collecting from bottom to top
@@ -1553,8 +1633,12 @@ impl TerminalState {
                 let bottom = params.get(1).copied().unwrap_or(self.grid.rows() as u16) as usize;
 
                 // Convert from 1-indexed to 0-indexed, and clamp to valid range
-                self.scroll_region_top = top.saturating_sub(1).min(self.grid.rows().saturating_sub(1));
-                self.scroll_region_bottom = bottom.saturating_sub(1).min(self.grid.rows().saturating_sub(1));
+                self.scroll_region_top = top
+                    .saturating_sub(1)
+                    .min(self.grid.rows().saturating_sub(1));
+                self.scroll_region_bottom = bottom
+                    .saturating_sub(1)
+                    .min(self.grid.rows().saturating_sub(1));
 
                 // If range is invalid, reset to full screen
                 if self.scroll_region_top > self.scroll_region_bottom {
@@ -1576,7 +1660,11 @@ impl TerminalState {
                     // insert_cell_in_row shifts cells right and discards the last cell
                     for _ in 0..n {
                         if self.cursor_col < cols {
-                            self.grid.insert_cell_in_row(self.cursor_row, self.cursor_col, blank_cell.clone());
+                            self.grid.insert_cell_in_row(
+                                self.cursor_row,
+                                self.cursor_col,
+                                blank_cell.clone(),
+                            );
                         }
                     }
                 }
@@ -1587,7 +1675,8 @@ impl TerminalState {
                 let blank_cell = self.create_blank_cell();
                 for _ in 0..n {
                     if self.cursor_col < self.grid.row_len() {
-                        self.grid.remove_cell_from_row(self.cursor_row, self.cursor_col);
+                        self.grid
+                            .remove_cell_from_row(self.cursor_row, self.cursor_col);
                         // Fill the last cell with proper blank (remove_cell_from_row uses default)
                         let last_col = self.grid.row_len() - 1;
                         *self.grid.get_mut(self.cursor_row, last_col) = blank_cell.clone();
@@ -1689,7 +1778,7 @@ impl TerminalState {
                         47 => Color::White,
                         _ => Color::Default,
                     };
-                    self.global_bg = self.current_bg;  // Update global background
+                    self.global_bg = self.current_bg; // Update global background
                     crate::debug_log!("[CSI] Background color set to: {:?}", self.current_bg);
                 }
                 90..=97 => {
@@ -1717,7 +1806,7 @@ impl TerminalState {
                         107 => Color::BrightWhite,
                         _ => Color::Default,
                     };
-                    self.global_bg = self.current_bg;  // Update global background
+                    self.global_bg = self.current_bg; // Update global background
                 }
                 // Extended color support: 38;5;n (256 color) and 38;2;r;g;b (RGB)
                 38 => {
@@ -1749,8 +1838,11 @@ impl TerminalState {
                             5 => {
                                 // 256 color mode for background
                                 self.current_bg = Color::Indexed(params[i + 2] as u8);
-                                self.global_bg = self.current_bg;  // Update global background
-                                crate::debug_log!("[CSI] Background color (256-color) set to: index {}", params[i + 2]);
+                                self.global_bg = self.current_bg; // Update global background
+                                crate::debug_log!(
+                                    "[CSI] Background color (256-color) set to: index {}",
+                                    params[i + 2]
+                                );
                                 i += 2;
                             }
                             2 => {
@@ -1761,8 +1853,13 @@ impl TerminalState {
                                         params[i + 3] as u8,
                                         params[i + 4] as u8,
                                     );
-                                    self.global_bg = self.current_bg;  // Update global background
-                                    crate::debug_log!("[CSI] Background color (RGB) set to: ({}, {}, {})", params[i + 2], params[i + 3], params[i + 4]);
+                                    self.global_bg = self.current_bg; // Update global background
+                                    crate::debug_log!(
+                                        "[CSI] Background color (RGB) set to: ({}, {}, {})",
+                                        params[i + 2],
+                                        params[i + 3],
+                                        params[i + 4]
+                                    );
                                     i += 4;
                                 }
                             }
@@ -1825,8 +1922,14 @@ impl TerminalState {
                     std::mem::swap(&mut self.grid, &mut self.alt_grid);
                     self.alt_cursor_row = self.cursor_row;
                     self.alt_cursor_col = self.cursor_col;
-                    std::mem::swap(&mut self.keyboard_enhancement_flags, &mut self.alt_keyboard_enhancement_flags);
-                    std::mem::swap(&mut self.keyboard_enhancement_stack, &mut self.alt_keyboard_enhancement_stack);
+                    std::mem::swap(
+                        &mut self.keyboard_enhancement_flags,
+                        &mut self.alt_keyboard_enhancement_flags,
+                    );
+                    std::mem::swap(
+                        &mut self.keyboard_enhancement_stack,
+                        &mut self.alt_keyboard_enhancement_stack,
+                    );
                     self.use_alt_buffer = true;
 
                     // Clear alt buffer and move cursor to home
@@ -1870,8 +1973,14 @@ impl TerminalState {
                     std::mem::swap(&mut self.grid, &mut self.alt_grid);
                     self.cursor_row = self.saved_cursor_row;
                     self.cursor_col = self.saved_cursor_col;
-                    std::mem::swap(&mut self.keyboard_enhancement_flags, &mut self.alt_keyboard_enhancement_flags);
-                    std::mem::swap(&mut self.keyboard_enhancement_stack, &mut self.alt_keyboard_enhancement_stack);
+                    std::mem::swap(
+                        &mut self.keyboard_enhancement_flags,
+                        &mut self.alt_keyboard_enhancement_flags,
+                    );
+                    std::mem::swap(
+                        &mut self.keyboard_enhancement_stack,
+                        &mut self.alt_keyboard_enhancement_stack,
+                    );
                     self.use_alt_buffer = false;
                     self.modes.remove(&1049);
                 }
@@ -1910,7 +2019,8 @@ impl TerminalState {
 
     pub fn get_mouse_report(&self, button: u8, col: usize, row: usize) -> Option<String> {
         // Check if any mouse reporting mode is enabled
-        if !self.modes.contains(&1000) && !self.modes.contains(&1002) && !self.modes.contains(&1003) {
+        if !self.modes.contains(&1000) && !self.modes.contains(&1002) && !self.modes.contains(&1003)
+        {
             return None;
         }
 
@@ -1929,7 +2039,10 @@ impl TerminalState {
             let button_byte = (32 + button) as u8;
             let col_byte = (32 + (col as u8).min(223)) as u8;
             let row_byte = (32 + (row as u8).min(223)) as u8;
-            Some(format!("\x1b[M{}{}{}", button_byte as char, col_byte as char, row_byte as char))
+            Some(format!(
+                "\x1b[M{}{}{}",
+                button_byte as char, col_byte as char, row_byte as char
+            ))
         }
     }
 
@@ -1972,7 +2085,8 @@ impl TerminalState {
     pub fn build_paste_event(&mut self, mime_types: &[String]) -> Vec<u8> {
         let password = uuid::Uuid::new_v4().to_string();
         self.pending_paste_password = Some(password.clone());
-        let encoded_password = base64::engine::general_purpose::STANDARD.encode(password.as_bytes());
+        let encoded_password =
+            base64::engine::general_purpose::STANDARD.encode(password.as_bytes());
         let mut output = Vec::new();
 
         output.extend_from_slice(b"\x1b]5522;type=read:status=OK:password=");
@@ -1980,7 +2094,8 @@ impl TerminalState {
         output.extend_from_slice(Self::osc_terminator());
 
         for mime_type in mime_types {
-            let encoded_mime = base64::engine::general_purpose::STANDARD.encode(mime_type.as_bytes());
+            let encoded_mime =
+                base64::engine::general_purpose::STANDARD.encode(mime_type.as_bytes());
             output.extend_from_slice(b"\x1b]5522;type=read:status=DATA:mime=");
             output.extend_from_slice(encoded_mime.as_bytes());
             output.extend_from_slice(Self::osc_terminator());
@@ -1996,7 +2111,10 @@ impl TerminalState {
 
     fn scroll_down(&mut self) {
         if self.grid.rows() > 0 {
-            crate::debug_log!("[SCROLL] scroll_down() in buffer (alt={})", self.use_alt_buffer);
+            crate::debug_log!(
+                "[SCROLL] scroll_down() in buffer (alt={})",
+                self.use_alt_buffer
+            );
             let bg_color = self.current_bg;
             let blank_cell = TerminalCell {
                 character: ' ',
@@ -2075,7 +2193,10 @@ impl TerminalState {
     /// Start a new selection at a viewport-relative position.
     /// Converts to absolute buffer coordinates internally.
     pub fn start_selection(&mut self, viewport_pos: (usize, usize)) {
-        let abs = (self.viewport_row_to_absolute(viewport_pos.0), viewport_pos.1);
+        let abs = (
+            self.viewport_row_to_absolute(viewport_pos.0),
+            viewport_pos.1,
+        );
         self.selection = Some(Selection {
             anchor: abs,
             active: abs,
@@ -2140,7 +2261,11 @@ impl TerminalState {
         // Expand right
         let mut right = start_col;
         loop {
-            let next = if line[right].wide { right + 2 } else { right + 1 };
+            let next = if line[right].wide {
+                right + 2
+            } else {
+                right + 1
+            };
             if next >= cols {
                 break;
             }
@@ -2172,7 +2297,10 @@ impl TerminalState {
         });
     }
 
-    fn select_extended_token_span(line: &[TerminalCell], start_col: usize) -> Option<(usize, usize)> {
+    fn select_extended_token_span(
+        line: &[TerminalCell],
+        start_col: usize,
+    ) -> Option<(usize, usize)> {
         let cols = line.len();
         if start_col >= cols {
             return None;
@@ -2198,7 +2326,11 @@ impl TerminalState {
 
         let mut right = start_col;
         loop {
-            let next = if line[right].wide { right + 2 } else { right + 1 };
+            let next = if line[right].wide {
+                right + 2
+            } else {
+                right + 1
+            };
             if next >= cols {
                 break;
             }
@@ -2220,7 +2352,11 @@ impl TerminalState {
         }
 
         while right > start_col && is_token_suffix_wrapper(line[right].character) {
-            right -= if line[right].wide_continuation && right > 0 { 2 } else { 1 };
+            right -= if line[right].wide_continuation && right > 0 {
+                2
+            } else {
+                1
+            };
         }
 
         if left > right || start_col < left || start_col > right {
@@ -2401,7 +2537,6 @@ impl TerminalState {
         }
     }
 
-
     // IME support methods
     pub fn set_preedit(&mut self, text: String, cursor: usize) {
         self.preedit_text = text;
@@ -2412,7 +2547,6 @@ impl TerminalState {
         self.preedit_text.clear();
         self.preedit_cursor = 0;
     }
-
 }
 
 #[cfg(test)]
@@ -2627,7 +2761,10 @@ mod tests {
         terminal.process_input(b"open src/main.rs:1480 please");
         terminal.select_word_at(0, 8);
 
-        assert_eq!(terminal.copy_selection().as_deref(), Some("src/main.rs:1480"));
+        assert_eq!(
+            terminal.copy_selection().as_deref(),
+            Some("src/main.rs:1480")
+        );
     }
 
     #[test]
@@ -2662,7 +2799,10 @@ mod tests {
         assert_eq!(terminal.keyboard_enhancement_flags(), 1);
 
         terminal.process_input(b"\x1b[?u");
-        assert_eq!(String::from_utf8(terminal.get_output()).unwrap(), "\x1b[?1u");
+        assert_eq!(
+            String::from_utf8(terminal.get_output()).unwrap(),
+            "\x1b[?1u"
+        );
 
         terminal.process_input(b"\x1b[>5u");
         assert_eq!(terminal.keyboard_enhancement_flags(), 5);
@@ -2709,6 +2849,9 @@ mod tests {
 
         terminal.process_input(b"\x1b[?5522$p");
 
-        assert_eq!(String::from_utf8(terminal.get_output()).unwrap(), "\x1b[?5522;2$y");
+        assert_eq!(
+            String::from_utf8(terminal.get_output()).unwrap(),
+            "\x1b[?5522;2$y"
+        );
     }
 }

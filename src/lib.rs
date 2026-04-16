@@ -1,30 +1,29 @@
 // Library export for benchmarks and testing
 
-pub mod terminal;
+pub mod ansi_advanced;
+pub mod char_width; // P5：字符宽度缓存
 pub mod clipboard;
 pub mod color;
+pub mod command_palette;
 pub mod config;
 pub mod debug;
+pub mod glyph_cache; // P2：字形缓存
+pub mod gpu;
+pub mod image_cache;
+pub mod keybindings;
+pub mod kitty_graphics;
+pub mod layout;
+pub mod link;
 pub mod pty;
+pub mod scripting;
+pub mod search;
+pub mod search_replace;
 pub mod session;
 pub mod session_manager;
-pub mod shell;
-pub mod ui;
-pub mod search;
-pub mod link;
-pub mod keybindings;
-pub mod command_palette;
-pub mod theme;
-pub mod layout;
 pub mod session_persistence;
+pub mod shell;
 pub mod sidebar;
-pub mod search_replace;
-pub mod scripting;
-pub mod ansi_advanced;
+pub mod terminal;
+pub mod theme;
+pub mod ui;
 pub mod windows_compat;
-pub mod kitty_graphics;
-pub mod image_cache;
-pub mod char_width;  // P5：字符宽度缓存
-pub mod glyph_cache;  // P2：字形缓存
-pub mod gpu;
-

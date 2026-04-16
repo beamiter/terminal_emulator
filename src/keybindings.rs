@@ -26,18 +26,18 @@ pub enum Command {
     SearchHistoryNext,
 
     // === 终端操作 ===
-    TerminalSendSigint,  // Ctrl+C
-    TerminalSendEof,     // Ctrl+D
-    TerminalClear,       // Ctrl+L
+    TerminalSendSigint, // Ctrl+C
+    TerminalSendEof,    // Ctrl+D
+    TerminalClear,      // Ctrl+L
     TerminalScrollUp,
     TerminalScrollDown,
 
     // === 分屏操作 ===
-    TerminalSplitVertical,    // Ctrl+Shift+D
-    TerminalSplitHorizontal,  // Ctrl+Shift+E
-    TerminalClosePane,        // Ctrl+Shift+W
-    PaneFocusNext,            // Alt+Tab
-    PaneFocusPrev,            // Alt+Shift+Tab
+    TerminalSplitVertical,   // Ctrl+Shift+D
+    TerminalSplitHorizontal, // Ctrl+Shift+E
+    TerminalClosePane,       // Ctrl+Shift+W
+    PaneFocusNext,           // Alt+Tab
+    PaneFocusPrev,           // Alt+Shift+Tab
 
     // === 窗口操作 ===
     WindowClose,
@@ -115,7 +115,8 @@ impl std::str::FromStr for Command {
             "config:toggle" => Ok(Command::ConfigToggle),
             s if s.starts_with("session:jump:") => {
                 let num_str = &s[13..];
-                let num = num_str.parse::<usize>()
+                let num = num_str
+                    .parse::<usize>()
                     .map_err(|_| format!("Invalid session number: {}", num_str))?;
                 if num < 9 {
                     Ok(Command::SessionJump(num))
@@ -154,14 +155,17 @@ impl Modifiers {
     }
 
     pub fn count(&self) -> usize {
-        (self.ctrl as usize) + (self.shift as usize) + (self.alt as usize) + (self.super_key as usize)
+        (self.ctrl as usize)
+            + (self.shift as usize)
+            + (self.alt as usize)
+            + (self.super_key as usize)
     }
 }
 
 /// 快捷键（可配置）
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct KeyBinding {
-    pub key: String,      // "a", "Tab", "F1", 等
+    pub key: String, // "a", "Tab", "F1", 等
     pub modifiers: Modifiers,
     pub command: Command,
 }
@@ -232,7 +236,8 @@ impl KeyBinding {
         let key = if self.key.len() == 1 {
             self.key.to_uppercase()
         } else {
-            format!("{}{}",
+            format!(
+                "{}{}",
                 self.key.chars().next().unwrap().to_uppercase(),
                 &self.key[1..]
             )
@@ -262,34 +267,57 @@ impl KeyBindings {
         let mut bindings = Self::new();
 
         // 会话管理
-        bindings.bindings.insert("ctrl+shift+t".to_string(), "session:new".to_string());
-        bindings.bindings.insert("ctrl+d".to_string(), "terminal:send_eof".to_string());
-        bindings.bindings.insert("ctrl+tab".to_string(), "session:next".to_string());
-        bindings.bindings.insert("ctrl+shift+tab".to_string(), "session:prev".to_string());
-        bindings.bindings.insert("ctrl+pagedown".to_string(), "session:next".to_string());
-        bindings.bindings.insert("ctrl+pageup".to_string(), "session:prev".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+shift+t".to_string(), "session:new".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+d".to_string(), "terminal:send_eof".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+tab".to_string(), "session:next".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+shift+tab".to_string(), "session:prev".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+pagedown".to_string(), "session:next".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+pageup".to_string(), "session:prev".to_string());
 
         // 会话切换（数字快捷键）
         for i in 0..9 {
-            bindings.bindings.insert(
-                format!("ctrl+{}", i),
-                format!("session:jump:{}", i),
-            );
+            bindings
+                .bindings
+                .insert(format!("ctrl+{}", i), format!("session:jump:{}", i));
         }
 
         // 编辑操作
-        bindings.bindings.insert("ctrl+shift+c".to_string(), "edit:copy".to_string());
-        bindings.bindings.insert("ctrl+shift+v".to_string(), "edit:paste".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+shift+c".to_string(), "edit:copy".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+shift+v".to_string(), "edit:paste".to_string());
 
         // 搜索操作
-        bindings.bindings.insert("ctrl+shift+f".to_string(), "search:open".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+shift+f".to_string(), "search:open".to_string());
 
         // 配置操作
-        bindings.bindings.insert("ctrl+shift+o".to_string(), "config:toggle".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+shift+o".to_string(), "config:toggle".to_string());
 
         // 终端操作
-        bindings.bindings.insert("ctrl+up".to_string(), "terminal:scroll_up".to_string());
-        bindings.bindings.insert("ctrl+down".to_string(), "terminal:scroll_down".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+up".to_string(), "terminal:scroll_up".to_string());
+        bindings
+            .bindings
+            .insert("ctrl+down".to_string(), "terminal:scroll_down".to_string());
 
         bindings
     }
@@ -297,7 +325,8 @@ impl KeyBindings {
     /// 获取快捷键对应的命令
     pub fn get_command(&self, key_str: &str) -> Option<Command> {
         let normalized = key_str.to_lowercase();
-        self.bindings.get(&normalized)
+        self.bindings
+            .get(&normalized)
             .and_then(|cmd_str| cmd_str.parse::<Command>().ok())
     }
 
@@ -347,8 +376,7 @@ impl KeyBindings {
 
     /// 获取配置文件路径
     pub fn config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let config_dir = dirs::config_dir()
-            .ok_or("Could not determine config directory")?;
+        let config_dir = dirs::config_dir().ok_or("Could not determine config directory")?;
         Ok(config_dir.join("jterm2/keybindings.toml"))
     }
 }
@@ -382,12 +410,16 @@ mod tests {
 
     #[test]
     fn test_keybinding_display() {
-        let binding = KeyBinding::new("a", Modifiers {
-            ctrl: true,
-            shift: true,
-            alt: false,
-            super_key: false,
-        }, Command::EditCopy);
+        let binding = KeyBinding::new(
+            "a",
+            Modifiers {
+                ctrl: true,
+                shift: true,
+                alt: false,
+                super_key: false,
+            },
+            Command::EditCopy,
+        );
 
         let display = binding.to_string();
         assert!(display.contains("Ctrl"));
@@ -399,14 +431,20 @@ mod tests {
     fn test_default_bindings() {
         let bindings = KeyBindings::default_bindings();
         assert!(bindings.get_command("ctrl+shift+t").is_some());
-        assert_eq!(bindings.get_command("ctrl+shift+t"), Some(Command::SessionNew));
+        assert_eq!(
+            bindings.get_command("ctrl+shift+t"),
+            Some(Command::SessionNew)
+        );
     }
 
     #[test]
     fn test_conflict_detection() {
         let bindings = KeyBindings::default_bindings();
         let conflicts = bindings.check_conflicts();
-        assert!(conflicts.is_empty(), "Default bindings should have no conflicts");
+        assert!(
+            conflicts.is_empty(),
+            "Default bindings should have no conflicts"
+        );
     }
 
     #[test]

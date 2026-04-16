@@ -1,11 +1,11 @@
 use crate::pty::Pty;
-use crossbeam::channel::{Receiver, unbounded};
+use crossbeam::channel::{unbounded, Receiver};
 use eframe::egui;
 use std::os::unix::io::RawFd;
-use std::time::Duration;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub enum ShellEvent {
@@ -19,13 +19,17 @@ pub struct ShellSession {
     pty: Arc<Mutex<Pty>>,
     event_rx: Receiver<ShellEvent>,
     pub is_running: bool,
-    child_pid: i32,  // 存储 shell 子进程的 PID
-    shutdown: Arc<AtomicBool>,  // 通知 IO 线程退出
+    child_pid: i32,            // 存储 shell 子进程的 PID
+    shutdown: Arc<AtomicBool>, // 通知 IO 线程退出
 }
 
 impl ShellSession {
     /// 启动新的 shell session
-    pub fn new(cols: usize, rows: usize, repaint_ctx: egui::Context) -> std::result::Result<Self, String> {
+    pub fn new(
+        cols: usize,
+        rows: usize,
+        repaint_ctx: egui::Context,
+    ) -> std::result::Result<Self, String> {
         Self::new_with_cwd(cols, rows, None, None, repaint_ctx)
     }
 
@@ -71,7 +75,11 @@ impl ShellSession {
         &self.event_rx
     }
 
-    fn send_event(event_tx: &crossbeam::channel::Sender<ShellEvent>, repaint_ctx: &egui::Context, event: ShellEvent) -> bool {
+    fn send_event(
+        event_tx: &crossbeam::channel::Sender<ShellEvent>,
+        repaint_ctx: &egui::Context,
+        event: ShellEvent,
+    ) -> bool {
         if event_tx.send(event).is_err() {
             return false;
         }
@@ -87,9 +95,9 @@ impl ShellSession {
         repaint_ctx: egui::Context,
         shutdown: Arc<AtomicBool>,
     ) {
-        const BUFFER_SIZE: usize = 65536;  // 64KB 读缓冲
-        const BATCH_SIZE_THRESHOLD: usize = 131072;  // 128KB 累积阈值
-        const BATCH_TIMEOUT_MS: u64 = 2;  // 2ms 累积超时
+        const BUFFER_SIZE: usize = 65536; // 64KB 读缓冲
+        const BATCH_SIZE_THRESHOLD: usize = 131072; // 128KB 累积阈值
+        const BATCH_TIMEOUT_MS: u64 = 2; // 2ms 累积超时
 
         let mut buf = vec![0u8; BUFFER_SIZE];
         let mut accumulated = Vec::with_capacity(BATCH_SIZE_THRESHOLD);
@@ -113,13 +121,19 @@ impl ShellSession {
                 remaining_ms.max(1).min(100)
             } else {
                 // 无累积数据，使用标准超时（减去 alive_check 耗时）
-                (100_i32).saturating_sub(last_alive_check.elapsed().as_millis() as i32).max(1)
+                (100_i32)
+                    .saturating_sub(last_alive_check.elapsed().as_millis() as i32)
+                    .max(1)
             };
 
             let master_fd = match pty.lock() {
                 Ok(pty_guard) => pty_guard.master_fd(),
                 Err(_) => {
-                    let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Error("PTY lock poisoned".to_string()));
+                    let _ = Self::send_event(
+                        &event_tx,
+                        &repaint_ctx,
+                        ShellEvent::Error("PTY lock poisoned".to_string()),
+                    );
                     return;
                 }
             };
@@ -136,35 +150,64 @@ impl ShellSession {
                                     // 数据足够时立即发送，避免内存爆炸
                                     if accumulated.len() >= BATCH_SIZE_THRESHOLD {
                                         let data = std::mem::take(&mut accumulated);
-                                        if !Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Output(data)) {
+                                        if !Self::send_event(
+                                            &event_tx,
+                                            &repaint_ctx,
+                                            ShellEvent::Output(data),
+                                        ) {
                                             crate::debug_log!("[IOLoop] 接收者已断开，退出循环");
                                             return;
                                         }
                                         last_batch_time = std::time::Instant::now();
                                     }
                                 }
-                                Ok(_) => break,  // EOF 或无更多数据
+                                Ok(_) => break, // EOF 或无更多数据
                                 Err(e) => {
                                     crate::debug_log!("[IOLoop] 读取错误: {}", e);
                                     if !pty_guard.is_alive() {
                                         // 进程已退出，发送积累的数据和退出事件
                                         if !accumulated.is_empty() {
                                             let data = std::mem::take(&mut accumulated);
-                                            let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Output(data));
+                                            let _ = Self::send_event(
+                                                &event_tx,
+                                                &repaint_ctx,
+                                                ShellEvent::Output(data),
+                                            );
                                         }
                                         match pty_guard.wait_timeout(0) {
                                             Ok(exit_code) => {
-                                                crate::debug_log!("[IOLoop] 发送 Exit 事件，exit_code={}", exit_code);
-                                                let result = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Exit(exit_code));
-                                                crate::debug_log!("[IOLoop] Exit 事件发送结果: {}", result);
+                                                crate::debug_log!(
+                                                    "[IOLoop] 发送 Exit 事件，exit_code={}",
+                                                    exit_code
+                                                );
+                                                let result = Self::send_event(
+                                                    &event_tx,
+                                                    &repaint_ctx,
+                                                    ShellEvent::Exit(exit_code),
+                                                );
+                                                crate::debug_log!(
+                                                    "[IOLoop] Exit 事件发送结果: {}",
+                                                    result
+                                                );
                                             }
                                             Err(e) => {
-                                                let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Error(format!("Process exit error: {}", e)));
+                                                let _ = Self::send_event(
+                                                    &event_tx,
+                                                    &repaint_ctx,
+                                                    ShellEvent::Error(format!(
+                                                        "Process exit error: {}",
+                                                        e
+                                                    )),
+                                                );
                                             }
                                         }
                                         return;
                                     }
-                                    let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Error(format!("Read error: {}", e)));
+                                    let _ = Self::send_event(
+                                        &event_tx,
+                                        &repaint_ctx,
+                                        ShellEvent::Error(format!("Read error: {}", e)),
+                                    );
                                     break;
                                 }
                             }
@@ -173,7 +216,9 @@ impl ShellSession {
                 }
                 Ok(false) => {
                     // 超时，检查是否需要发送累积的数据
-                    if !accumulated.is_empty() && last_batch_time.elapsed().as_millis() >= BATCH_TIMEOUT_MS as u128 {
+                    if !accumulated.is_empty()
+                        && last_batch_time.elapsed().as_millis() >= BATCH_TIMEOUT_MS as u128
+                    {
                         let data = std::mem::take(&mut accumulated);
                         if !Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Output(data)) {
                             crate::debug_log!("[IOLoop] 接收者已断开，退出循环");
@@ -183,7 +228,11 @@ impl ShellSession {
                     }
                 }
                 Err(e) => {
-                    if !Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Error(format!("Poll error: {}", e))) {
+                    if !Self::send_event(
+                        &event_tx,
+                        &repaint_ctx,
+                        ShellEvent::Error(format!("Poll error: {}", e)),
+                    ) {
                         return;
                     }
                 }
@@ -197,26 +246,36 @@ impl ShellSession {
                         // 发送积累的数据
                         if !accumulated.is_empty() {
                             let data = std::mem::take(&mut accumulated);
-                            let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Output(data));
+                            let _ =
+                                Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Output(data));
                         }
                         match pty_guard.wait_timeout(0) {
                             Ok(exit_code) => {
                                 crate::debug_log!("[IOLoop] 子进程退出码: {}", exit_code);
-                                let result = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Exit(exit_code));
+                                let result = Self::send_event(
+                                    &event_tx,
+                                    &repaint_ctx,
+                                    ShellEvent::Exit(exit_code),
+                                );
                                 crate::debug_log!("[IOLoop] Exit 事件发送结果: {}", result);
                             }
                             Err(e) => {
-                                let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Error(format!(
-                                    "Process exit error: {}",
-                                    e
-                                )));
+                                let _ = Self::send_event(
+                                    &event_tx,
+                                    &repaint_ctx,
+                                    ShellEvent::Error(format!("Process exit error: {}", e)),
+                                );
                             }
                         }
                         return;
                     }
                     last_alive_check = std::time::Instant::now();
                 } else {
-                    let _ = Self::send_event(&event_tx, &repaint_ctx, ShellEvent::Error("PTY lock poisoned".to_string()));
+                    let _ = Self::send_event(
+                        &event_tx,
+                        &repaint_ctx,
+                        ShellEvent::Error("PTY lock poisoned".to_string()),
+                    );
                     return;
                 }
             }
@@ -232,20 +291,28 @@ impl ShellSession {
 
         // 先获取 master_fd（不需要长期持锁）
         let master_fd = {
-            let pty = self.pty.lock().map_err(|_| "Failed to lock PTY for fd".to_string())?;
+            let pty = self
+                .pty
+                .lock()
+                .map_err(|_| "Failed to lock PTY for fd".to_string())?;
             pty.master_fd()
         };
 
         while offset < data.len() {
             if start.elapsed() > timeout {
                 return Err(format!(
-                    "PTY write timed out, wrote {}/{} bytes", offset, data.len()
+                    "PTY write timed out, wrote {}/{} bytes",
+                    offset,
+                    data.len()
                 ));
             }
 
             // 获取锁，尝试写入，然后立即释放锁
             {
-                let mut pty = self.pty.lock().map_err(|_| "Failed to lock PTY for write".to_string())?;
+                let mut pty = self
+                    .pty
+                    .lock()
+                    .map_err(|_| "Failed to lock PTY for write".to_string())?;
                 match pty.write(&data[offset..]) {
                     Ok(n) if n > 0 => {
                         offset += n;
@@ -280,7 +347,10 @@ impl ShellSession {
     }
 
     pub fn resize(&self, cols: usize, rows: usize) -> std::result::Result<(), String> {
-        let mut pty = self.pty.lock().map_err(|_| "Failed to lock PTY for resize".to_string())?;
+        let mut pty = self
+            .pty
+            .lock()
+            .map_err(|_| "Failed to lock PTY for resize".to_string())?;
         pty.resize(cols, rows)
             .map_err(|e| format!("Resize error: {}", e))
     }

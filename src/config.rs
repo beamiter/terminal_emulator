@@ -133,14 +133,20 @@ fn default_font_family() -> String {
 
     // Try each candidate font in priority order
     for candidate in NERD_FONT_CANDIDATES {
-        if available_fonts.iter().any(|f| f.eq_ignore_ascii_case(candidate)) {
+        if available_fonts
+            .iter()
+            .any(|f| f.eq_ignore_ascii_case(candidate))
+        {
             eprintln!("[Config] Using font: {}", candidate);
             return candidate.to_string();
         }
     }
 
     // Fallback to first candidate if none found (system may still have it)
-    eprintln!("[Config] No Nerd Font detected, using default: {}", NERD_FONT_CANDIDATES[0]);
+    eprintln!(
+        "[Config] No Nerd Font detected, using default: {}",
+        NERD_FONT_CANDIDATES[0]
+    );
     NERD_FONT_CANDIDATES[0].to_string()
 }
 
@@ -222,7 +228,10 @@ impl Config {
                         eprintln!("[Config] Font: {}", config.font_family);
                         return config;
                     } else {
-                        eprintln!("[Config] Failed to parse config file: {}", config_path.display());
+                        eprintln!(
+                            "[Config] Failed to parse config file: {}",
+                            config_path.display()
+                        );
                     }
                 }
             }
@@ -248,16 +257,12 @@ impl Config {
     }
 
     pub fn session_history_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let config_dir = dirs::config_dir()
-            .ok_or("Failed to determine config directory")?;
-        Ok(config_dir
-            .join("jterm2")
-            .join("session_history.json"))
+        let config_dir = dirs::config_dir().ok_or("Failed to determine config directory")?;
+        Ok(config_dir.join("jterm2").join("session_history.json"))
     }
 
     fn config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let config_dir = dirs::config_dir()
-            .ok_or("Failed to determine config directory")?;
+        let config_dir = dirs::config_dir().ok_or("Failed to determine config directory")?;
         Ok(config_dir.join("jterm2").join("config.toml"))
     }
 

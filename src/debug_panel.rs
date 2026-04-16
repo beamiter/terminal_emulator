@@ -54,7 +54,11 @@ impl DebugPanel {
 
     fn fps(&self) -> f64 {
         let avg = self.avg_frame_time_ms();
-        if avg > 0.0 { 1000.0 / avg } else { 0.0 }
+        if avg > 0.0 {
+            1000.0 / avg
+        } else {
+            0.0
+        }
     }
 
     fn read_memory_rss_kb() -> Option<u64> {
@@ -113,14 +117,27 @@ impl DebugPanel {
                     ("Memory", mem_str),
                     ("Grid", format!("{}x{}", grid_cols, grid_rows)),
                     ("Sessions", format!("{}", session_count)),
-                    ("Scrollback", format!("{} / {}", scrollback_used, scrollback_max)),
+                    (
+                        "Scrollback",
+                        format!("{} / {}", scrollback_used, scrollback_max),
+                    ),
                 ];
 
                 for (label, value) in &lines {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(*label).size(10.0).monospace().color(label_color));
+                        ui.label(
+                            RichText::new(*label)
+                                .size(10.0)
+                                .monospace()
+                                .color(label_color),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(value).size(10.0).monospace().color(value_color));
+                            ui.label(
+                                RichText::new(value)
+                                    .size(10.0)
+                                    .monospace()
+                                    .color(value_color),
+                            );
                         });
                     });
                 }

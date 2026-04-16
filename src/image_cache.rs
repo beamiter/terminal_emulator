@@ -1,5 +1,5 @@
-use std::collections::VecDeque;
 use crate::kitty_graphics::KittyImage;
+use std::collections::VecDeque;
 
 /// GPU 纹理缓存管理器
 pub struct ImageCache {

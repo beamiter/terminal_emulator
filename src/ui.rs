@@ -3,14 +3,20 @@ use crate::gpu;
 use crate::terminal::TerminalState;
 use egui::{Color32, FontId, Response, Ui, Vec2};
 
-fn resolve_foreground_color(color_value: crate::terminal::Color, theme: &crate::theme::Theme) -> Color32 {
+fn resolve_foreground_color(
+    color_value: crate::terminal::Color,
+    theme: &crate::theme::Theme,
+) -> Color32 {
     match color_value {
         crate::terminal::Color::Default => theme.terminal_foreground(),
         _ => color::to_egui_color32(color_value),
     }
 }
 
-fn resolve_background_color(color_value: crate::terminal::Color, theme: &crate::theme::Theme) -> Color32 {
+fn resolve_background_color(
+    color_value: crate::terminal::Color,
+    theme: &crate::theme::Theme,
+) -> Color32 {
     match color_value {
         crate::terminal::Color::Default => theme.terminal_background(),
         _ => color::to_egui_color32(color_value),
@@ -23,13 +29,23 @@ fn snapped_span(origin: f32, index: usize, cell_size: f32) -> (f32, f32) {
     (start, (end - start).max(1.0))
 }
 
-fn cursor_rect(rect: egui::Rect, row: usize, col: usize, char_width: f32, line_height: f32) -> egui::Rect {
+fn cursor_rect(
+    rect: egui::Rect,
+    row: usize,
+    col: usize,
+    char_width: f32,
+    line_height: f32,
+) -> egui::Rect {
     let (x, width) = snapped_span(rect.left(), col, char_width);
     let (y, height) = snapped_span(rect.top(), row, line_height);
     egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(width, height))
 }
 
-fn key_to_terminal_sequence(key: egui::Key, modifiers: egui::Modifiers, application_cursor_keys: bool) -> Option<&'static str> {
+fn key_to_terminal_sequence(
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+    application_cursor_keys: bool,
+) -> Option<&'static str> {
     if modifiers.ctrl || modifiers.alt || modifiers.mac_cmd || modifiers.command_only() {
         return None;
     }
@@ -37,14 +53,50 @@ fn key_to_terminal_sequence(key: egui::Key, modifiers: egui::Modifiers, applicat
     match key {
         egui::Key::Enter => Some("\r"),
         egui::Key::Escape => Some("\x1b"),
-        egui::Key::Backspace => Some("\x7f"),  // Send DEL (0x7f)
+        egui::Key::Backspace => Some("\x7f"), // Send DEL (0x7f)
         egui::Key::Tab => Some("\t"),
-        egui::Key::ArrowUp => if application_cursor_keys { Some("\x1bOA") } else { Some("\x1b[A") },
-        egui::Key::ArrowDown => if application_cursor_keys { Some("\x1bOB") } else { Some("\x1b[B") },
-        egui::Key::ArrowRight => if application_cursor_keys { Some("\x1bOC") } else { Some("\x1b[C") },
-        egui::Key::ArrowLeft => if application_cursor_keys { Some("\x1bOD") } else { Some("\x1b[D") },
-        egui::Key::Home => if application_cursor_keys { Some("\x1bOH") } else { Some("\x1b[H") },
-        egui::Key::End => if application_cursor_keys { Some("\x1bOF") } else { Some("\x1b[F") },
+        egui::Key::ArrowUp => {
+            if application_cursor_keys {
+                Some("\x1bOA")
+            } else {
+                Some("\x1b[A")
+            }
+        }
+        egui::Key::ArrowDown => {
+            if application_cursor_keys {
+                Some("\x1bOB")
+            } else {
+                Some("\x1b[B")
+            }
+        }
+        egui::Key::ArrowRight => {
+            if application_cursor_keys {
+                Some("\x1bOC")
+            } else {
+                Some("\x1b[C")
+            }
+        }
+        egui::Key::ArrowLeft => {
+            if application_cursor_keys {
+                Some("\x1bOD")
+            } else {
+                Some("\x1b[D")
+            }
+        }
+        egui::Key::Home => {
+            if application_cursor_keys {
+                Some("\x1bOH")
+            } else {
+                Some("\x1b[H")
+            }
+        }
+        egui::Key::End => {
+            if application_cursor_keys {
+                Some("\x1bOF")
+            } else {
+                Some("\x1b[F")
+            }
+        }
         egui::Key::Insert => Some("\x1b[2~"),
         egui::Key::Delete => Some("\x1b[3~"),
         egui::Key::PageUp => Some("\x1b[5~"),
@@ -161,7 +213,11 @@ fn kitty_modifier_value(modifiers: egui::Modifiers) -> u8 {
     bits + 1
 }
 
-fn kitty_encode_key_event(key: egui::Key, modifiers: egui::Modifiers, keyboard_flags: u16) -> Option<String> {
+fn kitty_encode_key_event(
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+    keyboard_flags: u16,
+) -> Option<String> {
     let disambiguate = (keyboard_flags & 0b1) != 0;
     let report_all_keys = (keyboard_flags & 0b1000) != 0;
     if !disambiguate && !report_all_keys {
@@ -169,12 +225,19 @@ fn kitty_encode_key_event(key: egui::Key, modifiers: egui::Modifiers, keyboard_f
     }
 
     let codepoint = kitty_text_key_code(key)?;
-    let should_encode = report_all_keys || modifiers.ctrl || modifiers.alt || (modifiers.command && !modifiers.ctrl);
+    let should_encode = report_all_keys
+        || modifiers.ctrl
+        || modifiers.alt
+        || (modifiers.command && !modifiers.ctrl);
     if !should_encode {
         return None;
     }
 
-    Some(format!("\x1b[{};{}u", codepoint, kitty_modifier_value(modifiers)))
+    Some(format!(
+        "\x1b[{};{}u",
+        codepoint,
+        kitty_modifier_value(modifiers)
+    ))
 }
 
 fn xterm_encode_modify_other_keys(
@@ -186,7 +249,8 @@ fn xterm_encode_modify_other_keys(
 ) -> Option<String> {
     let codepoint = text_key_code(key, modifiers)?;
     let modifier_value = kitty_modifier_value(modifiers);
-    let has_non_shift_modifier = modifiers.ctrl || modifiers.alt || (modifiers.command && !modifiers.ctrl);
+    let has_non_shift_modifier =
+        modifiers.ctrl || modifiers.alt || (modifiers.command && !modifiers.ctrl);
     let should_encode = if report_all_keys {
         modifier_value > 1
     } else {
@@ -283,7 +347,10 @@ impl TerminalRenderer {
             if let Some(render_state) = &self.wgpu_render_state {
                 let ppp = ctx.pixels_per_point();
                 let renderer = render_state.renderer.read();
-                if let Some(gpu_res) = renderer.callback_resources.get::<gpu::callback::GpuResources>() {
+                if let Some(gpu_res) = renderer
+                    .callback_resources
+                    .get::<gpu::callback::GpuResources>()
+                {
                     let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
                     // Convert from physical pixels back to logical points
                     let cw = advance / ppp;
@@ -319,19 +386,28 @@ impl TerminalRenderer {
     }
 
     /// 获取或创建图像纹理
-    fn get_image_texture(&mut self, _ui: &mut Ui, image_id: u32, image: &crate::kitty_graphics::KittyImage) -> Option<()> {
+    fn get_image_texture(
+        &mut self,
+        _ui: &mut Ui,
+        image_id: u32,
+        image: &crate::kitty_graphics::KittyImage,
+    ) -> Option<()> {
         // TODO: 实现 GPU 纹理缓存
         // 暂时只返回 Ok 表示图像可以被绘制
-        crate::debug_log!("[KITTY_TEXTURE] Image {} ready for rendering ({}x{})",
-            image_id, image.width, image.height);
+        crate::debug_log!(
+            "[KITTY_TEXTURE] Image {} ready for rendering ({}x{})",
+            image_id,
+            image.width,
+            image.height
+        );
         Some(())
     }
 
     fn content_size(&self, available: Vec2) -> Vec2 {
         let outer_width = (available.x - self.padding * 2.0).max(self.char_width);
         let outer_height = (available.y - self.padding * 2.0).max(self.line_height);
-        let reserved_scrollbar_width =
-            (Self::SCROLLBAR_WIDTH + Self::SCROLLBAR_GAP).min((outer_width - self.char_width).max(0.0));
+        let reserved_scrollbar_width = (Self::SCROLLBAR_WIDTH + Self::SCROLLBAR_GAP)
+            .min((outer_width - self.char_width).max(0.0));
 
         Vec2::new(
             (outer_width - reserved_scrollbar_width).max(self.char_width),
@@ -348,14 +424,20 @@ impl TerminalRenderer {
             ),
         );
 
-        let reserved_scrollbar_width =
-            (Self::SCROLLBAR_WIDTH + Self::SCROLLBAR_GAP).min((outer_rect.width() - self.char_width).max(0.0));
+        let reserved_scrollbar_width = (Self::SCROLLBAR_WIDTH + Self::SCROLLBAR_GAP)
+            .min((outer_rect.width() - self.char_width).max(0.0));
         let content_rect = egui::Rect::from_min_max(
             outer_rect.min,
-            egui::pos2((outer_rect.right() - reserved_scrollbar_width).max(outer_rect.left()), outer_rect.bottom()),
+            egui::pos2(
+                (outer_rect.right() - reserved_scrollbar_width).max(outer_rect.left()),
+                outer_rect.bottom(),
+            ),
         );
         let scrollbar_rect = egui::Rect::from_min_max(
-            egui::pos2((outer_rect.right() - Self::SCROLLBAR_WIDTH).max(content_rect.right()), outer_rect.top()),
+            egui::pos2(
+                (outer_rect.right() - Self::SCROLLBAR_WIDTH).max(content_rect.right()),
+                outer_rect.top(),
+            ),
             outer_rect.max,
         );
 
@@ -374,7 +456,16 @@ impl TerminalRenderer {
     }
 
     /// 在指定矩形内渲染（用于多窗格模式）
-    pub fn render_in_rect(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>, target_rect: egui::Rect) -> Response {
+    pub fn render_in_rect(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut TerminalState,
+        cursor_visible: bool,
+        search_state: &crate::search::SearchState,
+        links: &[crate::link::Link],
+        hovered_link: &Option<crate::link::Link>,
+        target_rect: egui::Rect,
+    ) -> Response {
         let grid = terminal.get_visible_cells();
 
         let rows = grid.len();
@@ -385,15 +476,38 @@ impl TerminalRenderer {
 
         // Allocate in the target rectangle area
         let rect = target_rect;
-        let response = ui.allocate_exact_size(
-            egui::vec2(rect.width(), rect.height()),
-            egui::Sense::click_and_drag().union(egui::Sense::focusable_noninteractive()),
-        ).1;
+        let response = ui
+            .allocate_exact_size(
+                egui::vec2(rect.width(), rect.height()),
+                egui::Sense::click_and_drag().union(egui::Sense::focusable_noninteractive()),
+            )
+            .1;
 
-        self.render_terminal_at_rect(ui, terminal, cursor_visible, search_state, links, hovered_link, rect, response, cols, rows, line_height, char_width)
+        self.render_terminal_at_rect(
+            ui,
+            terminal,
+            cursor_visible,
+            search_state,
+            links,
+            hovered_link,
+            rect,
+            response,
+            cols,
+            rows,
+            line_height,
+            char_width,
+        )
     }
 
-    pub fn render(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>) -> Response {
+    pub fn render(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut TerminalState,
+        cursor_visible: bool,
+        search_state: &crate::search::SearchState,
+        links: &[crate::link::Link],
+        hovered_link: &Option<crate::link::Link>,
+    ) -> Response {
         let grid = terminal.get_visible_cells();
 
         let rows = grid.len();
@@ -418,10 +532,37 @@ impl TerminalRenderer {
             egui::Sense::click_and_drag().union(egui::Sense::focusable_noninteractive()),
         );
 
-        self.render_terminal_at_rect(ui, terminal, cursor_visible, search_state, links, hovered_link, rect, response.clone(), cols, rows, line_height, char_width)
+        self.render_terminal_at_rect(
+            ui,
+            terminal,
+            cursor_visible,
+            search_state,
+            links,
+            hovered_link,
+            rect,
+            response.clone(),
+            cols,
+            rows,
+            line_height,
+            char_width,
+        )
     }
 
-    fn render_terminal_at_rect(&mut self, ui: &mut Ui, terminal: &mut TerminalState, cursor_visible: bool, search_state: &crate::search::SearchState, links: &[crate::link::Link], hovered_link: &Option<crate::link::Link>, rect: egui::Rect, response: egui::Response, _cols: usize, _rows: usize, line_height: f32, char_width: f32) -> Response {
+    fn render_terminal_at_rect(
+        &mut self,
+        ui: &mut Ui,
+        terminal: &mut TerminalState,
+        cursor_visible: bool,
+        search_state: &crate::search::SearchState,
+        links: &[crate::link::Link],
+        hovered_link: &Option<crate::link::Link>,
+        rect: egui::Rect,
+        response: egui::Response,
+        _cols: usize,
+        _rows: usize,
+        line_height: f32,
+        char_width: f32,
+    ) -> Response {
         let grid = terminal.get_visible_cells();
         let rows = grid.len();
         let cols = if rows > 0 { grid[0].len() } else { 80 };
@@ -430,16 +571,29 @@ impl TerminalRenderer {
 
         let painter = ui.painter_at(rect);
         let bg = self.theme.terminal_background();
-        let bg_with_opacity = egui::Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), (self.opacity * 255.0) as u8);
+        let bg_with_opacity = egui::Color32::from_rgba_unmultiplied(
+            bg.r(),
+            bg.g(),
+            bg.b(),
+            (self.opacity * 255.0) as u8,
+        );
         painter.rect_filled(rect, egui::CornerRadius::ZERO, bg_with_opacity);
 
         let (content_rect, scrollbar_rect) = self.layout_rects(rect);
         self.last_content_rect = Some(content_rect);
         let cursor_pos = terminal.get_cursor_pos();
-        let ime_rect = cursor_rect(content_rect, cursor_pos.0, cursor_pos.1, char_width, line_height);
+        let ime_rect = cursor_rect(
+            content_rect,
+            cursor_pos.0,
+            cursor_pos.1,
+            char_width,
+            line_height,
+        );
 
         let ctx = ui.ctx();
-        if response.clicked() || (!self.requested_initial_focus && !ctx.memory(|mem| mem.has_focus(response.id))) {
+        if response.clicked()
+            || (!self.requested_initial_focus && !ctx.memory(|mem| mem.has_focus(response.id)))
+        {
             response.request_focus();
             self.requested_initial_focus = true;
         }
@@ -449,18 +603,23 @@ impl TerminalRenderer {
             // Tell egui that the terminal widget needs arrow keys, tab, and escape,
             // so they are NOT consumed by egui's focus navigation system.
             ctx.memory_mut(|mem| {
-                mem.set_focus_lock_filter(response.id, egui::EventFilter {
-                    tab: true,
-                    horizontal_arrows: true,
-                    vertical_arrows: true,
-                    escape: true,
-                });
+                mem.set_focus_lock_filter(
+                    response.id,
+                    egui::EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    },
+                );
             });
         }
         if has_focus != self.ime_enabled {
             ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(has_focus));
             if has_focus {
-                ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(egui::IMEPurpose::Terminal));
+                ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(
+                    egui::IMEPurpose::Terminal,
+                ));
             }
             self.ime_enabled = has_focus;
             if !has_focus {
@@ -482,17 +641,23 @@ impl TerminalRenderer {
         // Pre-compute scrollbar geometry for hit-testing
         let scrollbar_width = scrollbar_rect.width();
         let scrollbar_x = scrollbar_rect.left();
-        let scrollbar_hovered = ctx
-            .input(|i| i.pointer.hover_pos())
-            .is_some_and(|pos| scrollbar_rect.expand(Self::SCROLLBAR_HIT_EXPAND).contains(pos));
+        let scrollbar_hovered = ctx.input(|i| i.pointer.hover_pos()).is_some_and(|pos| {
+            scrollbar_rect
+                .expand(Self::SCROLLBAR_HIT_EXPAND)
+                .contains(pos)
+        });
         let show_scrollbar = terminal.scrollback.len() > 0
             && match self.scrollbar_visibility {
                 crate::config::ScrollbarVisibility::Always => true,
-                crate::config::ScrollbarVisibility::Auto => scrollbar_hovered || self.dragging_scrollbar,
+                crate::config::ScrollbarVisibility::Auto => {
+                    scrollbar_hovered || self.dragging_scrollbar
+                }
             };
 
         // Compute thumb rect and related values for interaction
-        let scrollbar_thumb_rect: Option<(egui::Rect, f32, f32, f32)> = if terminal.scrollback.len() > 0 {
+        let scrollbar_thumb_rect: Option<(egui::Rect, f32, f32, f32)> = if terminal.scrollback.len()
+            > 0
+        {
             let total_lines = terminal.scrollback.len() + rows;
             let visible_lines = rows;
             if total_lines > visible_lines {
@@ -500,13 +665,20 @@ impl TerminalRenderer {
                 let thumb_height = ((visible_lines as f32 / total_lines as f32) * scrollbar_height)
                     .clamp(Self::MIN_THUMB_HEIGHT, scrollbar_height);
                 // 反转逻辑：scroll_offset=0时thumb在底部（最新内容），scroll_offset=max时thumb在顶部（历史）
-                let thumb_y = scrollbar_height - thumb_height - (terminal.scroll_offset as f32 / terminal.scrollback.len() as f32)
-                    * (scrollbar_height - thumb_height);
+                let thumb_y = scrollbar_height
+                    - thumb_height
+                    - (terminal.scroll_offset as f32 / terminal.scrollback.len() as f32)
+                        * (scrollbar_height - thumb_height);
                 let thumb_rect = egui::Rect::from_min_size(
                     egui::pos2(scrollbar_x, scrollbar_rect.top() + thumb_y),
                     egui::vec2(scrollbar_width, thumb_height),
                 );
-                Some((thumb_rect, scrollbar_height, thumb_height, terminal.scrollback.len() as f32))
+                Some((
+                    thumb_rect,
+                    scrollbar_height,
+                    thumb_height,
+                    terminal.scrollback.len() as f32,
+                ))
             } else {
                 None
             }
@@ -532,12 +704,17 @@ impl TerminalRenderer {
         // Scrollbar drag: update scroll_offset while dragging thumb
         if self.dragging_scrollbar && response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {
-                if let Some((_, scrollbar_height, thumb_height, scrollback_len_f)) = scrollbar_thumb_rect {
+                if let Some((_, scrollbar_height, thumb_height, scrollback_len_f)) =
+                    scrollbar_thumb_rect
+                {
                     let track_height = scrollbar_height - thumb_height;
                     if track_height > 0.0 {
                         // 反转逻辑：向上拖动看历史（增大scroll_offset），向下拖动看最新（减小scroll_offset）
-                        let relative_y = (pos.y - scrollbar_rect.top() - thumb_height / 2.0).clamp(0.0, track_height);
-                        let new_offset = (((track_height - relative_y) / track_height) * scrollback_len_f).round() as usize;
+                        let relative_y = (pos.y - scrollbar_rect.top() - thumb_height / 2.0)
+                            .clamp(0.0, track_height);
+                        let new_offset = (((track_height - relative_y) / track_height)
+                            * scrollback_len_f)
+                            .round() as usize;
                         terminal.scroll_offset = new_offset.min(terminal.scrollback.len());
                     }
                 }
@@ -575,8 +752,10 @@ impl TerminalRenderer {
         if response.double_clicked() && !self.dragging_scrollbar {
             if let Some(pos) = response.interact_pointer_pos() {
                 if pos.x < scrollbar_x {
-                    let clamped_x = (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
-                    let clamped_y = (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
+                    let clamped_x =
+                        (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
+                    let clamped_y =
+                        (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
 
                     let col = if char_width > 0.0 {
                         ((clamped_x / char_width) as usize).min(cols - 1)
@@ -599,8 +778,10 @@ impl TerminalRenderer {
                 // Only select text if NOT in scrollbar area
                 if pos.x < scrollbar_x {
                     // Clamp position to rect bounds to prevent underflow
-                    let clamped_x = (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
-                    let clamped_y = (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
+                    let clamped_x =
+                        (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
+                    let clamped_y =
+                        (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
 
                     let col = if char_width > 0.0 {
                         ((clamped_x / char_width) as usize).min(cols - 1)
@@ -622,8 +803,10 @@ impl TerminalRenderer {
             if let Some(pos) = response.interact_pointer_pos() {
                 if pos.x < scrollbar_x {
                     // Clamp position to rect bounds to prevent underflow
-                    let clamped_x = (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
-                    let clamped_y = (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
+                    let clamped_x =
+                        (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
+                    let clamped_y =
+                        (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
 
                     let col = if char_width > 0.0 {
                         ((clamped_x / char_width) as usize).min(cols - 1)
@@ -708,11 +891,22 @@ impl TerminalRenderer {
                         Color32::from_rgb(100, 150, 200),
                     );
 
-                    painter.galley(egui::pos2(img_x + 2.0, img_y + 2.0), galley, Color32::from_rgb(100, 150, 200));
+                    painter.galley(
+                        egui::pos2(img_x + 2.0, img_y + 2.0),
+                        galley,
+                        Color32::from_rgb(100, 150, 200),
+                    );
 
-                    crate::debug_log!("[KITTY_RENDER] Rendered image #{} at ({},{}) size {}x{} placement {}x{}",
-                        image.id, placement.x, placement.y, image.width, image.height,
-                        placement.width, placement.height);
+                    crate::debug_log!(
+                        "[KITTY_RENDER] Rendered image #{} at ({},{}) size {}x{} placement {}x{}",
+                        image.id,
+                        placement.x,
+                        placement.y,
+                        image.width,
+                        image.height,
+                        placement.width,
+                        placement.height
+                    );
                 } else {
                     // Render placeholder if image preparation failed
                     painter.rect_filled(
@@ -736,21 +930,50 @@ impl TerminalRenderer {
                         Color32::from_rgb(100, 100, 100),
                     );
 
-                    painter.galley(egui::pos2(img_x + 2.0, img_y + 2.0), galley, Color32::from_rgb(100, 100, 100));
+                    painter.galley(
+                        egui::pos2(img_x + 2.0, img_y + 2.0),
+                        galley,
+                        Color32::from_rgb(100, 100, 100),
+                    );
                 }
             }
         }
 
         // GPU-accelerated grid rendering via wgpu instanced draw
         let gpu_rendered = if self.gpu_rendering {
-            self.render_grid_gpu(ui, terminal, search_state, links, hovered_link, &grid, rows, cols, content_rect, char_width, line_height)
+            self.render_grid_gpu(
+                ui,
+                terminal,
+                search_state,
+                links,
+                hovered_link,
+                &grid,
+                rows,
+                cols,
+                content_rect,
+                char_width,
+                line_height,
+            )
         } else {
             false
         };
 
         if !gpu_rendered {
             // Fallback: CPU rendering via egui painter
-            self.render_grid_cpu(ui, &painter, terminal, search_state, links, hovered_link, &grid, rows, cols, content_rect, char_width, line_height);
+            self.render_grid_cpu(
+                ui,
+                &painter,
+                terminal,
+                search_state,
+                links,
+                hovered_link,
+                &grid,
+                rows,
+                cols,
+                content_rect,
+                char_width,
+                line_height,
+            );
         }
 
         // Render cursor - direct O(1) positioning instead of full grid scan
@@ -791,7 +1014,10 @@ impl TerminalRenderer {
                     crate::terminal::CursorShape::Underline => {
                         let underline_y = y + line_height - 2.0;
                         painter.line_segment(
-                            [egui::pos2(x, underline_y), egui::pos2(x + cell_width, underline_y)],
+                            [
+                                egui::pos2(x, underline_y),
+                                egui::pos2(x + cell_width, underline_y),
+                            ],
                             egui::Stroke::new(2.0, self.theme.cursor_color()),
                         );
                     }
@@ -819,7 +1045,7 @@ impl TerminalRenderer {
                 let galley = ui.painter().layout_no_wrap(
                     preedit_display,
                     font_id,
-                    Color32::from_rgb(200, 200, 0),  // 黄色标记
+                    Color32::from_rgb(200, 200, 0), // 黄色标记
                 );
 
                 painter.galley(egui::pos2(preedit_x, preedit_y), galley, Color32::WHITE);
@@ -844,7 +1070,10 @@ impl TerminalRenderer {
                 let thumb_height = ((visible_lines as f32 / total_lines as f32) * scrollbar_height)
                     .clamp(Self::MIN_THUMB_HEIGHT, scrollbar_height);
                 // 反转逻辑：scroll_offset=0时thumb在底部（最新内容），scroll_offset=max时thumb在顶部（历史）
-                let thumb_y = scrollbar_height - thumb_height - (terminal.scroll_offset as f32 / scrollback_len_f) * (scrollbar_height - thumb_height);
+                let thumb_y = scrollbar_height
+                    - thumb_height
+                    - (terminal.scroll_offset as f32 / scrollback_len_f)
+                        * (scrollbar_height - thumb_height);
                 let thumb_rect = egui::Rect::from_min_size(
                     egui::pos2(scrollbar_x, scrollbar_rect.top() + thumb_y),
                     egui::vec2(scrollbar_width, thumb_height),
@@ -904,7 +1133,10 @@ impl TerminalRenderer {
         let mut font_cell_height = target_cell_height;
         {
             let mut renderer = render_state.renderer.write();
-            let gpu_res = match renderer.callback_resources.get_mut::<gpu::callback::GpuResources>() {
+            let gpu_res = match renderer
+                .callback_resources
+                .get_mut::<gpu::callback::GpuResources>()
+            {
                 Some(r) => r,
                 None => return false,
             };
@@ -939,9 +1171,12 @@ impl TerminalRenderer {
                     if has_search {
                         for (match_idx, m) in search_state.matches.iter().enumerate() {
                             if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
-                                let orig_fg = resolve_foreground_color(cell.foreground, &self.theme);
+                                let orig_fg =
+                                    resolve_foreground_color(cell.foreground, &self.theme);
                                 bg_color = orig_fg;
-                                if match_idx == search_state.current_match_index % search_state.matches.len() {
+                                if match_idx
+                                    == search_state.current_match_index % search_state.matches.len()
+                                {
                                     let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
                                     bg_color = Color32::from_rgba_unmultiplied(
                                         (r as u16 * 180 / 255) as u8,
@@ -956,7 +1191,11 @@ impl TerminalRenderer {
                     }
 
                     // If bg matches default and no special state, use default bg
-                    if !is_selected && !is_inverse && cell.background == crate::terminal::Color::Default && !has_search {
+                    if !is_selected
+                        && !is_inverse
+                        && cell.background == crate::terminal::Color::Default
+                        && !has_search
+                    {
                         bg_color = default_bg;
                     }
 
@@ -973,8 +1212,12 @@ impl TerminalRenderer {
                     let is_link = if !links.is_empty() {
                         let mut found = false;
                         for link in links {
-                            if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
-                                let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                            if link.line == row_idx
+                                && col_idx >= link.col_start
+                                && col_idx < link.col_end
+                            {
+                                let is_hovered_link =
+                                    hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
                                 fg_color = if is_hovered_link {
                                     Color32::from_rgb(100, 200, 255)
                                 } else {
@@ -997,19 +1240,32 @@ impl TerminalRenderer {
                     // Build flags
                     let mut flags: u32 = 0;
                     let has_glyph = cell.character != ' ' && cell.character != '\0';
-                    if has_glyph { flags |= gpu::instance::CellInstance::FLAG_HAS_GLYPH; }
-                    if is_wide { flags |= gpu::instance::CellInstance::FLAG_WIDE; }
-                    if has_underline { flags |= gpu::instance::CellInstance::FLAG_UNDERLINE; }
-                    if has_strikethrough { flags |= gpu::instance::CellInstance::FLAG_STRIKETHROUGH; }
+                    if has_glyph {
+                        flags |= gpu::instance::CellInstance::FLAG_HAS_GLYPH;
+                    }
+                    if is_wide {
+                        flags |= gpu::instance::CellInstance::FLAG_WIDE;
+                    }
+                    if has_underline {
+                        flags |= gpu::instance::CellInstance::FLAG_UNDERLINE;
+                    }
+                    if has_strikethrough {
+                        flags |= gpu::instance::CellInstance::FLAG_STRIKETHROUGH;
+                    }
 
                     // Get glyph atlas region
                     let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
                         let region = gpu_res.atlas.get_or_rasterize(cell.character, bold);
                         if region.width_px > 0.0 && region.height_px > 0.0 {
                             // Use font bearing for glyph positioning within cell (physical pixels)
-                            (region.u0, region.v0, region.u1, region.v1,
-                             region.bearing_x + glyph_offset_x_adjust,
-                             region.bearing_y + glyph_offset_y_adjust)
+                            (
+                                region.u0,
+                                region.v0,
+                                region.u1,
+                                region.v1,
+                                region.bearing_x + glyph_offset_x_adjust,
+                                region.bearing_y + glyph_offset_y_adjust,
+                            )
                         } else {
                             (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
                         }
@@ -1019,7 +1275,11 @@ impl TerminalRenderer {
 
                     let [fg_r, fg_g, fg_b, fg_a] = fg_color.to_srgba_unmultiplied();
                     let [bg_r, bg_g, bg_b, _bg_a] = bg_color.to_srgba_unmultiplied();
-                    let bg_a = if bg_color == default_bg { (self.opacity * 255.0) as u8 } else { 255u8 };
+                    let bg_a = if bg_color == default_bg {
+                        (self.opacity * 255.0) as u8
+                    } else {
+                        255u8
+                    };
 
                     instances.push(gpu::instance::CellInstance {
                         col: col_idx as u32,
@@ -1069,8 +1329,14 @@ impl TerminalRenderer {
             instance_count,
         };
 
-        ui.painter().add(egui_wgpu::Callback::new_paint_callback(content_rect, background_callback));
-        ui.painter().add(egui_wgpu::Callback::new_paint_callback(content_rect, foreground_callback));
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+            content_rect,
+            background_callback,
+        ));
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
+            content_rect,
+            foreground_callback,
+        ));
         true
     }
 
@@ -1097,12 +1363,18 @@ impl TerminalRenderer {
         for row_idx in 0..rows {
             for col_idx in 0..cols {
                 let cell = &grid[row_idx][col_idx];
-                if cell.wide_continuation { continue; }
+                if cell.wide_continuation {
+                    continue;
+                }
 
                 let is_selected = terminal.is_cell_selected(row_idx, col_idx);
                 let is_inverse = cell.flags.inverse;
 
-                if !is_selected && !is_inverse && cell.background == crate::terminal::Color::Default && !has_search {
+                if !is_selected
+                    && !is_inverse
+                    && cell.background == crate::terminal::Color::Default
+                    && !has_search
+                {
                     continue;
                 }
 
@@ -1119,7 +1391,9 @@ impl TerminalRenderer {
                         if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
                             let orig_fg = resolve_foreground_color(cell.foreground, &self.theme);
                             bg_color = orig_fg;
-                            if match_idx == search_state.current_match_index % search_state.matches.len() {
+                            if match_idx
+                                == search_state.current_match_index % search_state.matches.len()
+                            {
                                 let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
                                 bg_color = Color32::from_rgba_unmultiplied(
                                     (r as u16 * 180 / 255) as u8,
@@ -1138,12 +1412,14 @@ impl TerminalRenderer {
                 let (x, snapped_width) = snapped_span(content_rect.left(), col_idx, char_width);
                 let (y, snapped_height) = snapped_span(content_rect.top(), row_idx, line_height);
                 let cell_w = if cell.wide {
-                    let (_, next_width) = snapped_span(content_rect.left(), col_idx + 1, char_width);
+                    let (_, next_width) =
+                        snapped_span(content_rect.left(), col_idx + 1, char_width);
                     snapped_width + next_width
                 } else {
                     snapped_width
                 };
-                let cell_rect = egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(cell_w, snapped_height));
+                let cell_rect =
+                    egui::Rect::from_min_size(egui::pos2(x, y), Vec2::new(cell_w, snapped_height));
                 painter.rect_filled(cell_rect, egui::CornerRadius::ZERO, bg_color);
             }
         }
@@ -1173,9 +1449,17 @@ impl TerminalRenderer {
                 let is_link = if !links.is_empty() {
                     let mut found = false;
                     for link in links {
-                        if link.line == row_idx && col_idx >= link.col_start && col_idx < link.col_end {
-                            let is_hovered_link = hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
-                            fg_color = if is_hovered_link { Color32::from_rgb(100, 200, 255) } else { Color32::from_rgb(50, 150, 255) };
+                        if link.line == row_idx
+                            && col_idx >= link.col_start
+                            && col_idx < link.col_end
+                        {
+                            let is_hovered_link =
+                                hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                            fg_color = if is_hovered_link {
+                                Color32::from_rgb(100, 200, 255)
+                            } else {
+                                Color32::from_rgb(50, 150, 255)
+                            };
                             found = true;
                             break;
                         }
@@ -1191,12 +1475,22 @@ impl TerminalRenderer {
                 let is_wide = cell.wide;
 
                 let mut font_id = FontId::monospace(self.font_size);
-                if bold { font_id.size *= 1.1; }
+                if bold {
+                    font_id.size *= 1.1;
+                }
 
-                let galley = ui.painter().layout_no_wrap(cell.character.to_string(), font_id.clone(), fg_color);
+                let galley = ui.painter().layout_no_wrap(
+                    cell.character.to_string(),
+                    font_id.clone(),
+                    fg_color,
+                );
                 let (cx, cw) = snapped_span(content_rect.left(), col_idx, char_width);
                 let text_y = y + (snapped_height - galley.size().y) / 2.0;
-                let cell_w = if is_wide { cw + snapped_span(content_rect.left(), col_idx + 1, char_width).1 } else { cw };
+                let cell_w = if is_wide {
+                    cw + snapped_span(content_rect.left(), col_idx + 1, char_width).1
+                } else {
+                    cw
+                };
                 let glyph_x = cx + (cell_w - galley.size().x) / 2.0;
                 painter.galley(egui::pos2(glyph_x, text_y), galley, fg_color);
 
@@ -1204,16 +1498,44 @@ impl TerminalRenderer {
 
                 // Decorations
                 if has_underline {
-                    let (sx, sw) = snapped_span(content_rect.left(), col_idx - if is_wide { 2 } else { 1 }, char_width);
-                    let ew = if is_wide { sw + snapped_span(content_rect.left(), col_idx - 1, char_width).1 } else { sw };
+                    let (sx, sw) = snapped_span(
+                        content_rect.left(),
+                        col_idx - if is_wide { 2 } else { 1 },
+                        char_width,
+                    );
+                    let ew = if is_wide {
+                        sw + snapped_span(content_rect.left(), col_idx - 1, char_width).1
+                    } else {
+                        sw
+                    };
                     let underline_y = y + line_height - 1.0;
-                    painter.line_segment([egui::pos2(sx, underline_y), egui::pos2(sx + ew, underline_y)], egui::Stroke::new(1.0, fg_color));
+                    painter.line_segment(
+                        [
+                            egui::pos2(sx, underline_y),
+                            egui::pos2(sx + ew, underline_y),
+                        ],
+                        egui::Stroke::new(1.0, fg_color),
+                    );
                 }
                 if has_strikethrough {
-                    let (sx, sw) = snapped_span(content_rect.left(), col_idx - if is_wide { 2 } else { 1 }, char_width);
-                    let ew = if is_wide { sw + snapped_span(content_rect.left(), col_idx - 1, char_width).1 } else { sw };
+                    let (sx, sw) = snapped_span(
+                        content_rect.left(),
+                        col_idx - if is_wide { 2 } else { 1 },
+                        char_width,
+                    );
+                    let ew = if is_wide {
+                        sw + snapped_span(content_rect.left(), col_idx - 1, char_width).1
+                    } else {
+                        sw
+                    };
                     let strikethrough_y = y + line_height / 2.0;
-                    painter.line_segment([egui::pos2(sx, strikethrough_y), egui::pos2(sx + ew, strikethrough_y)], egui::Stroke::new(1.0, fg_color));
+                    painter.line_segment(
+                        [
+                            egui::pos2(sx, strikethrough_y),
+                            egui::pos2(sx + ew, strikethrough_y),
+                        ],
+                        egui::Stroke::new(1.0, fg_color),
+                    );
                 }
             }
         }
@@ -1278,7 +1600,9 @@ impl TerminalRenderer {
                         }
                     }
 
-                    if let Some(encoded) = kitty_encode_key_event(key, modifiers, effective_keyboard_flags) {
+                    if let Some(encoded) =
+                        kitty_encode_key_event(key, modifiers, effective_keyboard_flags)
+                    {
                         input.extend(encoded.as_bytes());
                         continue;
                     }
@@ -1307,7 +1631,7 @@ impl TerminalRenderer {
                             egui::Key::A => input.push(0x01), // Ctrl+A
                             egui::Key::B => input.push(0x02), // Ctrl+B (backward page in vim)
                             egui::Key::C => input.push(0x03), // Ctrl+C (SIGINT)
-                            egui::Key::D => {}, // Ctrl+D (handled by keybindings system - close session/EOF)
+                            egui::Key::D => {} // Ctrl+D (handled by keybindings system - close session/EOF)
                             egui::Key::E => input.push(0x05), // Ctrl+E
                             egui::Key::F => input.push(0x06), // Ctrl+F (forward page in vim)
                             egui::Key::G => input.push(0x07), // Ctrl+G

@@ -96,17 +96,19 @@ impl GridPipeline {
             cache: None,
         });
 
-        let background_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grid_background_uniforms"),
-            contents: bytemuck::bytes_of(&GridUniforms::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let background_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("grid_background_uniforms"),
+                contents: bytemuck::bytes_of(&GridUniforms::zeroed()),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
-        let foreground_uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("grid_foreground_uniforms"),
-            contents: bytemuck::bytes_of(&GridUniforms::zeroed()),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
+        let foreground_uniform_buffer =
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("grid_foreground_uniforms"),
+                contents: bytemuck::bytes_of(&GridUniforms::zeroed()),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            });
 
         // Initial instance buffer capacity for ~200x50 grid
         let initial_capacity = 16384;

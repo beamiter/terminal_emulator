@@ -1,9 +1,8 @@
+use egui::Color32;
 /// P2 优化：字形缓存 + 批量渲染
 /// 缓存字符到字形的映射，支持批量渲染相同样式的字符
 /// 中文字符的栅格化可以缓存 GPU，性能提升 3-4x
-
 use std::collections::HashMap;
-use egui::Color32;
 
 /// 字形缓存的键：字符 + 样式信息
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -128,7 +127,12 @@ pub struct RenderStyle {
 
 impl RenderStyle {
     pub fn new(fg: egui::Color32, bg: egui::Color32, bold: bool, italic: bool) -> Self {
-        RenderStyle { fg, bg, bold, italic }
+        RenderStyle {
+            fg,
+            bg,
+            bold,
+            italic,
+        }
     }
 }
 
@@ -136,7 +140,7 @@ impl RenderStyle {
 #[derive(Debug, Clone)]
 pub struct RenderBatch {
     pub style: RenderStyle,
-    pub positions: Vec<(usize, usize, char)>,  // (row, col, char)
+    pub positions: Vec<(usize, usize, char)>, // (row, col, char)
 }
 
 impl RenderBatch {

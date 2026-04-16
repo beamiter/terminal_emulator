@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use image;
 use base64::Engine;
+use image;
+use std::collections::HashMap;
 
 /// 图像格式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,18 +50,18 @@ pub struct KittyPlacement {
 /// Kitty 图像协议参数
 #[derive(Debug, Default)]
 pub struct KittyGraphicsParams {
-    pub action: Option<String>,     // a: t=transfer, d=delete, p=place, q=query
-    pub image_id: Option<u32>,      // i
-    pub image_number: Option<u32>,  // I
-    pub placement_id: Option<u32>,  // p
-    pub format: Option<String>,     // f: png, jpeg, rgb, rgba
-    pub width: Option<u32>,         // s
-    pub height: Option<u32>,        // v
-    pub x: Option<u32>,             // x: column
-    pub y: Option<u32>,             // y: row
-    pub z: Option<i32>,             // z: z-order
-    pub more: bool,                 // m: 1=more data, 0=last
-    pub data: Option<String>,       // base64 encoded data
+    pub action: Option<String>,    // a: t=transfer, d=delete, p=place, q=query
+    pub image_id: Option<u32>,     // i
+    pub image_number: Option<u32>, // I
+    pub placement_id: Option<u32>, // p
+    pub format: Option<String>,    // f: png, jpeg, rgb, rgba
+    pub width: Option<u32>,        // s
+    pub height: Option<u32>,       // v
+    pub x: Option<u32>,            // x: column
+    pub y: Option<u32>,            // y: row
+    pub z: Option<i32>,            // z: z-order
+    pub more: bool,                // m: 1=more data, 0=last
+    pub data: Option<String>,      // base64 encoded data
 }
 
 /// 待传输的图像数据
@@ -156,8 +156,8 @@ impl KittyGraphicsState {
     fn handle_transfer(&mut self, params: KittyGraphicsParams) -> Result<(), String> {
         let image_id = params.image_id.ok_or("Missing image ID")?;
         let format_str = params.format.as_deref().unwrap_or("png");
-        let format = ImageFormat::from_str(format_str)
-            .ok_or(format!("Unknown format: {}", format_str))?;
+        let format =
+            ImageFormat::from_str(format_str).ok_or(format!("Unknown format: {}", format_str))?;
 
         // 解码 base64 数据
         let data = if let Some(encoded) = params.data {
@@ -235,16 +235,25 @@ impl KittyGraphicsState {
     }
 
     /// 解码压缩图像格式（PNG/JPEG），返回 (RGBA数据, 宽度, 高度)
-    fn decode_compressed_image(&self, data: Vec<u8>, format: ImageFormat) -> Result<(Vec<u8>, u32, u32), String> {
-        let img = image::load_from_memory(&data)
-            .map_err(|e| format!("Failed to load image: {}", e))?;
+    fn decode_compressed_image(
+        &self,
+        data: Vec<u8>,
+        format: ImageFormat,
+    ) -> Result<(Vec<u8>, u32, u32), String> {
+        let img =
+            image::load_from_memory(&data).map_err(|e| format!("Failed to load image: {}", e))?;
 
         let width = img.width();
         let height = img.height();
         let rgba_image = img.to_rgba8();
 
-        log::debug!("[KITTY_GRAPHICS] Decoded {:?} image {}x{} -> RGBA {}B",
-            format, width, height, rgba_image.len());
+        log::debug!(
+            "[KITTY_GRAPHICS] Decoded {:?} image {}x{} -> RGBA {}B",
+            format,
+            width,
+            height,
+            rgba_image.len()
+        );
 
         Ok((rgba_image.into_raw(), width, height))
     }
@@ -273,7 +282,12 @@ impl KittyGraphicsState {
 
         log::info!(
             "[KITTY_GRAPHICS] Placed image {} at ({},{}) size {}x{} z={}",
-            image_id, x, y, width, height, z
+            image_id,
+            x,
+            y,
+            width,
+            height,
+            z
         );
 
         Ok(())
@@ -286,7 +300,8 @@ impl KittyGraphicsState {
             self.placements.retain(|p| p.image_id != image_id);
             log::info!("[KITTY_GRAPHICS] Deleted image {}", image_id);
         } else if let Some(placement_id) = params.placement_id {
-            self.placements.retain(|p| p.placement_id != Some(placement_id));
+            self.placements
+                .retain(|p| p.placement_id != Some(placement_id));
             log::info!("[KITTY_GRAPHICS] Deleted placement {}", placement_id);
         } else {
             return Err("Missing image_id or placement_id for delete".to_string());
@@ -307,7 +322,11 @@ impl KittyGraphicsState {
 
     /// 获取性能统计
     pub fn get_stats(&self) -> (u32, u64, usize) {
-        (self.total_decoded, self.total_bytes_processed, self.images.len())
+        (
+            self.total_decoded,
+            self.total_bytes_processed,
+            self.images.len(),
+        )
     }
 
     /// 获取所有放置

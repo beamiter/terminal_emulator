@@ -1,6 +1,6 @@
+use fuzzy_matcher::skim::SkimMatcherV2;
 /// 命令调色板模块
 use fuzzy_matcher::FuzzyMatcher;
-use fuzzy_matcher::skim::SkimMatcherV2;
 use std::collections::VecDeque;
 
 /// 命令类别
@@ -222,7 +222,9 @@ impl CommandPalette {
             if !self.recent_commands.is_empty() {
                 // 最近使用的命令
                 for recent_cmd in self.recent_commands.iter().take(5) {
-                    if let Some(cmd_info) = self.all_commands.iter().find(|c| c.command == *recent_cmd) {
+                    if let Some(cmd_info) =
+                        self.all_commands.iter().find(|c| c.command == *recent_cmd)
+                    {
                         self.search_results.push((cmd_info.clone(), 100));
                     }
                 }
@@ -231,7 +233,10 @@ impl CommandPalette {
             // 然后显示所有其他命令（按分类排序）
             let mut other_commands = self.all_commands.clone();
             other_commands.retain(|cmd| {
-                !self.recent_commands.iter().any(|recent| recent == &cmd.command)
+                !self
+                    .recent_commands
+                    .iter()
+                    .any(|recent| recent == &cmd.command)
             });
             other_commands.sort_by_key(|cmd| cmd.category);
             for cmd in other_commands {
@@ -321,9 +326,10 @@ mod tests {
         palette.update_search_results();
         assert!(!palette.search_results.is_empty());
         // 应该找到关于 session 的命令
-        assert!(palette.search_results.iter().any(|(cmd, _)| {
-            cmd.name.to_lowercase().contains("session")
-        }));
+        assert!(palette
+            .search_results
+            .iter()
+            .any(|(cmd, _)| { cmd.name.to_lowercase().contains("session") }));
     }
 
     #[test]
@@ -333,7 +339,10 @@ mod tests {
         palette.execute_command(crate::keybindings::Command::EditCopy);
 
         assert_eq!(palette.recent_commands.len(), 2);
-        assert_eq!(palette.recent_commands[0], crate::keybindings::Command::EditCopy);
+        assert_eq!(
+            palette.recent_commands[0],
+            crate::keybindings::Command::EditCopy
+        );
     }
 
     #[test]

@@ -11,7 +11,10 @@ pub struct Hyperlink {
 impl Hyperlink {
     pub fn to_ansi_string(&self) -> String {
         let id = self.id.as_deref().unwrap_or("");
-        format!("\x1b]8;{};{}\x1b\\{}\x1b]8;;\x1b\\", id, self.url, self.text)
+        format!(
+            "\x1b]8;{};{}\x1b\\{}\x1b]8;;\x1b\\",
+            id, self.url, self.text
+        )
     }
 
     pub fn from_ansi_string(s: &str) -> Option<Self> {
@@ -43,9 +46,9 @@ impl Hyperlink {
 /// 256 色及 TrueColor 支持
 #[derive(Clone, Debug, Copy, Serialize, Deserialize)]
 pub enum ColorMode {
-    Standard16,   // 16 种基本色
-    Color256,     // 256 色
-    TrueColor,    // 24 位 RGB
+    Standard16, // 16 种基本色
+    Color256,   // 256 色
+    TrueColor,  // 24 位 RGB
 }
 
 impl ColorMode {

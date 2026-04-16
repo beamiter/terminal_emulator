@@ -1,4 +1,4 @@
-use ab_glyph::{Font, FontVec, GlyphId, PxScale, ScaleFont, point};
+use ab_glyph::{point, Font, FontVec, GlyphId, PxScale, ScaleFont};
 use std::collections::HashMap;
 
 /// UV region of a rasterized glyph inside the atlas texture.
@@ -232,9 +232,14 @@ impl GlyphAtlas {
 
             if glyph_w == 0 || glyph_h == 0 {
                 let region = GlyphRegion {
-                    u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
-                    width_px: 0.0, height_px: 0.0,
-                    bearing_x: 0.0, bearing_y: 0.0,
+                    u0: 0.0,
+                    v0: 0.0,
+                    u1: 0.0,
+                    v1: 0.0,
+                    width_px: 0.0,
+                    height_px: 0.0,
+                    bearing_x: 0.0,
+                    bearing_y: 0.0,
                 };
                 self.cache.insert(key, region);
                 return region;
@@ -249,9 +254,14 @@ impl GlyphAtlas {
                 if !self.grow() {
                     // Can't grow, return empty region
                     let region = GlyphRegion {
-                        u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
-                        width_px: 0.0, height_px: 0.0,
-                        bearing_x: 0.0, bearing_y: 0.0,
+                        u0: 0.0,
+                        v0: 0.0,
+                        u1: 0.0,
+                        v1: 0.0,
+                        width_px: 0.0,
+                        height_px: 0.0,
+                        bearing_x: 0.0,
+                        bearing_y: 0.0,
                     };
                     self.cache.insert(key, region);
                     return region;
@@ -259,9 +269,14 @@ impl GlyphAtlas {
                 // Retry after grow
                 if !self.allocate_shelf(padded_w, padded_h) {
                     let region = GlyphRegion {
-                        u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
-                        width_px: 0.0, height_px: 0.0,
-                        bearing_x: 0.0, bearing_y: 0.0,
+                        u0: 0.0,
+                        v0: 0.0,
+                        u1: 0.0,
+                        v1: 0.0,
+                        width_px: 0.0,
+                        height_px: 0.0,
+                        bearing_x: 0.0,
+                        bearing_y: 0.0,
                     };
                     self.cache.insert(key, region);
                     return region;
@@ -304,9 +319,14 @@ impl GlyphAtlas {
             // No outline (space, control char, etc)
             let h_advance = scaled_font.h_advance(glyph_id);
             let region = GlyphRegion {
-                u0: 0.0, v0: 0.0, u1: 0.0, v1: 0.0,
-                width_px: h_advance, height_px: 0.0,
-                bearing_x: 0.0, bearing_y: 0.0,
+                u0: 0.0,
+                v0: 0.0,
+                u1: 0.0,
+                v1: 0.0,
+                width_px: h_advance,
+                height_px: 0.0,
+                bearing_x: 0.0,
+                bearing_y: 0.0,
             };
             self.cache.insert(key, region);
             region
@@ -316,7 +336,8 @@ impl GlyphAtlas {
     /// Try to allocate space in the current shelf. Returns true if successful.
     fn allocate_shelf(&mut self, w: u32, h: u32) -> bool {
         // Does it fit on the current shelf?
-        if self.shelf_x + w <= self.width && self.shelf_y + h.max(self.shelf_height) <= self.height {
+        if self.shelf_x + w <= self.width && self.shelf_y + h.max(self.shelf_height) <= self.height
+        {
             self.shelf_x += w;
             if h > self.shelf_height {
                 self.shelf_height = h;
@@ -411,7 +432,13 @@ impl GlyphAtlas {
     }
 
     /// Clear the atlas and rebuild from scratch. Call on font size/family change.
-    pub fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, font_size_px: f32, font_weight: f32) {
+    pub fn reset(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        font_size_px: f32,
+        font_weight: f32,
+    ) {
         self.font_size_px = font_size_px;
         self.font_weight = font_weight;
         self.cache.clear();

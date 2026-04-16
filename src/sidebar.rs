@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 /// 文件树节点
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -59,10 +59,7 @@ impl Sidebar {
                     let entry = e.ok()?;
                     let path = entry.path();
                     let is_dir = entry.file_type().ok()?.is_dir();
-                    let name = path
-                        .file_name()?
-                        .to_str()?
-                        .to_string();
+                    let name = path.file_name()?.to_str()?.to_string();
 
                     // 跳过隐藏文件和系统文件夹
                     if name.starts_with('.') {
@@ -74,12 +71,10 @@ impl Sidebar {
                 .collect();
 
             // 排序：文件夹优先，然后按名称排序
-            items.sort_by(|a, b| {
-                match (a.2, b.2) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.0.cmp(&b.0),
-                }
+            items.sort_by(|a, b| match (a.2, b.2) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.0.cmp(&b.0),
             });
 
             // 仅保留前 20 个项目，避免过多

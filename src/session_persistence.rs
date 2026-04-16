@@ -63,16 +63,17 @@ impl SessionsSnapshot {
 
         let content = std::fs::read_to_string(path)?;
         let snapshot: SessionsSnapshot = serde_json::from_str(&content)?;
-        eprintln!("[SessionPersistence] Sessions loaded from {}", path.display());
+        eprintln!(
+            "[SessionPersistence] Sessions loaded from {}",
+            path.display()
+        );
         Ok(snapshot)
     }
 }
 
 /// 尝试获取实例锁文件。成功返回 Some(File)（持有锁），失败表示已有实例在运行。
 pub fn try_acquire_instance_lock() -> Option<std::fs::File> {
-    let lock_path = dirs::config_dir()?
-        .join("jterm2")
-        .join("instance.lock");
+    let lock_path = dirs::config_dir()?.join("jterm2").join("instance.lock");
     if let Some(parent) = lock_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -101,7 +102,9 @@ pub fn try_acquire_instance_lock() -> Option<std::fs::File> {
 }
 
 /// 确保会话历史目录存在
-pub fn ensure_session_history_dir(path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+pub fn ensure_session_history_dir(
+    path: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(parent) = path.parent() {
         if !parent.exists() {
             std::fs::create_dir_all(parent)?;
@@ -240,7 +243,10 @@ mod tests {
         let snapshot = SessionsSnapshot::from_snapshots(snapshots, Some(1));
         assert_eq!(snapshot.sessions.len(), 2);
         assert_eq!(snapshot.sessions[0].cwd, Some("/home/user".to_string()));
-        assert_eq!(snapshot.sessions[0].restorable_commands, Some("nix develop".to_string()));
+        assert_eq!(
+            snapshot.sessions[0].restorable_commands,
+            Some("nix develop".to_string())
+        );
         assert_eq!(snapshot.sessions[1].cwd, Some("/tmp".to_string()));
         assert_eq!(snapshot.active_index, Some(1));
     }
@@ -248,10 +254,20 @@ mod tests {
     #[test]
     fn test_match_restorable_nix_develop() {
         let args = vec!["nix".to_string(), "develop".to_string()];
-        assert_eq!(match_restorable_command(&args), Some("nix develop".to_string()));
+        assert_eq!(
+            match_restorable_command(&args),
+            Some("nix develop".to_string())
+        );
 
-        let args = vec!["nix".to_string(), "develop".to_string(), "/path/to/flake".to_string()];
-        assert_eq!(match_restorable_command(&args), Some("nix develop /path/to/flake".to_string()));
+        let args = vec![
+            "nix".to_string(),
+            "develop".to_string(),
+            "/path/to/flake".to_string(),
+        ];
+        assert_eq!(
+            match_restorable_command(&args),
+            Some("nix develop /path/to/flake".to_string())
+        );
 
         let args = vec!["nix".to_string(), "build".to_string()];
         assert_eq!(match_restorable_command(&args), None);
@@ -259,23 +275,45 @@ mod tests {
 
     #[test]
     fn test_match_restorable_nix_shell_pattern() {
-        let args = vec!["bash".to_string(), "--rcfile".to_string(), "/tmp/nix-shell.abcdef".to_string()];
-        assert_eq!(match_restorable_command(&args), Some("nix develop".to_string()));
+        let args = vec![
+            "bash".to_string(),
+            "--rcfile".to_string(),
+            "/tmp/nix-shell.abcdef".to_string(),
+        ];
+        assert_eq!(
+            match_restorable_command(&args),
+            Some("nix develop".to_string())
+        );
     }
 
     #[test]
     fn test_match_restorable_ssh() {
         let args = vec!["ssh".to_string(), "user@host".to_string()];
-        assert_eq!(match_restorable_command(&args), Some("ssh user@host".to_string()));
+        assert_eq!(
+            match_restorable_command(&args),
+            Some("ssh user@host".to_string())
+        );
 
         let args = vec!["mosh".to_string(), "user@host".to_string()];
-        assert_eq!(match_restorable_command(&args), Some("mosh user@host".to_string()));
+        assert_eq!(
+            match_restorable_command(&args),
+            Some("mosh user@host".to_string())
+        );
     }
 
     #[test]
     fn test_match_restorable_docker() {
-        let args = vec!["docker".to_string(), "exec".to_string(), "-it".to_string(), "container".to_string(), "bash".to_string()];
-        assert_eq!(match_restorable_command(&args), Some("docker exec -it container bash".to_string()));
+        let args = vec![
+            "docker".to_string(),
+            "exec".to_string(),
+            "-it".to_string(),
+            "container".to_string(),
+            "bash".to_string(),
+        ];
+        assert_eq!(
+            match_restorable_command(&args),
+            Some("docker exec -it container bash".to_string())
+        );
 
         let args = vec!["docker".to_string(), "run".to_string()];
         assert_eq!(match_restorable_command(&args), None);
@@ -290,7 +328,8 @@ mod tests {
     #[test]
     fn test_backward_compat_deserialization() {
         // Old format without new fields
-        let json = r#"{"version":1,"sessions":[{"name":"Session 1","tags":[],"cwd":"/home/user"}]}"#;
+        let json =
+            r#"{"version":1,"sessions":[{"name":"Session 1","tags":[],"cwd":"/home/user"}]}"#;
         let snapshot: SessionsSnapshot = serde_json::from_str(json).unwrap();
         assert_eq!(snapshot.sessions[0].restorable_commands, None);
         assert_eq!(snapshot.sessions[0].session_id, None);

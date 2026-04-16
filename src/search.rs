@@ -217,8 +217,7 @@ impl SearchState {
 
     /// 获取搜索历史保存路径
     pub fn history_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let data_dir = dirs::data_local_dir()
-            .ok_or("Could not determine data directory")?;
+        let data_dir = dirs::data_local_dir().ok_or("Could not determine data directory")?;
         Ok(data_dir.join("jterm2/search_history.json"))
     }
 

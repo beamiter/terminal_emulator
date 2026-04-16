@@ -60,9 +60,9 @@ pub struct LinkDetector {
 impl LinkDetector {
     pub fn new(config: LinkDetectionConfig) -> Self {
         // URL 正则：http(s)?:// 或 ftp://
-        let url_regex = Regex::new(
-            r"(?:https?|ftp)://[^\s<>\[\]{}|\\^`()]*[^\s<>\[\]{}|\\^`().,;:!?\-]"
-        ).unwrap();
+        let url_regex =
+            Regex::new(r"(?:https?|ftp)://[^\s<>\[\]{}|\\^`()]*[^\s<>\[\]{}|\\^`().,;:!?\-]")
+                .unwrap();
 
         // IP 地址正则：x.x.x.x 格式
         let ip_regex = Regex::new(
@@ -112,9 +112,10 @@ impl LinkDetector {
                 let col_start = Self::byte_offset_to_char_offset(line, mat.start());
                 let col_end = Self::byte_offset_to_char_offset(line, mat.end());
                 // 避免与 URL 重复
-                if !links.iter().any(|l| {
-                    l.col_start <= col_start && col_end <= l.col_end
-                }) {
+                if !links
+                    .iter()
+                    .any(|l| l.col_start <= col_start && col_end <= l.col_end)
+                {
                     links.push(Link {
                         line: line_idx,
                         col_start,
@@ -134,9 +135,11 @@ impl LinkDetector {
                 let col_end = Self::byte_offset_to_char_offset(line, mat.end());
 
                 // 避免与 URL 重复
-                if !links.iter().any(|l| {
-                    l.col_start <= col_start && col_end <= l.col_end
-                }) && Self::is_valid_file_path(matched_text) {
+                if !links
+                    .iter()
+                    .any(|l| l.col_start <= col_start && col_end <= l.col_end)
+                    && Self::is_valid_file_path(matched_text)
+                {
                     links.push(Link {
                         line: line_idx,
                         col_start,
@@ -220,17 +223,13 @@ pub fn open_link(link: &Link) -> Result<(), Box<dyn std::error::Error>> {
 /// 打开 URL（使用系统默认浏览器）
 #[cfg(target_os = "linux")]
 fn open_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    std::process::Command::new("xdg-open")
-        .arg(url)
-        .spawn()?;
+    std::process::Command::new("xdg-open").arg(url).spawn()?;
     Ok(())
 }
 
 #[cfg(target_os = "macos")]
 fn open_url(url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    std::process::Command::new("open")
-        .arg(url)
-        .spawn()?;
+    std::process::Command::new("open").arg(url).spawn()?;
     Ok(())
 }
 
@@ -282,11 +281,7 @@ fn open_file_path(path: &str) -> Result<(), Box<dyn std::error::Error>> {
 fn expand_path(path: &str) -> String {
     if path.starts_with("~/") {
         if let Some(home) = dirs::home_dir() {
-            return format!(
-                "{}{}",
-                home.display(),
-                &path[1..]
-            );
+            return format!("{}{}", home.display(), &path[1..]);
         }
     }
     path.to_string()

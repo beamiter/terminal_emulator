@@ -1,8 +1,8 @@
-use crate::terminal::TerminalState;
 use crate::shell::ShellSession;
+use crate::terminal::TerminalState;
+use parking_lot::Mutex as ParkingMutex;
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
-use parking_lot::Mutex as ParkingMutex;
 use uuid::Uuid;
 
 /// Generate a unique session ID for rsh session persistence.

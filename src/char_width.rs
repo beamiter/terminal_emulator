@@ -1,7 +1,6 @@
 /// P5 优化：字符宽度计算缓存
 /// 使用 LRU 缓存来避免重复的 Unicode 宽度计算
 /// 特别对于中文字符，性能提升显著（10-15%）
-
 use std::cell::RefCell;
 
 thread_local! {
@@ -54,7 +53,7 @@ pub fn clear_width_cache() {
 pub fn get_cache_stats() -> (usize, usize) {
     CHAR_WIDTH_CACHE.with(|cache| {
         let c = cache.borrow();
-        (c.len(), 4096)  // (当前项数, 容量)
+        (c.len(), 4096) // (当前项数, 容量)
     })
 }
 
@@ -89,6 +88,6 @@ mod tests {
         // 再次调用应该使用缓存
         cached_char_width('A');
         let (after_2, _) = get_cache_stats();
-        assert_eq!(after_2, after_1);  // 缓存大小不变
+        assert_eq!(after_2, after_1); // 缓存大小不变
     }
 }
