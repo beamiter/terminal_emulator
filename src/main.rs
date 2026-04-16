@@ -158,8 +158,40 @@ fn fontconfig_match_file(family: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+#[cfg(target_os = "linux")]
+fn fontconfig_match_bold_file(family: &str) -> Option<String> {
+    let query = format!("{}:style=Bold", family);
+    let output = Command::new("fc-match")
+        .args(["-f", "%{file}\n", &query])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8(output.stdout)
+        .ok()?
+        .lines()
+        .map(str::trim)
+        .find(|path| !path.is_empty())
+        .map(ToOwned::to_owned)?;
+
+    // Verify it's actually a bold variant (not the same as regular)
+    if path.to_lowercase().contains("bold") {
+        Some(path)
+    } else {
+        None
+    }
+}
+
 #[cfg(not(target_os = "linux"))]
 fn fontconfig_match_file(_family: &str) -> Option<String> {
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+fn fontconfig_match_bold_file(_family: &str) -> Option<String> {
     None
 }
 
@@ -327,6 +359,32 @@ fn configure_fonts_and_gpu(
         .map(|fd| vec![fd.font.to_vec()])
         .unwrap_or_default();
 
+    // Try to load bold variant of the configured monospace font
+    let bold_font_data: Option<Vec<u8>> = {
+        let family = cfg.get_font_family();
+        let bold_candidates = [
+            family,
+            "DejaVu Sans Mono",
+            "Liberation Mono",
+            "Noto Sans Mono",
+            "Noto Mono",
+        ];
+        let mut data = None;
+        for candidate in &bold_candidates {
+            if let Some(path) = fontconfig_match_bold_file(candidate) {
+                if let Ok(bytes) = std::fs::read(&path) {
+                    eprintln!("[Fonts] Loaded bold font: {}", path);
+                    data = Some(bytes);
+                    break;
+                }
+            }
+        }
+        if data.is_none() {
+            eprintln!("[Fonts] Warning: no bold font variant found, bold text will use regular weight");
+        }
+        data
+    };
+
     ctx.set_fonts(fonts);
 
     if let (Some(render_state), Some(font_bytes)) = (wgpu_render_state, mono_font_data) {
@@ -335,7 +393,7 @@ fn configure_fonts_and_gpu(
             &render_state.device,
             &render_state.queue,
             &font_bytes,
-            None,
+            bold_font_data.as_deref(),
             &fallback_font_data,
             font_size_px,
         );
