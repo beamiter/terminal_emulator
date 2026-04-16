@@ -396,6 +396,7 @@ fn configure_fonts_and_gpu(
             bold_font_data.as_deref(),
             &fallback_font_data,
             font_size_px,
+            cfg.font_weight,
         );
         let pipeline = gpu::pipeline::GridPipeline::new(
             &render_state.device,
@@ -1724,7 +1725,7 @@ impl TerminalApp {
                                 let font_size_px = new_font_size * ppp;
                                 let mut renderer = render_state.renderer.write();
                                 if let Some(gpu_res) = renderer.callback_resources.get_mut::<gpu::callback::GpuResources>() {
-                                    gpu_res.atlas.reset(&render_state.device, &render_state.queue, font_size_px);
+                                    gpu_res.atlas.reset(&render_state.device, &render_state.queue, font_size_px, self.config.font_weight);
                                 }
                             }
                             // 同步到 config 并触发保存

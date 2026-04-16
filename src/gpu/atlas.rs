@@ -30,6 +30,7 @@ pub struct GlyphAtlas {
     font_bold: Option<FontVec>,
     fallback_fonts: Vec<FontVec>,
     font_size_px: f32,
+    font_weight: f32,
     /// CPU-side alpha bitmap
     bitmap: Vec<u8>,
     width: u32,
@@ -62,6 +63,7 @@ impl GlyphAtlas {
         font_data_bold: Option<&[u8]>,
         fallback_font_data: &[Vec<u8>],
         font_size_px: f32,
+        font_weight: f32,
     ) -> Self {
         let font_regular =
             FontVec::try_from_vec(font_data_regular.to_vec()).expect("failed to load regular font");
@@ -104,6 +106,7 @@ impl GlyphAtlas {
             font_bold,
             fallback_fonts,
             font_size_px,
+            font_weight,
             bitmap,
             width,
             height,
@@ -271,11 +274,14 @@ impl GlyphAtlas {
             // Rasterize into the bitmap
             let bx = atlas_x + Self::GLYPH_PADDING;
             let by = atlas_y + Self::GLYPH_PADDING;
+            // Apply font weight boost to regular font (bold text uses 1.0x weight)
+            let weight_boost = if bold { 1.0 } else { self.font_weight };
             outlined.draw(|x, y, alpha| {
                 let px = bx + x;
                 let py = by + y;
                 if px < self.width && py < self.height {
-                    self.bitmap[(py * self.width + px) as usize] = (alpha * 255.0) as u8;
+                    let boosted_alpha = (alpha * weight_boost).min(1.0);
+                    self.bitmap[(py * self.width + px) as usize] = (boosted_alpha * 255.0) as u8;
                 }
             });
 
@@ -405,8 +411,9 @@ impl GlyphAtlas {
     }
 
     /// Clear the atlas and rebuild from scratch. Call on font size/family change.
-    pub fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, font_size_px: f32) {
+    pub fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, font_size_px: f32, font_weight: f32) {
         self.font_size_px = font_size_px;
+        self.font_weight = font_weight;
         self.cache.clear();
         self.shelf_x = 0;
         self.shelf_y = 0;

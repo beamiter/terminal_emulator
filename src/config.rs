@@ -35,6 +35,9 @@ pub struct Config {
     #[serde(default = "default_font_family")]
     pub font_family: String,
 
+    #[serde(default = "default_font_weight")]
+    pub font_weight: f32,
+
     #[serde(default = "default_padding")]
     pub padding: f32,
 
@@ -80,6 +83,10 @@ pub struct Config {
 
 fn default_font_size() -> f32 {
     14.0
+}
+
+fn default_font_weight() -> f32 {
+    1.15
 }
 
 fn default_line_spacing() -> f32 {
@@ -186,6 +193,7 @@ impl Default for Config {
         Config {
             font_size: default_font_size(),
             font_family: default_font_family(),
+            font_weight: default_font_weight(),
             padding: default_padding(),
             line_spacing: default_line_spacing(),
             scrollbar_visibility: ScrollbarVisibility::default(),
