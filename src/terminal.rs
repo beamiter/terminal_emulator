@@ -1818,6 +1818,9 @@ impl TerminalState {
                     self.saved_cursor_row = self.cursor_row;
                     self.saved_cursor_col = self.cursor_col;
 
+                    // Reset scroll offset so we don't show scrollback in alt buffer
+                    self.scroll_offset = 0;
+
                     // Switch to alternate buffer
                     std::mem::swap(&mut self.grid, &mut self.alt_grid);
                     self.alt_cursor_row = self.cursor_row;
@@ -2298,6 +2301,11 @@ impl TerminalState {
     }
 
     pub fn scroll(&mut self, lines: isize) {
+        // Don't scroll scrollback when in alternate screen buffer (less, vim, git log, etc.)
+        if self.use_alt_buffer {
+            return;
+        }
+
         if lines > 0 {
             // Scroll up (show earlier lines)
             self.scroll_offset = self.scroll_offset.saturating_add(lines as usize);

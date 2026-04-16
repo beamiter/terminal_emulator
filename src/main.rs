@@ -2859,32 +2859,24 @@ impl eframe::App for TerminalApp {
         // Step 9: 滚动处理
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown) && i.modifiers.ctrl) {
             let mut terminal = session.terminal.lock();
-            if !terminal.is_alt_buffer_active() {
-                terminal.scroll(-3);
-            }
+            terminal.scroll(-3);
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp) && i.modifiers.ctrl) {
             let mut terminal = session.terminal.lock();
-            if !terminal.is_alt_buffer_active() {
-                terminal.scroll(3);
-            }
+            terminal.scroll(3);
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::PageUp) && !i.modifiers.ctrl) {
             let mut terminal = session.terminal.lock();
-            if !terminal.is_alt_buffer_active() {
-                let (_, rows) = terminal.get_dimensions();
-                terminal.scroll(rows as isize);
-            }
+            let (_, rows) = terminal.get_dimensions();
+            terminal.scroll(rows as isize);
         }
 
         if ctx.input(|i| i.key_pressed(egui::Key::PageDown) && !i.modifiers.ctrl) {
             let mut terminal = session.terminal.lock();
-            if !terminal.is_alt_buffer_active() {
-                let (_, rows) = terminal.get_dimensions();
-                terminal.scroll(-(rows as isize));
-            }
+            let (_, rows) = terminal.get_dimensions();
+            terminal.scroll(-(rows as isize));
         }
 
         let scroll_delta = ctx.input(|i| i.smooth_scroll_delta.y);
