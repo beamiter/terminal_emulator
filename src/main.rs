@@ -1917,7 +1917,7 @@ impl TerminalApp {
                         }
                     }
 
-                    // Ctrl+滚轮在此处理
+                    // Ctrl+滚轮字体缩放
                     if scroll_delta_from_event != 0.0 && ctrl_pressed_render {
                         let font_size_delta = if scroll_delta_from_event > 0.0 {
                             1.0
@@ -1925,38 +1925,25 @@ impl TerminalApp {
                             -1.0
                         };
                         drop(terminal_guard); // 先释放锁
+
+                        // 计算新的字体大小
                         let new_font_size = config::Config::clamp_font_size(
-                            self.renderer.font_size + font_size_delta,
+                            self.config.font_size + font_size_delta,
                         );
-                        self.renderer.font_size = new_font_size;
-                        self.renderer.char_width = new_font_size * 0.62;
-                        self.renderer.line_height = new_font_size * self.renderer.line_spacing;
-                        for pane_renderer in &mut self.pane_renderers {
-                            pane_renderer.font_size = new_font_size;
-                            pane_renderer.char_width = new_font_size * 0.62;
-                            pane_renderer.line_height = new_font_size * pane_renderer.line_spacing;
-                        }
-                        // Reset GPU glyph atlas with new font size
-                        if let Some(ref render_state) = self.renderer.wgpu_render_state {
-                            let ppp = ui.ctx().pixels_per_point();
-                            let font_size_px = new_font_size * ppp;
-                            let mut renderer = render_state.renderer.write();
-                            if let Some(gpu_res) = renderer
-                                .callback_resources
-                                .get_mut::<gpu::callback::GpuResources>()
-                            {
-                                gpu_res.atlas.reset(
-                                    &render_state.device,
-                                    &render_state.queue,
-                                );
-                            }
-                        }
-                        // 同步到 config 并触发保存
+
+                        // 更新配置
                         self.config.font_size = new_font_size;
+
                         // 释放 session 引用，允许调用 &mut self 方法
                         let _ = session;
+
+                        // 应用配置更改（会重新配置字体系统和GPU资源）
+                        self.apply_runtime_config(ui.ctx());
+
+                        // 触发配置保存（debounced）
                         self.schedule_config_save();
-                        // 重新获取
+
+                        // 重新获取 session 引用
                         let session = self.session_manager.get_active_session_mut();
                         terminal_guard = session.terminal.lock();
                     }
@@ -2217,17 +2204,15 @@ impl TerminalApp {
                 config_panel::ConfigAction::FontSizeChanged(size) => {
                     self.config.font_size = size;
                     self.apply_runtime_config(ctx);
-                    self.schedule_config_save();
+                    // Note: No auto-save here, only when SaveRequested
                 }
                 config_panel::ConfigAction::LineSpacingChanged(spacing) => {
                     self.config.line_spacing = spacing;
                     self.apply_runtime_config(ctx);
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::FontFamilyChanged(family) => {
                     self.config.font_family = family;
                     self.apply_runtime_config(ctx);
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::ThemeChanged(theme_name) => {
                     self.config.theme = theme_name.clone();
@@ -2235,7 +2220,6 @@ impl TerminalApp {
                         self.current_theme = t.clone();
                         self.apply_runtime_config(ctx);
                     }
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::CustomThemeApplied(theme) => {
                     self.current_theme = *theme.clone();
@@ -2244,33 +2228,32 @@ impl TerminalApp {
                 config_panel::ConfigAction::PaddingChanged(padding) => {
                     self.config.padding = padding;
                     self.apply_runtime_config(ctx);
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::ScrollbackLinesChanged(lines) => {
                     self.config.scrollback_lines = lines;
                     self.apply_runtime_config(ctx);
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::ScrollSpeedChanged(speed) => {
                     self.config.scroll_speed = speed;
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::RestoreSessionChanged(enabled) => {
                     self.config.restore_session = enabled;
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::OpacityChanged(opacity) => {
                     self.config.opacity = opacity;
                     self.apply_runtime_config(ctx);
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::GpuRenderingChanged(enabled) => {
                     self.config.gpu_rendering = enabled;
                     self.apply_runtime_config(ctx);
-                    self.schedule_config_save();
                 }
                 config_panel::ConfigAction::SaveRequested => {
-                    self.config.save().ok();
+                    // Save all pending changes to file
+                    if let Err(e) = self.config.save() {
+                        eprintln!("[Config] Failed to save: {}", e);
+                    }
+                    // Sync panel state to match saved config
+                    self.config_panel.sync_from_config(&self.config);
                 }
                 config_panel::ConfigAction::ResetToDefaults => {
                     self.config = config::Config::default();

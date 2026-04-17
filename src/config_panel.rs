@@ -23,6 +23,7 @@ pub enum ConfigTab {
 
 pub enum ConfigAction {
     None,
+    /// Apply runtime changes without saving to file (for live preview)
     FontSizeChanged(f32),
     LineSpacingChanged(f32),
     FontFamilyChanged(String),
@@ -35,6 +36,7 @@ pub enum ConfigAction {
     DebugPanelToggled(bool),
     OpacityChanged(f32),
     GpuRenderingChanged(bool),
+    /// Save all pending changes to config file
     SaveRequested,
     ResetToDefaults,
 }
