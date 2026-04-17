@@ -234,26 +234,33 @@ impl FontBackend for FontdueAtlas {
             return region;
         }
 
+        // Try primary font first (bold or regular)
         let font = if bold {
             self.font_bold.as_ref().unwrap_or(&self.font_regular)
         } else {
             &self.font_regular
         };
 
-        let (metrics, glyph_bitmap) = font.rasterize(ch, self.font_size_px);
+        // Check if glyph exists in primary font
+        let glyph_index = font.lookup_glyph_index(ch);
+        let has_glyph = glyph_index != 0;
 
-        // If glyph not found (empty bitmap, non-space char), try fallback fonts
-        if glyph_bitmap.is_empty() && ch != ' ' && !ch.is_control() {
+        // If no glyph in primary font (or we want fallback for missing chars), try fallback fonts
+        if !has_glyph && ch != ' ' && !ch.is_control() {
             for fb in &self.fallback_fonts {
-                let (fb_metrics, fb_bitmap) = fb.rasterize(ch, self.font_size_px);
-                if !fb_bitmap.is_empty() {
+                let fb_glyph_index = fb.lookup_glyph_index(ch);
+                if fb_glyph_index != 0 {
+                    let (fb_metrics, fb_bitmap) = fb.rasterize(ch, self.font_size_px);
                     return self.rasterize_and_place(&fb_metrics, &fb_bitmap, bold, key);
                 }
             }
-            let region = empty_glyph_region();
-            self.cache.insert(key, region);
-            return region;
+            // Glyph not found in any font, use .notdef
+            let (metrics, glyph_bitmap) = font.rasterize(ch, self.font_size_px);
+            return self.rasterize_and_place(&metrics, &glyph_bitmap, bold, key);
         }
+
+        // Glyph exists (or is space/control), rasterize from primary font
+        let (metrics, glyph_bitmap) = font.rasterize(ch, self.font_size_px);
 
         if glyph_bitmap.is_empty() || metrics.width == 0 || metrics.height == 0 {
             // Space, control chars, etc. — just return advance width
