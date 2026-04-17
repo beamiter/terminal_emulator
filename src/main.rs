@@ -2201,59 +2201,23 @@ impl TerminalApp {
         let config_actions = self.config_panel.show(ctx, &self.current_theme);
         for action in config_actions {
             match action {
-                config_panel::ConfigAction::FontSizeChanged(size) => {
-                    self.config.font_size = size;
-                    self.apply_runtime_config(ctx);
-                    // Note: No auto-save here, only when SaveRequested
-                }
-                config_panel::ConfigAction::LineSpacingChanged(spacing) => {
-                    self.config.line_spacing = spacing;
-                    self.apply_runtime_config(ctx);
-                }
-                config_panel::ConfigAction::FontFamilyChanged(family) => {
-                    self.config.font_family = family;
-                    self.apply_runtime_config(ctx);
-                }
-                config_panel::ConfigAction::ThemeChanged(theme_name) => {
-                    self.config.theme = theme_name.clone();
-                    if let Some(t) = theme::Theme::get_theme(&theme_name) {
-                        self.current_theme = t.clone();
-                        self.apply_runtime_config(ctx);
-                    }
-                }
                 config_panel::ConfigAction::CustomThemeApplied(theme) => {
                     self.current_theme = *theme.clone();
                     self.apply_runtime_config(ctx);
                 }
-                config_panel::ConfigAction::PaddingChanged(padding) => {
-                    self.config.padding = padding;
-                    self.apply_runtime_config(ctx);
-                }
-                config_panel::ConfigAction::ScrollbackLinesChanged(lines) => {
-                    self.config.scrollback_lines = lines;
-                    self.apply_runtime_config(ctx);
-                }
-                config_panel::ConfigAction::ScrollSpeedChanged(speed) => {
-                    self.config.scroll_speed = speed;
-                }
-                config_panel::ConfigAction::RestoreSessionChanged(enabled) => {
-                    self.config.restore_session = enabled;
-                }
-                config_panel::ConfigAction::OpacityChanged(opacity) => {
-                    self.config.opacity = opacity;
-                    self.apply_runtime_config(ctx);
-                }
-                config_panel::ConfigAction::GpuRenderingChanged(enabled) => {
-                    self.config.gpu_rendering = enabled;
-                    self.apply_runtime_config(ctx);
-                }
                 config_panel::ConfigAction::SaveRequested => {
-                    // Save all pending changes to file
+                    // Apply all buffered edit values to config
+                    self.config_panel.apply_to_config(&mut self.config);
+                    // Update theme
+                    if let Some(t) = theme::Theme::get_theme(&self.config.theme) {
+                        self.current_theme = t.clone();
+                    }
+                    // Apply runtime changes (fonts, GPU, renderer)
+                    self.apply_runtime_config(ctx);
+                    // Save to file
                     if let Err(e) = self.config.save() {
                         eprintln!("[Config] Failed to save: {}", e);
                     }
-                    // Sync panel state to match saved config
-                    self.config_panel.sync_from_config(&self.config);
                 }
                 config_panel::ConfigAction::ResetToDefaults => {
                     self.config = config::Config::default();
@@ -2267,7 +2231,6 @@ impl TerminalApp {
                 config_panel::ConfigAction::DebugPanelToggled(open) => {
                     self.debug_panel.is_open = open;
                 }
-                config_panel::ConfigAction::None => {}
             }
         }
 

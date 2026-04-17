@@ -22,21 +22,8 @@ pub enum ConfigTab {
 }
 
 pub enum ConfigAction {
-    None,
-    /// Apply runtime changes without saving to file (for live preview)
-    FontSizeChanged(f32),
-    LineSpacingChanged(f32),
-    FontFamilyChanged(String),
-    ThemeChanged(String),
     CustomThemeApplied(Box<Theme>),
-    PaddingChanged(f32),
-    ScrollbackLinesChanged(usize),
-    ScrollSpeedChanged(u32),
-    RestoreSessionChanged(bool),
     DebugPanelToggled(bool),
-    OpacityChanged(f32),
-    GpuRenderingChanged(bool),
-    /// Save all pending changes to config file
     SaveRequested,
     ResetToDefaults,
 }
@@ -152,6 +139,20 @@ impl ConfigPanel {
         self.edit_gpu_rendering = config.gpu_rendering;
     }
 
+    /// Apply all buffered edit values to the given Config.
+    pub fn apply_to_config(&self, config: &mut Config) {
+        config.font_size = self.edit_font_size;
+        config.line_spacing = self.edit_line_spacing;
+        config.padding = self.edit_padding;
+        config.scrollback_lines = self.edit_scrollback_lines;
+        config.scroll_speed = self.edit_scroll_speed;
+        config.font_family = self.edit_font_family.clone();
+        config.theme = self.edit_theme.clone();
+        config.restore_session = self.edit_restore_session;
+        config.opacity = self.edit_opacity;
+        config.gpu_rendering = self.edit_gpu_rendering;
+    }
+
     pub fn close(&mut self) {
         self.is_open = false;
         self.editing_theme = None;
@@ -255,7 +256,7 @@ impl ConfigPanel {
     fn render_font_tab(
         &mut self,
         ui: &mut egui::Ui,
-        actions: &mut Vec<ConfigAction>,
+        _actions: &mut Vec<ConfigAction>,
         theme: &Theme,
     ) {
         ui.label(RichText::new("Font Settings").strong().size(14.0));
@@ -271,7 +272,7 @@ impl ConfigPanel {
                 )
                 .changed()
             {
-                actions.push(ConfigAction::FontSizeChanged(self.edit_font_size));
+                // Just mark as changed, don't apply yet
                 self.has_changes = true;
             }
             ui.label("px");
@@ -289,7 +290,7 @@ impl ConfigPanel {
                 )
                 .changed()
             {
-                actions.push(ConfigAction::LineSpacingChanged(self.edit_line_spacing));
+                // Just mark as changed, don't apply yet
                 self.has_changes = true;
             }
         });
@@ -375,7 +376,6 @@ impl ConfigPanel {
                             let resp = ui.selectable_label(is_selected, "Default");
                             if resp.clicked() && !is_selected {
                                 self.edit_font_family.clear();
-                                actions.push(ConfigAction::FontFamilyChanged(String::new()));
                                 self.has_changes = true;
                             }
                             continue;
@@ -387,9 +387,6 @@ impl ConfigPanel {
                             let resp = ui.selectable_label(is_selected, label);
                             if resp.clicked() && !is_selected {
                                 self.edit_font_family = (*font_name).clone();
-                                actions.push(ConfigAction::FontFamilyChanged(
-                                    self.edit_font_family.clone(),
-                                ));
                                 self.has_changes = true;
                             }
                         }
@@ -419,7 +416,7 @@ impl ConfigPanel {
         &mut self,
         ui: &mut egui::Ui,
         actions: &mut Vec<ConfigAction>,
-        theme: &Theme,
+        _theme: &Theme,
     ) {
         ui.label(RichText::new("Appearance Settings").strong().size(14.0));
         ui.separator();
@@ -451,7 +448,6 @@ impl ConfigPanel {
                 .unwrap_or(false)
             {
                 self.editing_theme = None;
-                actions.push(ConfigAction::ThemeChanged(self.edit_theme.clone()));
                 self.has_changes = true;
             }
         });
@@ -476,7 +472,6 @@ impl ConfigPanel {
                     self.edit_theme = "dark".to_string();
                     self.editing_theme = None;
                     self.refresh_theme_list();
-                    actions.push(ConfigAction::ThemeChanged("dark".to_string()));
                     self.has_changes = true;
                 }
             }
@@ -526,7 +521,6 @@ impl ConfigPanel {
                 )
                 .changed()
             {
-                actions.push(ConfigAction::PaddingChanged(self.edit_padding));
                 self.has_changes = true;
             }
             ui.label("px");
@@ -543,7 +537,6 @@ impl ConfigPanel {
                 )
                 .changed()
             {
-                actions.push(ConfigAction::OpacityChanged(self.edit_opacity));
                 self.has_changes = true;
             }
         });
@@ -628,7 +621,6 @@ fn render_theme_editor(
                     }
                 }
                 *available_themes = themes;
-                actions.push(ConfigAction::ThemeChanged(edit_theme.clone()));
                 *has_changes = true;
             }
         }
@@ -787,9 +779,6 @@ impl ConfigPanel {
                 )
                 .changed()
             {
-                actions.push(ConfigAction::ScrollbackLinesChanged(
-                    self.edit_scrollback_lines,
-                ));
                 self.has_changes = true;
             }
         });
@@ -800,7 +789,6 @@ impl ConfigPanel {
                 .add(egui::Slider::new(&mut self.edit_scroll_speed, 1..=10).show_value(true))
                 .changed()
             {
-                actions.push(ConfigAction::ScrollSpeedChanged(self.edit_scroll_speed));
                 self.has_changes = true;
             }
         });
@@ -814,14 +802,12 @@ impl ConfigPanel {
             )
             .changed()
         {
-            actions.push(ConfigAction::RestoreSessionChanged(
-                self.edit_restore_session,
-            ));
             self.has_changes = true;
         }
 
         ui.separator();
 
+        // Debug overlay toggles immediately (no save needed)
         if ui
             .checkbox(&mut self.edit_debug_overlay, "Show debug overlay (F12)")
             .changed()
@@ -835,7 +821,6 @@ impl ConfigPanel {
             .checkbox(&mut self.edit_gpu_rendering, "GPU rendering")
             .changed()
         {
-            actions.push(ConfigAction::GpuRenderingChanged(self.edit_gpu_rendering));
             self.has_changes = true;
         }
     }
