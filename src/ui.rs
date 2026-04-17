@@ -614,20 +614,15 @@ impl TerminalRenderer {
                 );
             });
         }
-        if has_focus != self.ime_enabled {
-            ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(has_focus));
-            if has_focus {
-                ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(
-                    egui::IMEPurpose::Terminal,
-                ));
-            }
-            self.ime_enabled = has_focus;
-            if !has_focus {
-                self.last_ime_rect = None;
-            }
+        if !self.ime_enabled {
+            ctx.send_viewport_cmd(egui::ViewportCommand::IMEAllowed(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::IMEPurpose(
+                egui::IMEPurpose::Terminal,
+            ));
+            self.ime_enabled = true;
         }
 
-        if has_focus {
+        {
             let ime_rect_changed = self
                 .last_ime_rect
                 .map(|prev| prev != ime_rect)
