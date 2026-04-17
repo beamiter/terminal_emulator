@@ -3067,7 +3067,15 @@ impl eframe::App for TerminalApp {
             input_guard.extend(keyboard_input);
         }
 
-        // Step 5: 发送输入到 shell
+        // Step 4b: 添加鼠标点击导致的光标移动输入
+        {
+            if !self.renderer.cursor_move_input.is_empty() {
+                let mut input_guard = self.input_queue.lock();
+                input_guard.extend(&self.renderer.cursor_move_input);
+                self.renderer.cursor_move_input.clear();
+            }
+        }
+
         {
             let mut input_guard = self.input_queue.lock();
             if !input_guard.is_empty() {

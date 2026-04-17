@@ -293,6 +293,8 @@ pub struct TerminalRenderer {
     pub gpu_rendering: bool,
     /// wgpu render state for GPU-accelerated grid rendering
     pub wgpu_render_state: Option<egui_wgpu::RenderState>,
+    /// Pending cursor movement input (arrow keys) from mouse clicks
+    pub cursor_move_input: Vec<u8>,
 }
 
 impl TerminalRenderer {
@@ -330,6 +332,7 @@ impl TerminalRenderer {
             gpu_rendering: true,
             texture_cache: std::collections::HashMap::new(),
             wgpu_render_state: None,
+            cursor_move_input: Vec::new(),
         }
     }
 
@@ -738,9 +741,50 @@ impl TerminalRenderer {
             }
         }
 
-        // Single click: clear existing selection
-        if response.clicked() && !response.double_clicked() {
+        // Single click: move cursor to click position (when mouse reporting is disabled)
+        if response.clicked() && !response.double_clicked() && !self.dragging_scrollbar {
             terminal.selection = None;
+
+            if let Some(pos) = response.interact_pointer_pos() {
+                if pos.x < scrollbar_x && !terminal.is_mouse_enabled() {
+                    let clamped_x =
+                        (pos.x - content_rect.left()).clamp(0.0, content_rect.width().max(0.0));
+                    let clamped_y =
+                        (pos.y - content_rect.top()).clamp(0.0, content_rect.height().max(0.0));
+
+                    let click_col = if char_width > 0.0 {
+                        ((clamped_x / char_width) as usize).min(cols - 1)
+                    } else {
+                        0
+                    };
+                    let click_row = if line_height > 0.0 {
+                        ((clamped_y / line_height) as usize).min(rows - 1)
+                    } else {
+                        0
+                    };
+
+                    let (cursor_row, cursor_col) = terminal.get_cursor_pos();
+
+                    if click_row == cursor_row {
+                        let col_diff = click_col as isize - cursor_col as isize;
+
+                        if col_diff != 0 {
+                            self.cursor_move_input.clear();
+                            let app_cursor_keys = terminal.is_application_cursor_keys();
+                            let (right, left): (&[u8], &[u8]) = if app_cursor_keys {
+                                (b"\x1bOC", b"\x1bOD")
+                            } else {
+                                (b"\x1b[C", b"\x1b[D")
+                            };
+                            let arrow_seq = if col_diff > 0 { right } else { left };
+
+                            for _ in 0..col_diff.unsigned_abs() {
+                                self.cursor_move_input.extend_from_slice(arrow_seq);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Double-click: select word at cursor position
