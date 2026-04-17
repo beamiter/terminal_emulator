@@ -1136,8 +1136,9 @@ impl TerminalRenderer {
                 None => return false,
             };
             let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
-            atlas_w = gpu_res.atlas.atlas_width() as f32;
-            atlas_h = gpu_res.atlas.atlas_height() as f32;
+            let (aw, ah) = gpu_res.atlas.atlas_dimensions();
+            atlas_w = aw as f32;
+            atlas_h = ah as f32;
             font_cell_width = advance;
             font_cell_height = ascent - descent;
             let glyph_offset_x_adjust = ((target_cell_width - font_cell_width) * 0.5).max(0.0);

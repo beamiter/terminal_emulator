@@ -17,6 +17,7 @@ vte = "0.15.0"
 wgpu = "29.0.1"
 bytemuck = { version = "1", features = ["derive"] }
 ab_glyph = "0.2"
+fontdue = "0.9"
 winit = "0.30.13"
 tokio = { version = "1.36", features = ["full"] }
 unicode-width = "0.2"

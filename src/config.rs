@@ -14,6 +14,19 @@ const NERD_FONT_CANDIDATES: &[&str] = &[
     "FiraCode Nerd Font",
 ];
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FontBackendType {
+    Fontdue,
+    AbGlyph,
+}
+
+impl Default for FontBackendType {
+    fn default() -> Self {
+        FontBackendType::Fontdue
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollbarVisibility {
@@ -37,6 +50,9 @@ pub struct Config {
 
     #[serde(default = "default_font_weight")]
     pub font_weight: f32,
+
+    #[serde(default)]
+    pub font_backend: FontBackendType,
 
     #[serde(default = "default_padding")]
     pub padding: f32,
@@ -200,6 +216,7 @@ impl Default for Config {
             font_size: default_font_size(),
             font_family: default_font_family(),
             font_weight: default_font_weight(),
+            font_backend: FontBackendType::default(),
             padding: default_padding(),
             line_spacing: default_line_spacing(),
             scrollbar_visibility: ScrollbarVisibility::default(),

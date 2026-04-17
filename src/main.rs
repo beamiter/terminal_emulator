@@ -208,6 +208,41 @@ fn fontconfig_match_bold_file(_family: &str) -> Option<String> {
     None
 }
 
+fn create_font_backend(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    cfg: &config::Config,
+    font_bytes: &[u8],
+    bold_font_data: Option<&[u8]>,
+    fallback_font_data: &[Vec<u8>],
+    font_size_px: f32,
+) -> Box<dyn gpu::font_backend::FontBackend> {
+    match cfg.font_backend {
+        config::FontBackendType::Fontdue => {
+            Box::new(gpu::fontdue_backend::FontdueAtlas::new(
+                device,
+                queue,
+                font_bytes,
+                bold_font_data,
+                fallback_font_data,
+                font_size_px,
+                cfg.font_weight,
+            ))
+        }
+        config::FontBackendType::AbGlyph => {
+            Box::new(gpu::ab_glyph_backend::AbGlyphAtlas::new(
+                device,
+                queue,
+                font_bytes,
+                bold_font_data,
+                fallback_font_data,
+                font_size_px,
+                cfg.font_weight,
+            ))
+        }
+    }
+}
+
 fn load_first_matching_font(
     fonts: &mut egui::FontDefinitions,
     loaded_paths: &mut HashMap<String, String>,
@@ -412,20 +447,20 @@ fn configure_fonts_and_gpu(
 
     if let (Some(render_state), Some(font_bytes)) = (wgpu_render_state, mono_font_data) {
         let font_size_px = cfg.font_size * ctx.pixels_per_point();
-        let atlas = gpu::atlas::GlyphAtlas::new(
+        let atlas = create_font_backend(
             &render_state.device,
             &render_state.queue,
+            &cfg,
             &font_bytes,
             bold_font_data.as_deref(),
             &fallback_font_data,
             font_size_px,
-            cfg.font_weight,
         );
         let pipeline = gpu::pipeline::GridPipeline::new(
             &render_state.device,
             render_state.target_format,
-            &atlas.view,
-            &atlas.sampler,
+            &atlas.gpu_resources().0,
+            &atlas.gpu_resources().1,
         );
 
         let mut renderer = render_state.renderer.write();
@@ -1913,8 +1948,6 @@ impl TerminalApp {
                                 gpu_res.atlas.reset(
                                     &render_state.device,
                                     &render_state.queue,
-                                    font_size_px,
-                                    self.config.font_weight,
                                 );
                             }
                         }

@@ -1,18 +1,17 @@
-use super::atlas::GlyphAtlas;
+use super::font_backend::FontBackend;
 use super::instance::{CellInstance, GridUniforms};
 use super::pipeline::GridPipeline;
 use egui_wgpu::CallbackResources;
 
 /// GPU resources stored in egui_wgpu's CallbackResources (TypeMap).
 pub struct GpuResources {
-    pub atlas: GlyphAtlas,
+    pub atlas: Box<dyn FontBackend>,
     pub pipeline: GridPipeline,
-    /// Track atlas texture generation so we know when to rebuild the bind group
     atlas_gen: u64,
 }
 
 impl GpuResources {
-    pub fn new(atlas: GlyphAtlas, pipeline: GridPipeline) -> Self {
+    pub fn new(atlas: Box<dyn FontBackend>, pipeline: GridPipeline) -> Self {
         GpuResources {
             atlas,
             pipeline,
@@ -39,19 +38,16 @@ impl egui_wgpu::CallbackTrait for GridRenderCallback {
     ) -> Vec<wgpu::CommandBuffer> {
         let res = callback_resources.get_mut::<GpuResources>().unwrap();
 
-        // Upload atlas if dirty (rasterized new glyphs this frame)
-        let old_tex_size = (res.atlas.atlas_width(), res.atlas.atlas_height());
+        let old_tex_size = res.atlas.atlas_dimensions();
         res.atlas.ensure_uploaded(device, queue);
-        let new_tex_size = (res.atlas.atlas_width(), res.atlas.atlas_height());
+        let new_tex_size = res.atlas.atlas_dimensions();
 
-        // Rebuild bind group if atlas texture was recreated (resized or reset)
         if old_tex_size != new_tex_size || res.atlas.take_needs_rebind() {
             res.atlas_gen += 1;
-            res.pipeline
-                .rebuild_bind_group(device, &res.atlas.view, &res.atlas.sampler);
+            let (view, sampler) = res.atlas.gpu_resources();
+            res.pipeline.rebuild_bind_group(device, view, sampler);
         }
 
-        // Upload uniforms and instances
         res.pipeline.update_uniforms(queue, &self.uniforms);
         res.pipeline
             .update_instances(device, queue, &self.instances);

@@ -1,0 +1,101 @@
+/// UV region of a rasterized glyph inside the atlas texture.
+#[derive(Clone, Copy, Debug)]
+pub struct GlyphRegion {
+    pub u0: f32,
+    pub v0: f32,
+    pub u1: f32,
+    pub v1: f32,
+    pub width_px: f32,
+    pub height_px: f32,
+    pub bearing_x: f32,
+    pub bearing_y: f32,
+}
+
+/// Key for the glyph cache: character + style.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct AtlasGlyphKey {
+    pub ch: char,
+    pub bold: bool,
+}
+
+pub trait FontBackend: Send + Sync {
+    fn get_or_rasterize(&mut self, ch: char, bold: bool) -> GlyphRegion;
+    fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue);
+    fn font_metrics(&self) -> (f32, f32, f32);
+    fn ensure_uploaded(&mut self, device: &wgpu::Device, queue: &wgpu::Queue);
+    fn backend_name(&self) -> &'static str;
+    fn gpu_resources(&self) -> (&wgpu::TextureView, &wgpu::Sampler);
+    fn atlas_dimensions(&self) -> (u32, u32);
+    fn take_needs_rebind(&mut self) -> bool;
+}
+
+pub const GLYPH_PADDING: u32 = 1;
+pub const INITIAL_ATLAS_SIZE: u32 = 1024;
+pub const MAX_ATLAS_SIZE: u32 = 4096;
+
+pub fn create_gpu_resources(
+    device: &wgpu::Device,
+    width: u32,
+    height: u32,
+) -> (wgpu::Texture, wgpu::TextureView, wgpu::Sampler) {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("glyph_atlas"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::R8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+    let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("glyph_atlas_sampler"),
+        mag_filter: wgpu::FilterMode::Nearest,
+        min_filter: wgpu::FilterMode::Nearest,
+        ..Default::default()
+    });
+
+    (texture, view, sampler)
+}
+
+pub fn upload_bitmap(queue: &wgpu::Queue, texture: &wgpu::Texture, bitmap: &[u8], width: u32, height: u32) {
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        bitmap,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(width),
+            rows_per_image: Some(height),
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+}
+
+pub fn empty_glyph_region() -> GlyphRegion {
+    GlyphRegion {
+        u0: 0.0,
+        v0: 0.0,
+        u1: 0.0,
+        v1: 0.0,
+        width_px: 0.0,
+        height_px: 0.0,
+        bearing_x: 0.0,
+        bearing_y: 0.0,
+    }
+}
