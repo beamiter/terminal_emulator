@@ -1252,14 +1252,14 @@ impl TerminalRenderer {
                     let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
                         let region = gpu_res.atlas.get_or_rasterize(cell.character, bold);
                         if region.width_px > 0.0 && region.height_px > 0.0 {
-                            // Use font bearing for glyph positioning within cell (physical pixels)
+                            // Round glyph offset to integer pixels for crisp rendering with Nearest filtering
                             (
                                 region.u0,
                                 region.v0,
                                 region.u1,
                                 region.v1,
-                                region.bearing_x + glyph_offset_x_adjust,
-                                region.bearing_y + glyph_offset_y_adjust,
+                                (region.bearing_x + glyph_offset_x_adjust).round(),
+                                (region.bearing_y + glyph_offset_y_adjust).round(),
                             )
                         } else {
                             (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)

@@ -296,7 +296,7 @@ impl GlyphAtlas {
                 let py = by + y;
                 if px < self.width && py < self.height {
                     let boosted_alpha = (alpha * weight_boost).min(1.0);
-                    self.bitmap[(py * self.width + px) as usize] = (boosted_alpha * 255.0) as u8;
+                    self.bitmap[(py * self.width + px) as usize] = (boosted_alpha * 255.0 + 0.5) as u8;
                 }
             });
 

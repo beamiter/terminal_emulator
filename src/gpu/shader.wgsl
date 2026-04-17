@@ -110,19 +110,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Composite glyph foreground using atlas alpha
     if has_glyph {
+        // Round pixel position to integer for crisp sampling with Nearest filter
+        let px_rounded = round(in.cell_px_pos);
+
         // Glyph size in physical pixels (derived from atlas UV extent)
         let glyph_size = (in.glyph_uv1 - in.glyph_uv0) * vec2<f32>(u.atlas_width, u.atlas_height);
 
         // Compute atlas UV from pixel position relative to glyph origin
-        let rel = in.cell_px_pos - in.glyph_offset;
+        let rel = px_rounded - in.glyph_offset;
         let t = clamp(rel / max(glyph_size, vec2<f32>(1.0, 1.0)), vec2<f32>(0.0), vec2<f32>(1.0));
         let uv = in.glyph_uv0 + t * (in.glyph_uv1 - in.glyph_uv0);
         let alpha = textureSample(atlas_texture, atlas_sampler, uv).r;
 
+        // Gamma correction for smoother anti-aliased edges (perceptually correct blending)
+        let alpha_corrected = pow(alpha, 0.65);
+
         // Only apply glyph where pixel falls within the glyph area
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)
                       * step(rel.x, glyph_size.x) * step(rel.y, glyph_size.y);
-        color = mix(color, vec4<f32>(in.fg_color.rgb, 1.0), alpha * in_bounds);
+        color = mix(color, vec4<f32>(in.fg_color.rgb, 1.0), alpha_corrected * in_bounds);
     }
 
     // Underline: 1-2px line at bottom of cell
