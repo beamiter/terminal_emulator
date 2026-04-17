@@ -31,7 +31,7 @@ impl SessionManager {
         }
     }
 
-    /// 创建新会话并添加到管理器，继承当前工作目录
+    /// 创建新会话并添加到当前活跃会话的右侧，继承当前工作目录
     pub fn new_session(
         &mut self,
         name: Option<String>,
@@ -40,8 +40,8 @@ impl SessionManager {
         rows: usize,
         scrollback_lines: usize,
     ) -> usize {
-        let index = self.sessions.len();
-        let name = name.unwrap_or_else(|| format!("Session {}", index + 1));
+        let insert_index = self.active_index + 1;
+        let name = name.unwrap_or_else(|| format!("Session {}", self.sessions.len() + 1));
         let tags = tags.unwrap_or_default();
 
         // 从当前活跃会话的 shell 进程获取工作目录
@@ -61,12 +61,12 @@ impl SessionManager {
                 terminal.set_max_scrollback(scrollback_lines);
                 let terminal = Arc::new(ParkingMutex::new(terminal));
                 let session = Session::new(name, tags, terminal, shell);
-                self.sessions.push(session);
-                index
+                self.sessions.insert(insert_index, session);
+                insert_index
             }
             Err(e) => {
                 eprintln!("Failed to create new session: {}", e);
-                index
+                self.active_index
             }
         }
     }
