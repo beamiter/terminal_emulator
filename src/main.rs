@@ -2972,9 +2972,9 @@ impl eframe::App for TerminalApp {
         }
 
         // Step 4: 处理普通键盘输入
-        // 当搜索面板打开时，不处理普通键盘输入（搜索面板会处理输入）
+        // 当搜索面板或配置面板打开时，不处理普通键盘输入（面板会处理输入）
         let mut keyboard_input = Vec::new();
-        if !self.search_state.is_open {
+        if !self.search_state.is_open && !self.config_panel.is_open {
             let (
                 keyboard_enhancement_flags,
                 report_all_keys_mode,
