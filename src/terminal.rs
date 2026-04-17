@@ -2183,17 +2183,35 @@ impl TerminalState {
             return self.grid.to_vec();
         }
 
-        // Build view from scrollback + current grid
-        let mut result = Vec::new();
+        let blank_cell = self.create_blank_cell();
 
-        // Show lines from scrollback (if scroll_offset < scrollback.len())
-        if self.scroll_offset > 0 && !self.scrollback.is_empty() {
-            let start_idx = self.scrollback.len().saturating_sub(self.scroll_offset);
-            for i in start_idx..self.scrollback.len() {
-                if result.len() < rows {
-                    result.push(self.normalize_line_width(self.scrollback[i].cells.clone(), cols));
-                }
-            }
+        // Lazy reflow: only reflow the visible scrollback window.
+        // Collect enough raw lines to produce scroll_offset display rows.
+        // Walk back from the end to find the starting raw index, and
+        // extend further back if we land mid-logical-line.
+        let mut start_idx = self.scrollback.len().saturating_sub(self.scroll_offset + rows);
+        // Ensure we start at the beginning of a logical line
+        while start_idx > 0 && self.scrollback[start_idx - 1].is_wrapped {
+            start_idx -= 1;
+        }
+        let end_idx = self.scrollback.len();
+        let to_reflow: Vec<ScrollbackLine> = self.scrollback
+            .iter()
+            .skip(start_idx)
+            .take(end_idx - start_idx)
+            .cloned()
+            .collect();
+
+        let reflowed = Self::reflow_lines(&to_reflow, cols, &blank_cell);
+
+        // Take the last scroll_offset + rows from reflowed
+        let skip = reflowed.len().saturating_sub(self.scroll_offset + rows);
+        let visible_start = skip + (reflowed.len() - skip).saturating_sub(self.scroll_offset);
+        let mut result: Vec<Vec<TerminalCell>> = reflowed[visible_start..].iter().map(|l| l.cells.clone()).collect();
+
+        // Ensure we don't have more than grid rows from scrollback
+        if result.len() > rows {
+            result.truncate(rows);
         }
 
         // Fill remaining rows with current grid
@@ -2509,28 +2527,24 @@ impl TerminalState {
         &cells[..end]
     }
 
-    fn reflow_scrollback(&mut self, new_cols: usize, blank_cell: &TerminalCell) {
-        if self.scrollback.is_empty() {
-            return;
-        }
-
-        let mut new_scrollback: VecDeque<ScrollbackLine> = VecDeque::new();
-        let len = self.scrollback.len();
+    fn reflow_lines(lines: &[ScrollbackLine], new_cols: usize, blank_cell: &TerminalCell) -> Vec<ScrollbackLine> {
+        let mut result = Vec::new();
+        let len = lines.len();
         let mut i = 0;
 
         while i < len {
             let mut logical_line: Vec<TerminalCell> = Vec::new();
-            logical_line.extend_from_slice(Self::strip_trailing_blanks(&self.scrollback[i].cells));
-            while i < len && self.scrollback[i].is_wrapped {
+            logical_line.extend_from_slice(Self::strip_trailing_blanks(&lines[i].cells));
+            while i < len && lines[i].is_wrapped {
                 i += 1;
                 if i < len {
-                    logical_line.extend_from_slice(Self::strip_trailing_blanks(&self.scrollback[i].cells));
+                    logical_line.extend_from_slice(Self::strip_trailing_blanks(&lines[i].cells));
                 }
             }
             i += 1;
 
             if logical_line.is_empty() {
-                new_scrollback.push_back(ScrollbackLine {
+                result.push(ScrollbackLine {
                     cells: vec![blank_cell.clone(); new_cols],
                     is_wrapped: false,
                 });
@@ -2544,18 +2558,14 @@ impl TerminalState {
                 if cells.len() < new_cols {
                     cells.resize(new_cols, blank_cell.clone());
                 }
-                new_scrollback.push_back(ScrollbackLine {
+                result.push(ScrollbackLine {
                     cells,
                     is_wrapped: ci + 1 < num_chunks,
                 });
             }
         }
 
-        while new_scrollback.len() > self.max_scrollback {
-            new_scrollback.pop_front();
-        }
-
-        self.scrollback = new_scrollback;
+        result
     }
 
     pub fn on_resize(&mut self, cols: usize, rows: usize) {
@@ -2569,66 +2579,11 @@ impl TerminalState {
 
         let blank_cell = self.create_blank_cell();
 
-        if !self.use_alt_buffer {
-            // Determine last non-empty grid row to push
-            let last_content_row = {
-                let mut last = self.cursor_row;
-                for row in 0..old_rows {
-                    let cells = self.grid.get_row(row);
-                    if !cells.iter().all(|c| c.character == ' ' && c.background == Color::Default) {
-                        last = last.max(row);
-                    }
-                }
-                last
-            };
-
-            // Push grid rows (up to last content row) to scrollback
-            let grid_rows_pushed = last_content_row + 1;
-            for row in 0..grid_rows_pushed {
-                let cells = self.grid.get_row(row);
-                let is_wrapped = self.grid.row_wrapped[row];
-                self.scrollback.push_back(ScrollbackLine {
-                    cells,
-                    is_wrapped,
-                });
-            }
-
-            // Reflow entire scrollback
-            self.reflow_scrollback(cols, &blank_cell);
-
-            // Pop lines from scrollback back to grid
-            let lines_to_pop = rows.min(self.scrollback.len());
-            let mut grid_lines: Vec<ScrollbackLine> = Vec::with_capacity(lines_to_pop);
-            for _ in 0..lines_to_pop {
-                if let Some(line) = self.scrollback.pop_back() {
-                    grid_lines.push(line);
-                }
-            }
-            grid_lines.reverse();
-
-            // Create new grid
-            self.grid = TerminalGrid::new(rows, cols);
-
-            // Fill grid from the lines we popped
-            for (row_idx, line) in grid_lines.iter().enumerate() {
-                self.grid.set_row(row_idx, line.cells.clone());
-                self.grid.row_wrapped[row_idx] = line.is_wrapped;
-            }
-
-            // Set cursor to end of content
-            let content_rows = grid_lines.len();
-            self.cursor_row = if content_rows > 0 {
-                (content_rows - 1).min(rows.saturating_sub(1))
-            } else {
-                0
-            };
-        } else {
-            self.grid.resize(rows, cols, blank_cell.clone());
-        }
-
+        self.grid.resize(rows, cols, blank_cell.clone());
         self.alt_grid.resize(rows, cols, blank_cell.clone());
 
         self.scroll_offset = 0;
+        self.cursor_row = self.cursor_row.min(rows.saturating_sub(1));
         self.cursor_col = self.cursor_col.min(cols.saturating_sub(1));
         self.saved_cursor_row = self.saved_cursor_row.min(rows.saturating_sub(1));
         self.saved_cursor_col = self.saved_cursor_col.min(cols.saturating_sub(1));
