@@ -1601,21 +1601,32 @@ impl TerminalRenderer {
             keyboard_enhancement_flags
         };
 
+        // Collect Text events to detect Caps Lock state.
+        // egui doesn't expose Caps Lock in Modifiers, but Text events reflect
+        // the actual character produced by the OS (including Caps Lock).
+        let mut text_from_events: Option<String> = None;
+        if report_all_keys {
+            for evt in &events {
+                if let egui::Event::Text(t) = evt {
+                    if !t.is_empty() && t.as_bytes()[0] >= 32 {
+                        text_from_events = Some(t.clone());
+                        break;
+                    }
+                }
+            }
+        }
+
         for event in events {
             match event {
                 egui::Event::Text(text) => {
                     if suppress_text_events {
                         continue;
                     }
-                    // 不处理特殊按键对应的文本事件
                     if !text.is_empty() && text.as_bytes()[0] < 32 {
                         continue;
                     }
                     // When report_all_keys is active, letters and digits are handled
                     // by Key events via the Kitty keyboard protocol encoding.
-                    // Only skip Text events for characters that kitty_text_key_code
-                    // can encode (a-z, 0-9), so special characters like !@#$% still
-                    // get through via Text events.
                     if report_all_keys && text.len() == 1 {
                         let ch = text.as_bytes()[0];
                         if ch.is_ascii_alphanumeric() {
@@ -1640,8 +1651,19 @@ impl TerminalRenderer {
                         }
                     }
 
+                    // Detect Caps Lock: if Text event has an uppercase letter but
+                    // Shift is not pressed, Caps Lock must be active.
+                    let caps_lock = text_from_events.as_ref().is_some_and(|t| {
+                        t.len() == 1 && t.as_bytes()[0].is_ascii_uppercase() && !modifiers.shift
+                    });
+                    let effective_modifiers = if caps_lock {
+                        egui::Modifiers { shift: true, ..modifiers }
+                    } else {
+                        modifiers
+                    };
+
                     if let Some(encoded) =
-                        kitty_encode_key_event(key, modifiers, effective_keyboard_flags)
+                        kitty_encode_key_event(key, effective_modifiers, effective_keyboard_flags)
                     {
                         input.extend(encoded.as_bytes());
                         continue;
@@ -1649,7 +1671,7 @@ impl TerminalRenderer {
 
                     if let Some(encoded) = xterm_encode_modify_other_keys(
                         key,
-                        modifiers,
+                        effective_modifiers,
                         xterm_modify_other_keys,
                         xterm_format_other_keys,
                         report_all_keys_mode,
@@ -1659,7 +1681,7 @@ impl TerminalRenderer {
                     }
 
                     // Handle normal key sequences
-                    let seq = key_to_terminal_sequence(key, modifiers, application_cursor_keys);
+                    let seq = key_to_terminal_sequence(key, effective_modifiers, application_cursor_keys);
 
                     if let Some(s) = seq {
                         input.extend(s.as_bytes());
