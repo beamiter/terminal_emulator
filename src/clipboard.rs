@@ -3,6 +3,7 @@ mod unix_clipboard {
     use anyhow::Result;
     use std::io::Write;
     use std::process::{Command, Stdio};
+    use std::time::Duration;
 
     pub enum ClipboardContent {
         Text(String),
@@ -24,13 +25,40 @@ mod unix_clipboard {
         "STRING",
     ];
 
+    /// Execute command with timeout to prevent hanging on slow clipboard operations
+    fn command_output_with_timeout(
+        program: &str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> Option<Vec<u8>> {
+        use std::sync::mpsc;
+        use std::thread;
+
+        let (tx, rx) = mpsc::channel();
+        let program = program.to_string();
+        let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+
+        thread::spawn(move || {
+            let result = Command::new(&program)
+                .args(&args)
+                .output()
+                .ok()
+                .and_then(|output| {
+                    if output.status.success() {
+                        Some(output.stdout)
+                    } else {
+                        None
+                    }
+                });
+            let _ = tx.send(result);
+        });
+
+        rx.recv_timeout(timeout).ok().flatten()
+    }
+
     fn command_output(program: &str, args: &[&str]) -> Option<Vec<u8>> {
-        let output = Command::new(program).args(args).output().ok()?;
-        if output.status.success() {
-            Some(output.stdout)
-        } else {
-            None
-        }
+        // Use 2 second timeout for clipboard operations
+        command_output_with_timeout(program, args, Duration::from_secs(2))
     }
 
     fn command_with_stdin(program: &str, args: &[&str], input: &[u8]) -> Option<()> {
@@ -136,27 +164,25 @@ mod unix_clipboard {
         pub fn paste_contents(&self) -> Result<ClipboardContent> {
             if detect_wayland_clipboard() {
                 if let Some(types) = wl_list_types() {
-                    for mime_type in IMAGE_MIME_TYPES {
-                        if types
-                            .iter()
-                            .any(|entry| entry.eq_ignore_ascii_case(mime_type))
+                    // Find the first available image type and try only that one
+                    if let Some(mime_type) = IMAGE_MIME_TYPES
+                        .iter()
+                        .find(|&&mime| types.iter().any(|entry| entry.eq_ignore_ascii_case(mime)))
+                    {
+                        if let Some(bytes) =
+                            read_wayland_type(mime_type).filter(|bytes| !bytes.is_empty())
                         {
-                            if let Some(bytes) =
-                                read_wayland_type(mime_type).filter(|bytes| !bytes.is_empty())
-                            {
-                                return Ok(ClipboardContent::Binary(bytes));
-                            }
+                            return Ok(ClipboardContent::Binary(bytes));
                         }
                     }
 
-                    for mime_type in TEXT_MIME_TYPES {
-                        if types
-                            .iter()
-                            .any(|entry| entry.eq_ignore_ascii_case(mime_type))
-                        {
-                            if let Some(bytes) = read_wayland_type(mime_type) {
-                                return Ok(read_text_from_bytes(bytes));
-                            }
+                    // Find the first available text type
+                    if let Some(mime_type) = TEXT_MIME_TYPES
+                        .iter()
+                        .find(|&&mime| types.iter().any(|entry| entry.eq_ignore_ascii_case(mime)))
+                    {
+                        if let Some(bytes) = read_wayland_type(mime_type) {
+                            return Ok(read_text_from_bytes(bytes));
                         }
                     }
                 }
@@ -167,27 +193,25 @@ mod unix_clipboard {
             }
 
             if let Some(types) = xclip_list_types() {
-                for mime_type in IMAGE_MIME_TYPES {
-                    if types
-                        .iter()
-                        .any(|entry| entry.eq_ignore_ascii_case(mime_type))
+                // Find the first available image type and try only that one
+                if let Some(mime_type) = IMAGE_MIME_TYPES
+                    .iter()
+                    .find(|&&mime| types.iter().any(|entry| entry.eq_ignore_ascii_case(mime)))
+                {
+                    if let Some(bytes) =
+                        read_xclip_type(mime_type).filter(|bytes| !bytes.is_empty())
                     {
-                        if let Some(bytes) =
-                            read_xclip_type(mime_type).filter(|bytes| !bytes.is_empty())
-                        {
-                            return Ok(ClipboardContent::Binary(bytes));
-                        }
+                        return Ok(ClipboardContent::Binary(bytes));
                     }
                 }
 
-                for mime_type in TEXT_MIME_TYPES {
-                    if types
-                        .iter()
-                        .any(|entry| entry.eq_ignore_ascii_case(mime_type))
-                    {
-                        if let Some(bytes) = read_xclip_type(mime_type) {
-                            return Ok(read_text_from_bytes(bytes));
-                        }
+                // Find the first available text type
+                if let Some(mime_type) = TEXT_MIME_TYPES
+                    .iter()
+                    .find(|&&mime| types.iter().any(|entry| entry.eq_ignore_ascii_case(mime)))
+                {
+                    if let Some(bytes) = read_xclip_type(mime_type) {
+                        return Ok(read_text_from_bytes(bytes));
                     }
                 }
             }
