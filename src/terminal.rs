@@ -2024,6 +2024,13 @@ impl TerminalState {
                     );
                     self.use_alt_buffer = false;
                     self.modes.remove(&1049);
+
+                    // Mark all rows dirty after grid swap to force full re-render
+                    self.grid_version += 1;
+                    for row_ver in &mut self.row_versions {
+                        *row_ver = self.grid_version;
+                    }
+                    self.dirty_region.mark_all(self.grid.rows());
                 }
             }
             7 => {

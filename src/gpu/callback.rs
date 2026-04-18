@@ -2,6 +2,7 @@ use super::font_backend::FontBackend;
 use super::instance::{CellInstance, GridUniforms};
 use super::pipeline::GridPipeline;
 use egui_wgpu::CallbackResources;
+use std::sync::Arc;
 
 /// GPU resources stored in egui_wgpu's CallbackResources (TypeMap).
 pub struct GpuResources {
@@ -22,7 +23,7 @@ impl GpuResources {
 
 /// Background pass callback: shares instance data, uploads instances + atlas + uniforms.
 pub struct GridBackgroundCallback {
-    pub instances: Vec<CellInstance>,
+    pub instances: Arc<Vec<CellInstance>>,
     pub uniforms: GridUniforms,
     pub instance_count: u32,
 }

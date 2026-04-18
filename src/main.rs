@@ -561,6 +561,9 @@ struct TerminalApp {
     // Link detection
     link_detector: link::LinkDetector,
     hovered_link: Option<link::Link>,
+    cached_links: Vec<link::Link>,
+    cached_links_grid_version: u64,
+    cached_links_scroll_offset: usize,
     // Keybindings
     keybindings: keybindings::KeyBindings,
     // Command palette
@@ -1022,6 +1025,9 @@ impl TerminalApp {
             search_state: search::SearchState::new(),
             link_detector: link::LinkDetector::new(link::LinkDetectionConfig::default()),
             hovered_link: None,
+            cached_links: Vec::new(),
+            cached_links_grid_version: 0,
+            cached_links_scroll_offset: 0,
             keybindings,
             command_palette: command_palette::CommandPalette::new(),
             force_resize_session: false,
@@ -1892,11 +1898,19 @@ impl TerminalApp {
                     let session = self.session_manager.get_active_session_mut();
                     let mut terminal_guard = session.terminal.lock();
 
-                    // 获取链接列表用于渲染
-                    let visible_cells = terminal_guard.get_visible_cells();
-                    let links = self
-                        .link_detector
-                        .detect_links_in_visible_cells(&visible_cells);
+                    // 获取链接列表用于渲染（使用缓存）
+                    let grid_version = terminal_guard.get_grid_version();
+                    let scroll_offset = terminal_guard.scroll_offset;
+
+                    if grid_version != self.cached_links_grid_version
+                        || scroll_offset != self.cached_links_scroll_offset
+                    {
+                        let visible_cells = terminal_guard.get_visible_cells();
+                        self.cached_links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
+                        self.cached_links_grid_version = grid_version;
+                        self.cached_links_scroll_offset = scroll_offset;
+                    }
+                    let links = self.cached_links.clone();
 
                     // 在渲染终端之前读取滚轮值和 Ctrl 键状态
                     let ctrl_pressed_render = ui.input(|i| i.modifiers.ctrl);
@@ -3008,22 +3022,17 @@ impl eframe::App for TerminalApp {
         }
 
         let has_keyboard_input = !keyboard_input.is_empty();
-        if has_keyboard_input {
-            let mut input_guard = self.input_queue.lock();
-            input_guard.extend(keyboard_input);
-        }
+        let has_cursor_move_input = !self.renderer.cursor_move_input.is_empty();
 
-        // Step 4b: 添加鼠标点击导致的光标移动输入
         {
-            if !self.renderer.cursor_move_input.is_empty() {
-                let mut input_guard = self.input_queue.lock();
+            let mut input_guard = self.input_queue.lock();
+            if has_keyboard_input {
+                input_guard.extend(keyboard_input);
+            }
+            if has_cursor_move_input {
                 input_guard.extend(&self.renderer.cursor_move_input);
                 self.renderer.cursor_move_input.clear();
             }
-        }
-
-        {
-            let mut input_guard = self.input_queue.lock();
             if !input_guard.is_empty() {
                 let _ = session.shell.write(&input_guard);
                 input_guard.clear();
@@ -3322,10 +3331,18 @@ impl eframe::App for TerminalApp {
         // Step 12: 链接检测和交互
         {
             let terminal = session.terminal.lock();
-            let visible_cells = terminal.get_visible_cells();
-            let links = self
-                .link_detector
-                .detect_links_in_visible_cells(&visible_cells);
+            let grid_version = terminal.get_grid_version();
+            let scroll_offset = terminal.scroll_offset;
+
+            if grid_version != self.cached_links_grid_version
+                || scroll_offset != self.cached_links_scroll_offset
+            {
+                let visible_cells = terminal.get_visible_cells();
+                self.cached_links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
+                self.cached_links_grid_version = grid_version;
+                self.cached_links_scroll_offset = scroll_offset;
+            }
+            let links = self.cached_links.clone();
             drop(terminal);
 
             // 检测悬停的链接

@@ -302,7 +302,7 @@ pub struct TerminalRenderer {
     pub cursor_move_input: Vec<u8>,
 
     // Dirty-region rendering cache
-    cached_instances: Vec<gpu::instance::CellInstance>,
+    cached_instances: std::sync::Arc<Vec<gpu::instance::CellInstance>>,
     row_instance_offsets: Vec<usize>,
     row_instance_counts: Vec<usize>,
     last_rendered_grid_version: u64,
@@ -312,6 +312,8 @@ pub struct TerminalRenderer {
     last_rendered_hovered_link: Option<crate::link::Link>,
     last_rendered_cols: usize,
     last_rendered_rows: usize,
+    last_rendered_terminal_ptr: usize, // Track which terminal to detect session switches
+    dirty_rows_buffer: Vec<bool>,
 }
 
 impl TerminalRenderer {
@@ -351,7 +353,7 @@ impl TerminalRenderer {
             wgpu_render_state: None,
             cursor_move_input: Vec::new(),
             // Dirty-region rendering cache (initialized empty)
-            cached_instances: Vec::new(),
+            cached_instances: std::sync::Arc::new(Vec::new()),
             row_instance_offsets: Vec::new(),
             row_instance_counts: Vec::new(),
             last_rendered_grid_version: 0,
@@ -361,6 +363,8 @@ impl TerminalRenderer {
             last_rendered_hovered_link: None,
             last_rendered_cols: 0,
             last_rendered_rows: 0,
+            last_rendered_terminal_ptr: 0,
+            dirty_rows_buffer: Vec::new(),
         }
     }
 
@@ -1159,8 +1163,7 @@ impl TerminalRenderer {
         }
 
         // Clear dirty region after rendering
-        // NOTE: P0 dirty rectangle optimization temporarily disabled
-        // terminal.dirty_region.clear();
+        terminal.dirty_region.clear();
 
         response
     }
@@ -1193,9 +1196,10 @@ impl TerminalRenderer {
         let target_cell_height = line_height * ppp;
 
         // --- Dirty detection: determine which rows need rebuild ---
+        let terminal_ptr = terminal as *const _ as usize;
         let current_grid_version = terminal.get_grid_version();
         let current_scroll_offset = terminal.scroll_offset;
-        let current_selection = terminal.selection.clone();
+        let current_selection = terminal.selection;
         let search_hash = {
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -1205,12 +1209,19 @@ impl TerminalRenderer {
             h.finish()
         };
 
+        // Detect major screen changes (e.g., alternate screen switch)
+        let grid_version_jumped = current_grid_version > self.last_rendered_grid_version + rows as u64;
+
         let need_full_rebuild = self.cached_instances.is_empty()
+            || self.last_rendered_terminal_ptr != terminal_ptr
             || self.last_rendered_rows != rows
             || self.last_rendered_cols != cols
-            || self.last_rendered_scroll_offset != current_scroll_offset;
+            || self.last_rendered_scroll_offset != current_scroll_offset
+            || grid_version_jumped;
 
-        let mut dirty_rows: Vec<bool> = vec![false; rows];
+        let mut dirty_rows = std::mem::take(&mut self.dirty_rows_buffer);
+        dirty_rows.clear();
+        dirty_rows.resize(rows, false);
 
         if need_full_rebuild {
             dirty_rows.fill(true);
@@ -1279,15 +1290,16 @@ impl TerminalRenderer {
 
                 if need_full_rebuild {
                     // Full rebuild: clear and rebuild all
-                    self.cached_instances.clear();
+                    let instances = std::sync::Arc::make_mut(&mut self.cached_instances);
+                    instances.clear();
                     self.row_instance_offsets.clear();
                     self.row_instance_counts.clear();
-                    self.cached_instances.reserve(rows * cols);
+                    instances.reserve(rows * cols);
 
                     for row_idx in 0..rows {
-                        let offset = self.cached_instances.len();
+                        let offset = instances.len();
                         Self::build_row_instances(
-                            &mut self.cached_instances,
+                            instances,
                             gpu_res,
                             grid,
                             terminal,
@@ -1304,7 +1316,7 @@ impl TerminalRenderer {
                             row_idx,
                             cols,
                         );
-                        let count = self.cached_instances.len() - offset;
+                        let count = instances.len() - offset;
                         self.row_instance_offsets.push(offset);
                         self.row_instance_counts.push(count);
                     }
@@ -1347,20 +1359,21 @@ impl TerminalRenderer {
 
                         // Patch in-place
                         let offset = self.row_instance_offsets[row_idx];
-                        self.cached_instances[offset..offset + old_count]
-                            .copy_from_slice(&row_instances);
+                        let instances = std::sync::Arc::make_mut(&mut self.cached_instances);
+                        instances[offset..offset + old_count].copy_from_slice(&row_instances);
                     }
 
                     if needs_relayout {
                         // Rebuild all from scratch
-                        self.cached_instances.clear();
+                        let instances = std::sync::Arc::make_mut(&mut self.cached_instances);
+                        instances.clear();
                         self.row_instance_offsets.clear();
                         self.row_instance_counts.clear();
-                        self.cached_instances.reserve(rows * cols);
+                        instances.reserve(rows * cols);
                         for row_idx in 0..rows {
-                            let offset = self.cached_instances.len();
+                            let offset = instances.len();
                             Self::build_row_instances(
-                                &mut self.cached_instances,
+                                instances,
                                 gpu_res,
                                 grid,
                                 terminal,
@@ -1377,7 +1390,7 @@ impl TerminalRenderer {
                                 row_idx,
                                 cols,
                             );
-                            let count = self.cached_instances.len() - offset;
+                            let count = instances.len() - offset;
                             self.row_instance_offsets.push(offset);
                             self.row_instance_counts.push(count);
                         }
@@ -1390,6 +1403,7 @@ impl TerminalRenderer {
         }
 
         // Update tracking state
+        self.last_rendered_terminal_ptr = terminal_ptr;
         self.last_rendered_grid_version = current_grid_version;
         self.last_rendered_scroll_offset = current_scroll_offset;
         self.last_rendered_selection = current_selection;
@@ -1449,6 +1463,8 @@ impl TerminalRenderer {
             content_rect,
             foreground_callback,
         ));
+
+        self.dirty_rows_buffer = dirty_rows;
         true
     }
 
