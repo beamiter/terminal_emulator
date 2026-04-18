@@ -2026,7 +2026,8 @@ impl TerminalState {
                     self.modes.remove(&1049);
 
                     // Mark all rows dirty after grid swap to force full re-render
-                    self.grid_version += 1;
+                    // Increment by rows+1 to trigger grid_version_jumped in ui.rs
+                    self.grid_version += self.grid.rows() as u64 + 1;
                     for row_ver in &mut self.row_versions {
                         *row_ver = self.grid_version;
                     }
