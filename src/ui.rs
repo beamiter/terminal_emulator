@@ -865,6 +865,7 @@ impl TerminalRenderer {
                         0
                     };
                     terminal.start_selection((row, col));
+                    ui.ctx().request_repaint(); // Force repaint to show selection
                 }
             }
         }
@@ -890,6 +891,7 @@ impl TerminalRenderer {
                         0
                     };
                     terminal.update_selection((row, col));
+                    ui.ctx().request_repaint(); // Force repaint to show selection update
                 }
             }
         }
@@ -1238,6 +1240,11 @@ impl TerminalRenderer {
             if self.last_rendered_selection != current_selection {
                 // Mark rows affected by old and new selection
                 Self::mark_selection_rows(&self.last_rendered_selection, rows, &mut dirty_rows);
+                Self::mark_selection_rows(&current_selection, rows, &mut dirty_rows);
+            }
+
+            // Also always mark current selection rows during drag (workaround for selection rendering issue)
+            if current_selection.is_some() {
                 Self::mark_selection_rows(&current_selection, rows, &mut dirty_rows);
             }
 
