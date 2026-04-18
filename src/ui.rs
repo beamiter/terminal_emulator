@@ -3,6 +3,11 @@ use crate::gpu;
 use crate::terminal::TerminalState;
 use egui::{Color32, FontId, Response, Ui, Vec2};
 
+/// Quantize to 1/3 pixel increments for subpixel rendering cache coherence.
+fn quantize_subpixel(v: f32) -> f32 {
+    (v * 3.0).round() / 3.0
+}
+
 fn resolve_foreground_color(
     color_value: crate::terminal::Color,
     theme: &crate::theme::Theme,
@@ -295,6 +300,18 @@ pub struct TerminalRenderer {
     pub wgpu_render_state: Option<egui_wgpu::RenderState>,
     /// Pending cursor movement input (arrow keys) from mouse clicks
     pub cursor_move_input: Vec<u8>,
+
+    // Dirty-region rendering cache
+    cached_instances: Vec<gpu::instance::CellInstance>,
+    row_instance_offsets: Vec<usize>,
+    row_instance_counts: Vec<usize>,
+    last_rendered_grid_version: u64,
+    last_rendered_scroll_offset: usize,
+    last_rendered_selection: Option<crate::terminal::Selection>,
+    last_rendered_search_hash: u64,
+    last_rendered_hovered_link: Option<crate::link::Link>,
+    last_rendered_cols: usize,
+    last_rendered_rows: usize,
 }
 
 impl TerminalRenderer {
@@ -333,6 +350,17 @@ impl TerminalRenderer {
             texture_cache: std::collections::HashMap::new(),
             wgpu_render_state: None,
             cursor_move_input: Vec::new(),
+            // Dirty-region rendering cache (initialized empty)
+            cached_instances: Vec::new(),
+            row_instance_offsets: Vec::new(),
+            row_instance_counts: Vec::new(),
+            last_rendered_grid_version: 0,
+            last_rendered_scroll_offset: 0,
+            last_rendered_selection: None,
+            last_rendered_search_hash: 0,
+            last_rendered_hovered_link: None,
+            last_rendered_cols: 0,
+            last_rendered_rows: 0,
         }
     }
 
@@ -1164,183 +1192,225 @@ impl TerminalRenderer {
         let target_cell_width = char_width * ppp;
         let target_cell_height = line_height * ppp;
 
-        // Build instance data and rasterize new glyphs via atlas
-        let mut instances = Vec::with_capacity(rows * cols);
-        let mut atlas_w = 0.0;
-        let mut atlas_h = 0.0;
-        let mut font_cell_width = target_cell_width;
-        let mut font_cell_height = target_cell_height;
-        {
-            let mut renderer = render_state.renderer.write();
-            let gpu_res = match renderer
-                .callback_resources
-                .get_mut::<gpu::callback::GpuResources>()
-            {
-                Some(r) => r,
-                None => return false,
-            };
-            let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
-            let (aw, ah) = gpu_res.atlas.atlas_dimensions();
-            atlas_w = aw as f32;
-            atlas_h = ah as f32;
-            font_cell_width = advance;
-            font_cell_height = ascent - descent;
-            let glyph_offset_x_adjust = ((target_cell_width - font_cell_width) * 0.5).max(0.0);
-            let glyph_offset_y_adjust = ((target_cell_height - font_cell_height) * 0.5).max(0.0);
+        // --- Dirty detection: determine which rows need rebuild ---
+        let current_grid_version = terminal.get_grid_version();
+        let current_scroll_offset = terminal.scroll_offset;
+        let current_selection = terminal.selection.clone();
+        let search_hash = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            search_state.query.hash(&mut h);
+            search_state.matches.len().hash(&mut h);
+            search_state.current_match_index.hash(&mut h);
+            h.finish()
+        };
 
-            for row_idx in 0..rows {
-                for col_idx in 0..cols {
-                    let cell = &grid[row_idx][col_idx];
-                    if cell.wide_continuation {
-                        continue;
-                    }
+        let need_full_rebuild = self.cached_instances.is_empty()
+            || self.last_rendered_rows != rows
+            || self.last_rendered_cols != cols
+            || self.last_rendered_scroll_offset != current_scroll_offset;
 
-                    let is_selected = terminal.is_cell_selected(row_idx, col_idx);
-                    let is_inverse = cell.flags.inverse;
+        let mut dirty_rows: Vec<bool> = vec![false; rows];
 
-                    // Resolve background color
-                    let mut bg_color = if is_selected {
-                        self.theme.selection_color()
-                    } else if is_inverse {
-                        resolve_foreground_color(cell.foreground, &self.theme)
-                    } else {
-                        resolve_background_color(cell.background, &self.theme)
-                    };
-
-                    // Search match highlighting
-                    if has_search {
-                        for (match_idx, m) in search_state.matches.iter().enumerate() {
-                            if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
-                                let orig_fg =
-                                    resolve_foreground_color(cell.foreground, &self.theme);
-                                bg_color = orig_fg;
-                                if match_idx
-                                    == search_state.current_match_index % search_state.matches.len()
-                                {
-                                    let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
-                                    bg_color = Color32::from_rgba_unmultiplied(
-                                        (r as u16 * 180 / 255) as u8,
-                                        (g as u16 * 180 / 255) as u8,
-                                        (b as u16 * 180 / 255) as u8,
-                                        255,
-                                    );
-                                }
-                                break;
-                            }
-                        }
-                    }
-
-                    // If bg matches default and no special state, use default bg
-                    if !is_selected
-                        && !is_inverse
-                        && cell.background == crate::terminal::Color::Default
-                        && !has_search
-                    {
-                        bg_color = default_bg;
-                    }
-
-                    // Resolve foreground color
-                    let mut fg_color = if is_selected {
-                        self.theme.selection_fg_color()
-                    } else if is_inverse {
-                        resolve_background_color(cell.background, &self.theme)
-                    } else {
-                        resolve_foreground_color(cell.foreground, &self.theme)
-                    };
-
-                    // Link coloring
-                    let is_link = if !links.is_empty() {
-                        let mut found = false;
-                        for link in links {
-                            if link.line == row_idx
-                                && col_idx >= link.col_start
-                                && col_idx < link.col_end
-                            {
-                                let is_hovered_link =
-                                    hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
-                                fg_color = if is_hovered_link {
-                                    Color32::from_rgb(100, 200, 255)
-                                } else {
-                                    Color32::from_rgb(50, 150, 255)
-                                };
-                                found = true;
-                                break;
-                            }
-                        }
-                        found
-                    } else {
-                        false
-                    };
-
-                    let bold = cell.flags.bold;
-                    let has_underline = cell.flags.underline || is_link;
-                    let has_strikethrough = cell.flags.strikethrough;
-                    let is_wide = cell.wide;
-
-                    // Build flags
-                    let mut flags: u32 = 0;
-                    let has_glyph = cell.character != ' ' && cell.character != '\0';
-                    if has_glyph {
-                        flags |= gpu::instance::CellInstance::FLAG_HAS_GLYPH;
-                    }
-                    if is_wide {
-                        flags |= gpu::instance::CellInstance::FLAG_WIDE;
-                    }
-                    if has_underline {
-                        flags |= gpu::instance::CellInstance::FLAG_UNDERLINE;
-                    }
-                    if has_strikethrough {
-                        flags |= gpu::instance::CellInstance::FLAG_STRIKETHROUGH;
-                    }
-
-                    // Get glyph atlas region
-                    let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
-                        let region = gpu_res.atlas.get_or_rasterize(cell.character, bold);
-                        if region.width_px > 0.0 && region.height_px > 0.0 {
-                            // Round glyph offset to integer pixels for crisp rendering with Nearest filtering
-                            (
-                                region.u0,
-                                region.v0,
-                                region.u1,
-                                region.v1,
-                                (region.bearing_x + glyph_offset_x_adjust).round(),
-                                (region.bearing_y + glyph_offset_y_adjust).round(),
-                            )
-                        } else {
-                            (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-                        }
-                    } else {
-                        (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
-                    };
-
-                    let [fg_r, fg_g, fg_b, fg_a] = fg_color.to_srgba_unmultiplied();
-                    let [bg_r, bg_g, bg_b, _bg_a] = bg_color.to_srgba_unmultiplied();
-                    let bg_a = if bg_color == default_bg {
-                        (self.opacity * 255.0) as u8
-                    } else {
-                        255u8
-                    };
-
-                    instances.push(gpu::instance::CellInstance {
-                        col: col_idx as u32,
-                        row: row_idx as u32,
-                        glyph_u0: u0,
-                        glyph_v0: v0,
-                        glyph_u1: u1,
-                        glyph_v1: v1,
-                        fg_color: [fg_r, fg_g, fg_b, fg_a],
-                        bg_color: [bg_r, bg_g, bg_b, bg_a],
-                        flags,
-                        glyph_offset_x,
-                        glyph_offset_y,
-                        _pad: 0,
-                    });
+        if need_full_rebuild {
+            dirty_rows.fill(true);
+        } else {
+            // Grid content changes
+            let changed = terminal.get_dirty_rows(self.last_rendered_grid_version);
+            for &r in &changed {
+                if r < rows {
+                    dirty_rows[r] = true;
                 }
             }
-        } // drop renderer write lock
 
-        let instance_count = instances.len() as u32;
-        // Viewport is set to content_rect by egui-wgpu, so use its dimensions
+            // Selection overlay changes
+            if self.last_rendered_selection != current_selection {
+                // Mark rows affected by old and new selection
+                Self::mark_selection_rows(&self.last_rendered_selection, rows, &mut dirty_rows);
+                Self::mark_selection_rows(&current_selection, rows, &mut dirty_rows);
+            }
+
+            // Search overlay changes
+            if self.last_rendered_search_hash != search_hash {
+                dirty_rows.fill(true);
+            }
+
+            // Link hover changes
+            if self.last_rendered_hovered_link != *hovered_link {
+                if let Some(ref link) = self.last_rendered_hovered_link {
+                    if link.line < rows {
+                        dirty_rows[link.line] = true;
+                    }
+                }
+                if let Some(ref link) = hovered_link {
+                    if link.line < rows {
+                        dirty_rows[link.line] = true;
+                    }
+                }
+            }
+        }
+
+        let any_dirty = dirty_rows.iter().any(|&d| d);
+        if !any_dirty && !self.cached_instances.is_empty() {
+            // Nothing changed — reuse cached instances as-is
+        } else {
+            // --- Build/patch instances ---
+            let mut atlas_w = 0.0f32;
+            let mut atlas_h = 0.0f32;
+            {
+                let mut renderer = render_state.renderer.write();
+                let gpu_res = match renderer
+                    .callback_resources
+                    .get_mut::<gpu::callback::GpuResources>()
+                {
+                    Some(r) => r,
+                    None => return false,
+                };
+                let (ascent, descent, advance) = gpu_res.atlas.font_metrics();
+                let (aw, ah) = gpu_res.atlas.atlas_dimensions();
+                atlas_w = aw as f32;
+                atlas_h = ah as f32;
+                let font_cell_width = advance;
+                let font_cell_height = ascent - descent;
+                let glyph_offset_x_adjust =
+                    ((target_cell_width - font_cell_width) * 0.5).max(0.0);
+                let glyph_offset_y_adjust =
+                    ((target_cell_height - font_cell_height) * 0.5).max(0.0);
+
+                if need_full_rebuild {
+                    // Full rebuild: clear and rebuild all
+                    self.cached_instances.clear();
+                    self.row_instance_offsets.clear();
+                    self.row_instance_counts.clear();
+                    self.cached_instances.reserve(rows * cols);
+
+                    for row_idx in 0..rows {
+                        let offset = self.cached_instances.len();
+                        Self::build_row_instances(
+                            &mut self.cached_instances,
+                            gpu_res,
+                            grid,
+                            terminal,
+                            search_state,
+                            links,
+                            hovered_link,
+                            &self.theme,
+                            default_bg,
+                            self.opacity,
+                            has_search,
+                            glyph_offset_x_adjust,
+                            glyph_offset_y_adjust,
+                            row_idx,
+                            cols,
+                        );
+                        let count = self.cached_instances.len() - offset;
+                        self.row_instance_offsets.push(offset);
+                        self.row_instance_counts.push(count);
+                    }
+                } else {
+                    // Partial rebuild: only rebuild dirty rows
+                    let mut needs_relayout = false;
+                    for row_idx in 0..rows {
+                        if !dirty_rows[row_idx] {
+                            continue;
+                        }
+
+                        // Build new instances for this row into a temp buffer
+                        let mut row_instances = Vec::new();
+                        Self::build_row_instances(
+                            &mut row_instances,
+                            gpu_res,
+                            grid,
+                            terminal,
+                            search_state,
+                            links,
+                            hovered_link,
+                            &self.theme,
+                            default_bg,
+                            self.opacity,
+                            has_search,
+                            glyph_offset_x_adjust,
+                            glyph_offset_y_adjust,
+                            row_idx,
+                            cols,
+                        );
+
+                        let old_count = self.row_instance_counts[row_idx];
+                        if row_instances.len() != old_count {
+                            // Instance count changed (wide chars appeared/disappeared)
+                            // Fall back to full relayout
+                            needs_relayout = true;
+                            break;
+                        }
+
+                        // Patch in-place
+                        let offset = self.row_instance_offsets[row_idx];
+                        self.cached_instances[offset..offset + old_count]
+                            .copy_from_slice(&row_instances);
+                    }
+
+                    if needs_relayout {
+                        // Rebuild all from scratch
+                        self.cached_instances.clear();
+                        self.row_instance_offsets.clear();
+                        self.row_instance_counts.clear();
+                        self.cached_instances.reserve(rows * cols);
+                        for row_idx in 0..rows {
+                            let offset = self.cached_instances.len();
+                            Self::build_row_instances(
+                                &mut self.cached_instances,
+                                gpu_res,
+                                grid,
+                                terminal,
+                                search_state,
+                                links,
+                                hovered_link,
+                                &self.theme,
+                                default_bg,
+                                self.opacity,
+                                has_search,
+                                glyph_offset_x_adjust,
+                                glyph_offset_y_adjust,
+                                row_idx,
+                                cols,
+                            );
+                            let count = self.cached_instances.len() - offset;
+                            self.row_instance_offsets.push(offset);
+                            self.row_instance_counts.push(count);
+                        }
+                    }
+                }
+
+                // Store atlas dimensions for uniforms (atlas_w/atlas_h set above)
+                let _ = (atlas_w, atlas_h);
+            } // drop renderer write lock
+        }
+
+        // Update tracking state
+        self.last_rendered_grid_version = current_grid_version;
+        self.last_rendered_scroll_offset = current_scroll_offset;
+        self.last_rendered_selection = current_selection;
+        self.last_rendered_search_hash = search_hash;
+        self.last_rendered_hovered_link = hovered_link.clone();
+        self.last_rendered_cols = cols;
+        self.last_rendered_rows = rows;
+
+        // Get atlas dimensions for uniforms
+        let (atlas_w, atlas_h) = {
+            let renderer = render_state.renderer.read();
+            match renderer
+                .callback_resources
+                .get::<gpu::callback::GpuResources>()
+            {
+                Some(r) => {
+                    let (aw, ah) = r.atlas.atlas_dimensions();
+                    (aw as f32, ah as f32)
+                }
+                None => return false,
+            }
+        };
+
+        let instance_count = self.cached_instances.len() as u32;
         let background_uniforms = gpu::instance::GridUniforms {
             viewport_width: content_rect.width() * ppp,
             viewport_height: content_rect.height() * ppp,
@@ -1357,14 +1427,13 @@ impl TerminalRenderer {
             ..background_uniforms
         };
 
-        let background_callback = gpu::callback::GridRenderCallback {
-            instances: instances.clone(),
+        let background_callback = gpu::callback::GridBackgroundCallback {
+            instances: self.cached_instances.clone(),
             uniforms: background_uniforms,
             instance_count,
         };
 
-        let foreground_callback = gpu::callback::GridRenderCallback {
-            instances,
+        let foreground_callback = gpu::callback::GridForegroundCallback {
             uniforms: foreground_uniforms,
             instance_count,
         };
@@ -1378,6 +1447,178 @@ impl TerminalRenderer {
             foreground_callback,
         ));
         true
+    }
+
+    fn mark_selection_rows(
+        selection: &Option<crate::terminal::Selection>,
+        rows: usize,
+        dirty_rows: &mut [bool],
+    ) {
+        if let Some(sel) = selection {
+            let min_row = sel.anchor.0.min(sel.active.0);
+            let max_row = sel.anchor.0.max(sel.active.0);
+            for r in min_row..=max_row.min(rows - 1) {
+                dirty_rows[r] = true;
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_row_instances(
+        instances: &mut Vec<gpu::instance::CellInstance>,
+        gpu_res: &mut gpu::callback::GpuResources,
+        grid: &[Vec<crate::terminal::TerminalCell>],
+        terminal: &TerminalState,
+        search_state: &crate::search::SearchState,
+        links: &[crate::link::Link],
+        hovered_link: &Option<crate::link::Link>,
+        theme: &crate::theme::Theme,
+        default_bg: Color32,
+        opacity: f32,
+        has_search: bool,
+        glyph_offset_x_adjust: f32,
+        glyph_offset_y_adjust: f32,
+        row_idx: usize,
+        cols: usize,
+    ) {
+        for col_idx in 0..cols {
+            let cell = &grid[row_idx][col_idx];
+            if cell.wide_continuation {
+                continue;
+            }
+
+            let is_selected = terminal.is_cell_selected(row_idx, col_idx);
+            let is_inverse = cell.flags.inverse;
+
+            let mut bg_color = if is_selected {
+                theme.selection_color()
+            } else if is_inverse {
+                resolve_foreground_color(cell.foreground, theme)
+            } else {
+                resolve_background_color(cell.background, theme)
+            };
+
+            if has_search {
+                for (match_idx, m) in search_state.matches.iter().enumerate() {
+                    if m.line == row_idx && col_idx >= m.col_start && col_idx < m.col_end {
+                        let orig_fg = resolve_foreground_color(cell.foreground, theme);
+                        bg_color = orig_fg;
+                        if match_idx
+                            == search_state.current_match_index % search_state.matches.len()
+                        {
+                            let [r, g, b, _a] = bg_color.to_srgba_unmultiplied();
+                            bg_color = Color32::from_rgba_unmultiplied(
+                                (r as u16 * 180 / 255) as u8,
+                                (g as u16 * 180 / 255) as u8,
+                                (b as u16 * 180 / 255) as u8,
+                                255,
+                            );
+                        }
+                        break;
+                    }
+                }
+            }
+
+            if !is_selected
+                && !is_inverse
+                && cell.background == crate::terminal::Color::Default
+                && !has_search
+            {
+                bg_color = default_bg;
+            }
+
+            let mut fg_color = if is_selected {
+                theme.selection_fg_color()
+            } else if is_inverse {
+                resolve_background_color(cell.background, theme)
+            } else {
+                resolve_foreground_color(cell.foreground, theme)
+            };
+
+            let is_link = if !links.is_empty() {
+                let mut found = false;
+                for link in links {
+                    if link.line == row_idx
+                        && col_idx >= link.col_start
+                        && col_idx < link.col_end
+                    {
+                        let is_hovered_link =
+                            hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                        fg_color = if is_hovered_link {
+                            Color32::from_rgb(100, 200, 255)
+                        } else {
+                            Color32::from_rgb(50, 150, 255)
+                        };
+                        found = true;
+                        break;
+                    }
+                }
+                found
+            } else {
+                false
+            };
+
+            let bold = cell.flags.bold;
+            let has_underline = cell.flags.underline || is_link;
+            let has_strikethrough = cell.flags.strikethrough;
+            let is_wide = cell.wide;
+
+            let mut flags: u32 = 0;
+            let has_glyph = cell.character != ' ' && cell.character != '\0';
+            if has_glyph {
+                flags |= gpu::instance::CellInstance::FLAG_HAS_GLYPH;
+            }
+            if is_wide {
+                flags |= gpu::instance::CellInstance::FLAG_WIDE;
+            }
+            if has_underline {
+                flags |= gpu::instance::CellInstance::FLAG_UNDERLINE;
+            }
+            if has_strikethrough {
+                flags |= gpu::instance::CellInstance::FLAG_STRIKETHROUGH;
+            }
+
+            let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
+                let region = gpu_res.atlas.get_or_rasterize(cell.character, bold);
+                if region.width_px > 0.0 && region.height_px > 0.0 {
+                    (
+                        region.u0,
+                        region.v0,
+                        region.u1,
+                        region.v1,
+                        quantize_subpixel(region.bearing_x + glyph_offset_x_adjust),
+                        quantize_subpixel(region.bearing_y + glyph_offset_y_adjust),
+                    )
+                } else {
+                    (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+                }
+            } else {
+                (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+            };
+
+            let [fg_r, fg_g, fg_b, fg_a] = fg_color.to_srgba_unmultiplied();
+            let [bg_r, bg_g, bg_b, _bg_a] = bg_color.to_srgba_unmultiplied();
+            let bg_a = if bg_color == default_bg {
+                (opacity * 255.0) as u8
+            } else {
+                255u8
+            };
+
+            instances.push(gpu::instance::CellInstance {
+                col: col_idx as u32,
+                row: row_idx as u32,
+                glyph_u0: u0,
+                glyph_v0: v0,
+                glyph_u1: u1,
+                glyph_v1: v1,
+                fg_color: [fg_r, fg_g, fg_b, fg_a],
+                bg_color: [bg_r, bg_g, bg_b, bg_a],
+                flags,
+                glyph_offset_x,
+                glyph_offset_y,
+                _pad: 0,
+            });
+        }
     }
 
     /// CPU fallback: render grid using egui painter API (the original path).

@@ -20,14 +20,14 @@ impl GpuResources {
     }
 }
 
-/// Per-frame callback carrying the instance data to render.
-pub struct GridRenderCallback {
+/// Background pass callback: shares instance data, uploads instances + atlas + uniforms.
+pub struct GridBackgroundCallback {
     pub instances: Vec<CellInstance>,
     pub uniforms: GridUniforms,
     pub instance_count: u32,
 }
 
-impl egui_wgpu::CallbackTrait for GridRenderCallback {
+impl egui_wgpu::CallbackTrait for GridBackgroundCallback {
     fn prepare(
         &self,
         device: &wgpu::Device,
@@ -66,12 +66,44 @@ impl egui_wgpu::CallbackTrait for GridRenderCallback {
         }
         let res = callback_resources.get::<GpuResources>().unwrap();
         render_pass.set_pipeline(res.pipeline.pipeline());
-        render_pass.set_bind_group(
-            0,
-            res.pipeline
-                .bind_group_for_phase(self.uniforms.render_phase),
-            &[],
-        );
+        render_pass.set_bind_group(0, &res.pipeline.background_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, res.pipeline.instance_buffer().slice(..));
+        render_pass.draw(0..6, 0..self.instance_count);
+    }
+}
+
+/// Foreground pass callback: only uploads uniforms; instance buffer is already on GPU.
+pub struct GridForegroundCallback {
+    pub uniforms: GridUniforms,
+    pub instance_count: u32,
+}
+
+impl egui_wgpu::CallbackTrait for GridForegroundCallback {
+    fn prepare(
+        &self,
+        _device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        _screen_descriptor: &egui_wgpu::ScreenDescriptor,
+        _egui_encoder: &mut wgpu::CommandEncoder,
+        callback_resources: &mut CallbackResources,
+    ) -> Vec<wgpu::CommandBuffer> {
+        let res = callback_resources.get_mut::<GpuResources>().unwrap();
+        res.pipeline.update_uniforms(queue, &self.uniforms);
+        Vec::new()
+    }
+
+    fn paint(
+        &self,
+        _info: egui::PaintCallbackInfo,
+        render_pass: &mut wgpu::RenderPass<'static>,
+        callback_resources: &CallbackResources,
+    ) {
+        if self.instance_count == 0 {
+            return;
+        }
+        let res = callback_resources.get::<GpuResources>().unwrap();
+        render_pass.set_pipeline(res.pipeline.pipeline());
+        render_pass.set_bind_group(0, &res.pipeline.foreground_bind_group, &[]);
         render_pass.set_vertex_buffer(0, res.pipeline.instance_buffer().slice(..));
         render_pass.draw(0..6, 0..self.instance_count);
     }
