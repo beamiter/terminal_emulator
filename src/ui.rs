@@ -1625,14 +1625,8 @@ impl TerminalRenderer {
                     if !text.is_empty() && text.as_bytes()[0] < 32 {
                         continue;
                     }
-                    // When report_all_keys is active, letters and digits are handled
-                    // by Key events via the Kitty keyboard protocol encoding.
-                    if report_all_keys && text.len() == 1 {
-                        let ch = text.as_bytes()[0];
-                        if ch.is_ascii_alphanumeric() {
-                            continue;
-                        }
-                    }
+                    // Text events already contain the correctly shifted character from the OS.
+                    // Always send them - they handle Shift, Caps Lock, etc. correctly.
                     input.extend(text.as_bytes());
                 }
                 egui::Event::Key {
@@ -1649,6 +1643,14 @@ impl TerminalRenderer {
                             }
                             _ => {}
                         }
+                    }
+
+                    // Skip Kitty encoding for alphanumeric when there's a corresponding Text event
+                    // (Text event already sent the correct character with proper shift/caps handling)
+                    if text_from_events.as_ref().is_some_and(|t| {
+                        t.len() == 1 && t.as_bytes()[0].is_ascii_alphanumeric()
+                    }) {
+                        continue;
                     }
 
                     // Detect Caps Lock: if Text event has an uppercase letter but
