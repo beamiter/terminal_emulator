@@ -91,10 +91,14 @@ impl FontdueAtlas {
 
     fn prepopulate_ascii(&mut self) {
         for ch in ' '..='~' {
-            self.get_or_rasterize(ch, false);
+            for subpixel in 0..=2 {
+                self.get_or_rasterize(ch, false, subpixel);
+            }
         }
         for ch in ' '..='~' {
-            self.get_or_rasterize(ch, true);
+            for subpixel in 0..=2 {
+                self.get_or_rasterize(ch, true, subpixel);
+            }
         }
     }
 
@@ -209,7 +213,14 @@ impl FontdueAtlas {
         // fontdue ymin: bottom of glyph relative to baseline (positive = above baseline)
         // ab_glyph bearing_y: top of glyph relative to top of cell (ascent-based)
         // bearing_y in screen coords = ascent - (ymin + height)
-        let bearing_x = metrics.xmin as f32;
+
+        // Apply subpixel offset to bearing_x: 0 → 0.0px, 1 → 0.33px, 2 → 0.67px
+        let subpixel_shift = match key.subpixel_offset {
+            1 => 1.0 / 3.0,
+            2 => 2.0 / 3.0,
+            _ => 0.0,
+        };
+        let bearing_x = metrics.xmin as f32 + subpixel_shift;
         let bearing_y = self.cached_ascent - (metrics.ymin as f32 + metrics.height as f32);
 
         let region = GlyphRegion {
@@ -228,8 +239,8 @@ impl FontdueAtlas {
 }
 
 impl FontBackend for FontdueAtlas {
-    fn get_or_rasterize(&mut self, ch: char, bold: bool) -> GlyphRegion {
-        let key = AtlasGlyphKey { ch, bold };
+    fn get_or_rasterize(&mut self, ch: char, bold: bool, subpixel_offset: u8) -> GlyphRegion {
+        let key = AtlasGlyphKey { ch, bold, subpixel_offset };
         if let Some(&region) = self.cache.get(&key) {
             return region;
         }
@@ -263,7 +274,12 @@ impl FontBackend for FontdueAtlas {
         let (metrics, glyph_bitmap) = font.rasterize(ch, self.font_size_px);
 
         if glyph_bitmap.is_empty() || metrics.width == 0 || metrics.height == 0 {
-            // Space, control chars, etc. — just return advance width
+            // Space, control chars, etc. — just return advance width with subpixel offset
+            let subpixel_shift = match subpixel_offset {
+                1 => 1.0 / 3.0,
+                2 => 2.0 / 3.0,
+                _ => 0.0,
+            };
             let region = GlyphRegion {
                 u0: 0.0,
                 v0: 0.0,
@@ -271,7 +287,7 @@ impl FontBackend for FontdueAtlas {
                 v1: 0.0,
                 width_px: metrics.advance_width,
                 height_px: 0.0,
-                bearing_x: 0.0,
+                bearing_x: subpixel_shift,
                 bearing_y: 0.0,
             };
             self.cache.insert(key, region);

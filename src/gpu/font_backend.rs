@@ -11,15 +11,17 @@ pub struct GlyphRegion {
     pub bearing_y: f32,
 }
 
-/// Key for the glyph cache: character + style.
+/// Key for the glyph cache: character + style + subpixel position.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct AtlasGlyphKey {
     pub ch: char,
     pub bold: bool,
+    /// Subpixel horizontal offset: 0 = 0.0px, 1 = 0.33px, 2 = 0.67px
+    pub subpixel_offset: u8,
 }
 
 pub trait FontBackend: Send + Sync {
-    fn get_or_rasterize(&mut self, ch: char, bold: bool) -> GlyphRegion;
+    fn get_or_rasterize(&mut self, ch: char, bold: bool, subpixel_offset: u8) -> GlyphRegion;
     fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue);
     fn font_metrics(&self) -> (f32, f32, f32);
     fn ensure_uploaded(&mut self, device: &wgpu::Device, queue: &wgpu::Queue);
@@ -29,7 +31,7 @@ pub trait FontBackend: Send + Sync {
     fn take_needs_rebind(&mut self) -> bool;
 }
 
-pub const GLYPH_PADDING: u32 = 1;
+pub const GLYPH_PADDING: u32 = 2;
 pub const INITIAL_ATLAS_SIZE: u32 = 1024;
 pub const MAX_ATLAS_SIZE: u32 = 4096;
 

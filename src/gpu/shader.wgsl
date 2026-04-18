@@ -117,7 +117,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let rel = in.cell_px_pos - in.glyph_offset;
         let t = clamp(rel / max(glyph_size, vec2<f32>(1.0, 1.0)), vec2<f32>(0.0), vec2<f32>(1.0));
         let uv = in.glyph_uv0 + t * (in.glyph_uv1 - in.glyph_uv0);
-        let alpha = textureSample(atlas_texture, atlas_sampler, uv).r;
+
+        var alpha = textureSample(atlas_texture, atlas_sampler, uv).r;
+
+        // Subtle alpha sharpening for crisper text (counters fontdue's softness)
+        // Using pow < 1.0 boosts mid-range values, making edges sharper
+        alpha = pow(alpha, 0.92);
 
         // Only apply glyph where pixel falls within the glyph area
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)

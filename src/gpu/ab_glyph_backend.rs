@@ -74,10 +74,14 @@ impl AbGlyphAtlas {
 
     fn prepopulate_ascii(&mut self) {
         for ch in ' '..='~' {
-            self.get_or_rasterize(ch, false);
+            for subpixel in 0..=2 {
+                self.get_or_rasterize(ch, false, subpixel);
+            }
         }
         for ch in ' '..='~' {
-            self.get_or_rasterize(ch, true);
+            for subpixel in 0..=2 {
+                self.get_or_rasterize(ch, true, subpixel);
+            }
         }
     }
 
@@ -135,8 +139,8 @@ impl AbGlyphAtlas {
 }
 
 impl FontBackend for AbGlyphAtlas {
-    fn get_or_rasterize(&mut self, ch: char, bold: bool) -> GlyphRegion {
-        let key = AtlasGlyphKey { ch, bold };
+    fn get_or_rasterize(&mut self, ch: char, bold: bool, subpixel_offset: u8) -> GlyphRegion {
+        let key = AtlasGlyphKey { ch, bold, subpixel_offset };
         if let Some(&region) = self.cache.get(&key) {
             return region;
         }
@@ -227,6 +231,13 @@ impl FontBackend for AbGlyphAtlas {
 
             self.dirty = true;
 
+            // Apply subpixel offset to bearing_x: 0 → 0.0px, 1 → 0.33px, 2 → 0.67px
+            let subpixel_shift = match subpixel_offset {
+                1 => 1.0 / 3.0,
+                2 => 2.0 / 3.0,
+                _ => 0.0,
+            };
+
             let region = GlyphRegion {
                 u0: bx as f32 / self.width as f32,
                 v0: by as f32 / self.height as f32,
@@ -234,13 +245,18 @@ impl FontBackend for AbGlyphAtlas {
                 v1: (by + glyph_h) as f32 / self.height as f32,
                 width_px: glyph_w as f32,
                 height_px: glyph_h as f32,
-                bearing_x: bounds.min.x,
+                bearing_x: bounds.min.x + subpixel_shift,
                 bearing_y: bounds.min.y,
             };
             self.cache.insert(key, region);
             region
         } else {
             let h_advance = scaled_font.h_advance(glyph_id);
+            let subpixel_shift = match subpixel_offset {
+                1 => 1.0 / 3.0,
+                2 => 2.0 / 3.0,
+                _ => 0.0,
+            };
             let region = GlyphRegion {
                 u0: 0.0,
                 v0: 0.0,
@@ -248,7 +264,7 @@ impl FontBackend for AbGlyphAtlas {
                 v1: 0.0,
                 width_px: h_advance,
                 height_px: 0.0,
-                bearing_x: 0.0,
+                bearing_x: subpixel_shift,
                 bearing_y: 0.0,
             };
             self.cache.insert(key, region);

@@ -1298,6 +1298,7 @@ impl TerminalRenderer {
                             default_bg,
                             self.opacity,
                             has_search,
+                            target_cell_width,
                             glyph_offset_x_adjust,
                             glyph_offset_y_adjust,
                             row_idx,
@@ -1329,6 +1330,7 @@ impl TerminalRenderer {
                             default_bg,
                             self.opacity,
                             has_search,
+                            target_cell_width,
                             glyph_offset_x_adjust,
                             glyph_offset_y_adjust,
                             row_idx,
@@ -1369,6 +1371,7 @@ impl TerminalRenderer {
                                 default_bg,
                                 self.opacity,
                                 has_search,
+                                target_cell_width,
                                 glyph_offset_x_adjust,
                                 glyph_offset_y_adjust,
                                 row_idx,
@@ -1476,6 +1479,7 @@ impl TerminalRenderer {
         default_bg: Color32,
         opacity: f32,
         has_search: bool,
+        cell_width: f32,
         glyph_offset_x_adjust: f32,
         glyph_offset_y_adjust: f32,
         row_idx: usize,
@@ -1579,7 +1583,12 @@ impl TerminalRenderer {
             }
 
             let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
-                let region = gpu_res.atlas.get_or_rasterize(cell.character, bold);
+                // Compute subpixel offset: quantize horizontal glyph position to 3 bins
+                let glyph_x_pos = col_idx as f32 * cell_width + glyph_offset_x_adjust;
+                let frac = glyph_x_pos - glyph_x_pos.floor();
+                let subpixel_offset = ((frac * 3.0).round() as u8).min(2);
+
+                let region = gpu_res.atlas.get_or_rasterize(cell.character, bold, subpixel_offset);
                 if region.width_px > 0.0 && region.height_px > 0.0 {
                     (
                         region.u0,
