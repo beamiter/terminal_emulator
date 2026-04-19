@@ -111,10 +111,14 @@ impl DebugPanel {
                     None => "N/A".to_string(),
                 };
 
+                let scale = ctx.pixels_per_point();
+                let zoom = ctx.zoom_factor();
+
                 let lines: Vec<(&str, String)> = vec![
                     ("FPS", format!("{:.1}", fps)),
                     ("Frame", format!("{:.2} ms", frame_ms)),
                     ("Memory", mem_str),
+                    ("Scale", format!("{:.2}x (zoom {:.2})", scale, zoom)),
                     ("Grid", format!("{}x{}", grid_cols, grid_rows)),
                     ("Sessions", format!("{}", session_count)),
                     (
