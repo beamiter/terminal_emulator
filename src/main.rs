@@ -3039,6 +3039,11 @@ impl eframe::App for TerminalApp {
             }
         }
 
+        // Force repaint if we have any keyboard/cursor input - ensures input renders immediately
+        if has_keyboard_input || has_cursor_move_input {
+            ctx.request_repaint();
+        }
+
         // Step 6: 处理 shell 事件
         // 关键：限制每帧处理的总字节数，防止大量 ANSI 数据阻塞 UI 线程导致假死。
         // 超出限制的数据保存到 pending_output，下一帧继续处理。
@@ -3428,6 +3433,7 @@ impl eframe::App for TerminalApp {
             let should_repaint = has_new_output
                 || cursor_state_changed
                 || has_keyboard_input
+                || has_cursor_move_input
                 || has_mouse_input
                 || self.debug_panel.is_open;
 
