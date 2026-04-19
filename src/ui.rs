@@ -290,6 +290,8 @@ pub struct TerminalRenderer {
     ime_enabled: bool,
     last_ime_rect: Option<egui::Rect>,
     // Kitty graphics texture cache: image_id -> (texture_handle, width, height)
+    // Will be populated in Phase 4
+    #[allow(dead_code)]
     texture_cache: std::collections::HashMap<u32, (egui::TextureHandle, u32, u32)>,
     /// The content rect from the last render, used for mouse-to-grid coordinate conversion
     pub last_content_rect: Option<egui::Rect>,
@@ -423,19 +425,30 @@ impl TerminalRenderer {
     /// 获取或创建图像纹理
     fn get_image_texture(
         &mut self,
-        _ui: &mut Ui,
+        ctx: &egui::Context,
         image_id: u32,
         image: &crate::kitty_graphics::KittyImage,
-    ) -> Option<()> {
-        // TODO: 实现 GPU 纹理缓存
-        // 暂时只返回 Ok 表示图像可以被绘制
-        crate::debug_log!(
-            "[KITTY_TEXTURE] Image {} ready for rendering ({}x{})",
-            image_id,
-            image.width,
-            image.height
+    ) -> Option<egui::TextureHandle> {
+        // Check cache first
+        if let Some((handle, _w, _h)) = self.texture_cache.get(&image_id) {
+            return Some(handle.clone());
+        }
+
+        // Create new texture from image data
+        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+            [image.width as usize, image.height as usize],
+            &image.data,
         );
-        Some(())
+        let handle = ctx.load_texture(
+            format!("kitty_{}", image_id),
+            color_image,
+            Default::default(),
+        );
+
+        // Cache it
+        let result = handle.clone();
+        self.texture_cache.insert(image_id, (handle, image.width, image.height));
+        Some(result)
     }
 
     fn content_size(&self, available: Vec2) -> Vec2 {
@@ -911,42 +924,36 @@ impl TerminalRenderer {
                     Vec2::new(img_width, img_height),
                 );
 
-                // Check if we can render the image
-                if self.get_image_texture(ui, image.id, image).is_some() {
-                    // Draw the image data as colored pixels
-                    let pixels_per_cell_x = (img_width / placement.width as f32).max(1.0);
-                    let pixels_per_cell_y = (img_height / placement.height as f32).max(1.0);
-
-                    // Sample image data at regular intervals for visual preview
-                    let step_x = ((image.width as f32 / 10.0).max(1.0)) as u32;
-                    let step_y = ((image.height as f32 / 10.0).max(1.0)) as u32;
-
-                    for iy in (0..image.height).step_by(step_y as usize) {
-                        for ix in (0..image.width).step_by(step_x as usize) {
-                            let idx = ((iy * image.width + ix) as usize) * 4;
-                            if idx + 3 < image.data.len() {
-                                let r = image.data[idx];
-                                let g = image.data[idx + 1];
-                                let b = image.data[idx + 2];
-                                let a = image.data[idx + 3];
-
-                                let color = Color32::from_rgba_unmultiplied(r, g, b, a);
-
-                                // Calculate position in the placement area
-                                let px = img_x + (ix as f32 / image.width as f32) * img_width;
-                                let py = img_y + (iy as f32 / image.height as f32) * img_height;
-                                let pw = pixels_per_cell_x;
-                                let ph = pixels_per_cell_y;
-
-                                let pixel_rect = egui::Rect::from_min_size(
-                                    egui::pos2(px, py),
-                                    Vec2::new(pw, ph),
-                                );
-
-                                painter.rect_filled(pixel_rect, egui::CornerRadius::ZERO, color);
-                            }
-                        }
-                    }
+                // Render the image using GPU texture
+                if let Some(texture) = self.get_image_texture(ui.ctx(), image.id, image) {
+                    // Render the texture
+                    let mesh = egui::Mesh {
+                        indices: vec![0, 1, 2, 0, 2, 3],
+                        vertices: vec![
+                            egui::epaint::Vertex {
+                                pos: rect.left_top(),
+                                uv: egui::pos2(0.0, 0.0),
+                                color: Color32::WHITE,
+                            },
+                            egui::epaint::Vertex {
+                                pos: rect.right_top(),
+                                uv: egui::pos2(1.0, 0.0),
+                                color: Color32::WHITE,
+                            },
+                            egui::epaint::Vertex {
+                                pos: rect.right_bottom(),
+                                uv: egui::pos2(1.0, 1.0),
+                                color: Color32::WHITE,
+                            },
+                            egui::epaint::Vertex {
+                                pos: rect.left_bottom(),
+                                uv: egui::pos2(0.0, 1.0),
+                                color: Color32::WHITE,
+                            },
+                        ],
+                        texture_id: texture.id(),
+                    };
+                    painter.add(egui::Shape::mesh(mesh));
 
                     // Draw border and info
                     painter.rect_stroke(
@@ -1032,13 +1039,19 @@ impl TerminalRenderer {
         };
 
         if !gpu_rendered {
+            // Build link map for O(1) lookup
+            let mut link_map: std::collections::HashMap<usize, Vec<&crate::link::Link>> =
+                std::collections::HashMap::new();
+            for link in links {
+                link_map.entry(link.line).or_insert_with(Vec::new).push(link);
+            }
             // Fallback: CPU rendering via egui painter
             self.render_grid_cpu(
                 ui,
                 &painter,
                 terminal,
                 search_state,
-                links,
+                &link_map,
                 hovered_link,
                 &grid,
                 rows,
@@ -1187,7 +1200,7 @@ impl TerminalRenderer {
         line_height: f32,
     ) -> bool {
         let render_state = match &self.wgpu_render_state {
-            Some(rs) => rs.clone(),
+            Some(rs) => rs,
             None => return false,
         };
 
@@ -1273,8 +1286,8 @@ impl TerminalRenderer {
             // Nothing changed — reuse cached instances as-is
         } else {
             // --- Build/patch instances ---
-            let mut atlas_w = 0.0f32;
-            let mut atlas_h = 0.0f32;
+            let atlas_w;
+            let atlas_h;
             {
                 let mut renderer = render_state.renderer.write();
                 let gpu_res = match renderer
@@ -1295,6 +1308,13 @@ impl TerminalRenderer {
                 let glyph_offset_y_adjust =
                     ((target_cell_height - font_cell_height) * 0.5).max(0.0);
 
+                // Build link map for O(1) lookup instead of O(n) search per cell
+                let mut link_map: std::collections::HashMap<usize, Vec<&crate::link::Link>> =
+                    std::collections::HashMap::new();
+                for link in links {
+                    link_map.entry(link.line).or_insert_with(Vec::new).push(link);
+                }
+
                 if need_full_rebuild {
                     // Full rebuild: clear and rebuild all
                     let instances = std::sync::Arc::make_mut(&mut self.cached_instances);
@@ -1311,7 +1331,7 @@ impl TerminalRenderer {
                             grid,
                             terminal,
                             search_state,
-                            links,
+                            &link_map,
                             hovered_link,
                             &self.theme,
                             default_bg,
@@ -1343,7 +1363,7 @@ impl TerminalRenderer {
                             grid,
                             terminal,
                             search_state,
-                            links,
+                            &link_map,
                             hovered_link,
                             &self.theme,
                             default_bg,
@@ -1385,7 +1405,7 @@ impl TerminalRenderer {
                                 grid,
                                 terminal,
                                 search_state,
-                                links,
+                                &link_map,
                                 hovered_link,
                                 &self.theme,
                                 default_bg,
@@ -1496,7 +1516,7 @@ impl TerminalRenderer {
         grid: &[Vec<crate::terminal::TerminalCell>],
         terminal: &TerminalState,
         search_state: &crate::search::SearchState,
-        links: &[crate::link::Link],
+        link_map: &std::collections::HashMap<usize, Vec<&crate::link::Link>>,
         hovered_link: &Option<crate::link::Link>,
         theme: &crate::theme::Theme,
         default_bg: Color32,
@@ -1562,15 +1582,12 @@ impl TerminalRenderer {
                 resolve_foreground_color(cell.foreground, theme)
             };
 
-            let is_link = if !links.is_empty() {
+            let is_link = if let Some(row_links) = link_map.get(&row_idx) {
                 let mut found = false;
-                for link in links {
-                    if link.line == row_idx
-                        && col_idx >= link.col_start
-                        && col_idx < link.col_end
-                    {
+                for link in row_links {
+                    if col_idx >= link.col_start && col_idx < link.col_end {
                         let is_hovered_link =
-                            hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                            hovered_link.as_ref().map(|l| l == *link).unwrap_or(false);
                         fg_color = if is_hovered_link {
                             Color32::from_rgb(100, 200, 255)
                         } else {
@@ -1586,7 +1603,7 @@ impl TerminalRenderer {
             };
 
             let bold = cell.flags.bold;
-            let has_underline = cell.flags.underline || is_link;
+            let has_underline = cell.flags.underline != crate::terminal::UnderlineStyle::None || is_link;
             let has_strikethrough = cell.flags.strikethrough;
             let is_wide = cell.wide;
 
@@ -1660,7 +1677,7 @@ impl TerminalRenderer {
         painter: &egui::Painter,
         terminal: &TerminalState,
         search_state: &crate::search::SearchState,
-        links: &[crate::link::Link],
+        link_map: &std::collections::HashMap<usize, Vec<&crate::link::Link>>,
         hovered_link: &Option<crate::link::Link>,
         grid: &[Vec<crate::terminal::TerminalCell>],
         rows: usize,
@@ -1759,15 +1776,12 @@ impl TerminalRenderer {
                     resolve_foreground_color(cell.foreground, &self.theme)
                 };
 
-                let is_link = if !links.is_empty() {
+                let is_link = if let Some(row_links) = link_map.get(&row_idx) {
                     let mut found = false;
-                    for link in links {
-                        if link.line == row_idx
-                            && col_idx >= link.col_start
-                            && col_idx < link.col_end
-                        {
+                    for link in row_links {
+                        if col_idx >= link.col_start && col_idx < link.col_end {
                             let is_hovered_link =
-                                hovered_link.as_ref().map(|l| l == link).unwrap_or(false);
+                                hovered_link.as_ref().map(|l| l == *link).unwrap_or(false);
                             fg_color = if is_hovered_link {
                                 Color32::from_rgb(100, 200, 255)
                             } else {
@@ -1783,7 +1797,7 @@ impl TerminalRenderer {
                 };
 
                 let bold = cell.flags.bold;
-                let has_underline = cell.flags.underline || is_link;
+                let has_underline = cell.flags.underline != crate::terminal::UnderlineStyle::None || is_link;
                 let has_strikethrough = cell.flags.strikethrough;
                 let is_wide = cell.wide;
 
@@ -1794,7 +1808,7 @@ impl TerminalRenderer {
 
                 let galley = ui.painter().layout_no_wrap(
                     cell.character.to_string(),
-                    font_id.clone(),
+                    font_id,
                     fg_color,
                 );
                 let (cx, cw) = snapped_span(content_rect.left(), col_idx, char_width);

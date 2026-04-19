@@ -35,7 +35,7 @@ impl Pane {
     }
 }
 
-/// 布局管理器
+/// 布局管理器 (MVP: 支持左右分栏)
 pub struct LayoutManager {
     pub mode: SplitMode,
     pub panes: Vec<Pane>,

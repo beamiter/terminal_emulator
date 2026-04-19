@@ -62,6 +62,7 @@ pub fn color_256(idx: u8) -> Color32 {
     }
 }
 
+#[allow(dead_code)]
 pub mod defaults {
     use egui::Color32;
 

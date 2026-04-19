@@ -29,6 +29,7 @@ impl ImageFormat {
 #[derive(Debug, Clone)]
 pub struct KittyImage {
     pub id: u32,
+    #[allow(dead_code)]
     pub format: ImageFormat,
     pub width: u32,
     pub height: u32,
@@ -65,6 +66,7 @@ pub struct KittyGraphicsParams {
 }
 
 /// 待传输的图像数据
+#[allow(dead_code)]
 pub struct PendingTransfer {
     pub image_id: u32,
     pub format: ImageFormat,
@@ -267,9 +269,15 @@ impl KittyGraphicsState {
         let height = params.height.unwrap_or(1);
         let z = params.z.unwrap_or(0);
 
+        let placement_id = params.placement_id.or_else(|| {
+            let id = self.next_placement_id;
+            self.next_placement_id += 1;
+            Some(id)
+        });
+
         self.placements.push(KittyPlacement {
             image_id,
-            placement_id: params.placement_id,
+            placement_id,
             x,
             y,
             width,
@@ -321,6 +329,7 @@ impl KittyGraphicsState {
     }
 
     /// 获取性能统计
+    #[allow(dead_code)]
     pub fn get_stats(&self) -> (u32, u64, usize) {
         (
             self.total_decoded,
@@ -340,6 +349,7 @@ impl KittyGraphicsState {
     }
 
     /// 清除所有数据
+    #[allow(dead_code)]
     pub fn clear(&mut self) {
         self.images.clear();
         self.placements.clear();

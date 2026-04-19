@@ -296,6 +296,7 @@ impl CommandPalette {
     }
 
     /// 获取最多显示多少条结果
+    #[allow(dead_code)]
     pub fn max_visible_results(&self) -> usize {
         15
     }

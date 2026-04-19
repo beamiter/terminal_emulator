@@ -10,6 +10,7 @@ pub fn enabled() -> bool {
     })
 }
 
+#[allow(dead_code)]
 pub fn format_bytes(bytes: &[u8]) -> String {
     const MAX_BYTES: usize = 96;
 

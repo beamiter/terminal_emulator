@@ -1,15 +1,12 @@
 // Library export for benchmarks and testing
 
-pub mod ansi_advanced;
 pub mod char_width; // P5：字符宽度缓存
 pub mod clipboard;
 pub mod color;
 pub mod command_palette;
 pub mod config;
 pub mod debug;
-pub mod glyph_cache; // P2：字形缓存
 pub mod gpu;
-pub mod image_cache;
 pub mod keybindings;
 pub mod kitty_graphics;
 pub mod layout;

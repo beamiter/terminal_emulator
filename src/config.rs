@@ -288,26 +288,32 @@ impl Config {
     }
 
     // 配置值约束方法
+    #[allow(dead_code)]
     pub fn clamp_font_size(size: f32) -> f32 {
         size.clamp(8.0, 72.0)
     }
 
+    #[allow(dead_code)]
     pub fn clamp_line_spacing(spacing: f32) -> f32 {
         spacing.clamp(0.8, 3.0)
     }
 
+    #[allow(dead_code)]
     pub fn clamp_padding(padding: f32) -> f32 {
         padding.clamp(0.0, 20.0)
     }
 
+    #[allow(dead_code)]
     pub fn clamp_scrollback_lines(lines: usize) -> usize {
         lines.clamp(100, 100_000)
     }
 
+    #[allow(dead_code)]
     pub fn clamp_opacity(opacity: f32) -> f32 {
         opacity.clamp(0.05, 1.0)
     }
 
+    #[allow(dead_code)]
     pub fn clamp_scroll_speed(speed: u32) -> u32 {
         speed.clamp(1, 10)
     }
@@ -321,6 +327,7 @@ impl Config {
     }
 }
 
+#[allow(dead_code)]
 pub fn create_default_config() {
     let config = Config::default();
     if let Err(e) = config.save() {

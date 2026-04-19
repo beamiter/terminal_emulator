@@ -1,5 +1,4 @@
-mod ansi_advanced;
-mod char_width; // P5：字符宽度缓存
+mod char_width;
 mod clipboard;
 mod color;
 mod command_palette;
@@ -7,26 +6,31 @@ mod config;
 mod config_panel;
 mod debug;
 mod debug_panel;
-mod glyph_cache; // P2：字形缓存
 mod gpu;
 mod help;
-mod image_cache;
+#[allow(dead_code)]
 mod keybindings;
 mod kitty_graphics;
+#[allow(dead_code)]
 mod layout;
 mod link;
 mod pty;
+#[allow(dead_code)]
 mod scripting;
 mod search;
+#[allow(dead_code)]
 mod search_replace;
+#[allow(dead_code)]
 mod session;
 mod session_manager;
 mod session_persistence;
 mod shell;
+#[allow(dead_code)]
 mod sidebar;
 mod terminal;
 mod theme;
 mod ui;
+#[allow(dead_code)]
 mod windows_compat;
 
 use base64::Engine;
@@ -545,7 +549,6 @@ struct TerminalApp {
     clipboard: Option<ClipboardManager>,
     cols: usize,
     rows: usize,
-    last_cursor_blink: std::time::Instant,
     next_cursor_blink_time: std::time::Instant,
     cursor_visible: bool,
     status_message: String,
@@ -709,13 +712,6 @@ fn normalize_terminal_shortcut_events(
     *events = normalized_events;
 }
 
-fn clipboard_content_to_terminal_bytes(content: ClipboardContent) -> Vec<u8> {
-    match content {
-        ClipboardContent::Text(text) => text.replace("\r\n", "\n").into_bytes(),
-        ClipboardContent::Binary(bytes) => bytes,
-    }
-}
-
 fn wrap_bracketed_paste(mut payload: Vec<u8>) -> Vec<u8> {
     let mut wrapped = Vec::with_capacity(payload.len() + 12);
     wrapped.extend_from_slice(b"\x1b[200~");
@@ -746,36 +742,6 @@ fn clipboard_5522_response_for_mime(mime_type: &str, data: &[u8]) -> Vec<u8> {
         Some(&encoded_data),
     ));
     output.extend_from_slice(&osc_5522_packet("type=read:status=DONE", None));
-    output
-}
-
-/// 生成 OSC 5522 主动粘贴数据包（type=write，用于向应用发送剪贴板内容）
-fn clipboard_5522_write_for_mime(mime_type: &str, data: &[u8]) -> Vec<u8> {
-    crate::debug_log!(
-        "[OSC5522] generating write packet: mime_type={}, data_size={}",
-        mime_type,
-        data.len()
-    );
-
-    let encoded_mime = base64::engine::general_purpose::STANDARD.encode(mime_type.as_bytes());
-    crate::debug_log!("[OSC5522] encoded mime (base64): {}", encoded_mime);
-
-    let encoded_data = base64::engine::general_purpose::STANDARD.encode(data);
-    crate::debug_log!(
-        "[OSC5522] encoded data size (base64): {} bytes",
-        encoded_data.len()
-    );
-
-    let mut output = Vec::new();
-
-    // type=write 格式：主动向应用发送剪贴板内容
-    output.extend_from_slice(&osc_5522_packet(
-        &format!("type=write:mime={}", encoded_mime),
-        Some(&encoded_data),
-    ));
-
-    crate::debug_log!("[OSC5522] final packet size: {} bytes", output.len());
-
     output
 }
 
@@ -1012,7 +978,6 @@ impl TerminalApp {
             clipboard,
             cols,
             rows,
-            last_cursor_blink: std::time::Instant::now(),
             next_cursor_blink_time: std::time::Instant::now() + Duration::from_millis(1000),
             cursor_visible: true,
             status_message: String::new(),
@@ -3335,7 +3300,7 @@ impl eframe::App for TerminalApp {
 
         // Step 12: 链接检测和交互
         {
-            let terminal = session.terminal.lock();
+            let mut terminal = session.terminal.lock();
             let grid_version = terminal.get_grid_version();
             let scroll_offset = terminal.scroll_offset;
 

@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 #[cfg(target_os = "windows")]
 pub mod windows_support {
     use std::path::PathBuf;

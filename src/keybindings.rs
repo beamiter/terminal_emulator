@@ -130,6 +130,7 @@ impl std::str::FromStr for Command {
 }
 
 /// 快捷键修饰符
+#[allow(dead_code)]
 #[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Modifiers {
     pub ctrl: bool,
@@ -163,6 +164,7 @@ impl Modifiers {
 }
 
 /// 快捷键（可配置）
+#[allow(dead_code)]
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct KeyBinding {
     pub key: String, // "a", "Tab", "F1", 等

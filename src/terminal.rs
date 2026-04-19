@@ -313,11 +313,27 @@ impl Default for CursorShape {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnderlineStyle {
+    None,
+    Single,
+    Double,
+    Curly,   // SGR 4:3
+    Dotted,  // SGR 4:4
+    Dashed,  // SGR 4:5
+}
+
+impl Default for UnderlineStyle {
+    fn default() -> Self {
+        UnderlineStyle::None
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct StyleFlags {
     pub bold: bool,
     pub italic: bool,
-    pub underline: bool,
+    pub underline: UnderlineStyle,
     pub inverse: bool,
     pub dim: bool,
     pub blink: bool,
@@ -507,6 +523,13 @@ pub struct TerminalState {
     // P4 优化：行版本化追踪
     pub grid_version: u64,      // 全局网格版本号
     pub row_versions: Vec<u64>, // 每行的修改版本号
+
+    // Cached visible cells to avoid per-frame cloning
+    visible_cells_cache: Option<(u64, usize, Vec<Vec<TerminalCell>>)>,
+
+    // OSC 8 hyperlink tracking
+    current_hyperlink: Option<(String, Option<String>)>, // (url, id)
+    osc8_hyperlinks: Vec<crate::link::Link>, // Stored hyperlinks from OSC 8
 }
 
 impl TerminalState {
@@ -590,8 +613,11 @@ impl TerminalState {
             pending_paste_password: None,
             kitty_graphics: KittyGraphicsState::new(),
             dirty_region,
-            grid_version: 1,             // P4：初始化网格版本号（1=所有行初始dirty）
-            row_versions: vec![1; rows], // P4：初始化每行版本号（与grid_version同步）
+            grid_version: 1,
+            row_versions: vec![1; rows],
+            visible_cells_cache: None,
+            current_hyperlink: None,
+            osc8_hyperlinks: Vec::new(),
         }
     }
 
@@ -930,6 +956,26 @@ impl TerminalState {
         self.grid_version
     }
 
+    pub fn is_focus_event_mode(&self) -> bool {
+        self.modes.contains(&1004)
+    }
+
+    pub fn is_bracketed_paste_mode(&self) -> bool {
+        self.modes.contains(&2004)
+    }
+
+    pub fn emit_focus_in(&mut self) {
+        if self.modes.contains(&1004) {
+            self.output_buffer.extend_from_slice(b"\x1b[I");
+        }
+    }
+
+    pub fn emit_focus_out(&mut self) {
+        if self.modes.contains(&1004) {
+            self.output_buffer.extend_from_slice(b"\x1b[O");
+        }
+    }
+
     pub fn process_input(&mut self, input: &[u8]) {
         let mut data = Vec::with_capacity(self.pending_escape.len() + input.len());
         if !self.pending_escape.is_empty() {
@@ -1046,6 +1092,27 @@ impl TerminalState {
                                         if command == "0" || command == "2" {
                                             self.window_title.clear();
                                             self.window_title.push_str(value);
+                                        } else if command == "8" {
+                                            // OSC 8 - Hyperlinks
+                                            // Format: ESC ] 8 ; params ; URI ST
+                                            // params can include id=<identifier>
+                                            // Empty URI = close hyperlink
+                                            if let Some((params, uri)) = value.split_once(';') {
+                                                if uri.is_empty() {
+                                                    // Close hyperlink
+                                                    self.current_hyperlink = None;
+                                                } else {
+                                                    // Open hyperlink
+                                                    let id = params
+                                                        .split(':')
+                                                        .find_map(|p| p.strip_prefix("id="))
+                                                        .map(|s| s.to_string());
+                                                    self.current_hyperlink = Some((uri.to_string(), id));
+                                                }
+                                            } else if value.is_empty() {
+                                                // OSC 8 ; ; (close hyperlink)
+                                                self.current_hyperlink = None;
+                                            }
                                         } else if command == "5522" {
                                             let (metadata, osc_payload) =
                                                 if let Some((metadata, osc_payload)) =
@@ -1779,16 +1846,17 @@ impl TerminalState {
                 1 => self.current_flags.bold = true,
                 2 => self.current_flags.dim = true,
                 3 => self.current_flags.italic = true,
-                4 => self.current_flags.underline = true,
+                4 => self.current_flags.underline = UnderlineStyle::Single,
                 5 => self.current_flags.blink = true,
                 7 => self.current_flags.inverse = true,
                 9 => self.current_flags.strikethrough = true,
+                21 => self.current_flags.underline = UnderlineStyle::Double,
                 22 => {
                     self.current_flags.bold = false;
                     self.current_flags.dim = false;
                 }
                 23 => self.current_flags.italic = false,
-                24 => self.current_flags.underline = false,
+                24 => self.current_flags.underline = UnderlineStyle::None,
                 25 => self.current_flags.blink = false,
                 27 => self.current_flags.inverse = false,
                 29 => self.current_flags.strikethrough = false,
@@ -1941,6 +2009,14 @@ impl TerminalState {
                 // Show cursor (mode 25)
                 self.modes.insert(25);
             }
+            1004 => {
+                // Focus event reporting
+                self.modes.insert(1004);
+            }
+            2004 => {
+                // Bracketed paste mode
+                self.modes.insert(2004);
+            }
             1000 | 1001 | 1002 | 1003 => {
                 // Mouse reporting modes
                 self.modes.insert(mode);
@@ -1994,6 +2070,14 @@ impl TerminalState {
             25 => {
                 // Hide cursor
                 self.modes.remove(&25);
+            }
+            1004 => {
+                // Disable focus event reporting
+                self.modes.remove(&1004);
+            }
+            2004 => {
+                // Disable bracketed paste mode
+                self.modes.remove(&2004);
             }
             1000 | 1001 | 1002 | 1003 => {
                 // Disable mouse reporting
@@ -2182,61 +2266,66 @@ impl TerminalState {
         }
     }
 
-    pub fn get_visible_cells(&self) -> Vec<Vec<TerminalCell>> {
-        let rows = self.grid.rows();
-        let cols = if rows > 0 { self.grid.row_len() } else { 80 };
-
-        // If not scrolling back, show current grid
-        if self.scroll_offset == 0 {
-            return self.grid.to_vec();
-        }
-
-        let blank_cell = self.create_blank_cell();
-
-        // Lazy reflow: only reflow the visible scrollback window.
-        // Collect enough raw lines to produce scroll_offset display rows.
-        // Walk back from the end to find the starting raw index, and
-        // extend further back if we land mid-logical-line.
-        let mut start_idx = self.scrollback.len().saturating_sub(self.scroll_offset + rows);
-        // Ensure we start at the beginning of a logical line
-        while start_idx > 0 && self.scrollback[start_idx - 1].is_wrapped {
-            start_idx -= 1;
-        }
-        let end_idx = self.scrollback.len();
-        let to_reflow: Vec<ScrollbackLine> = self.scrollback
-            .iter()
-            .skip(start_idx)
-            .take(end_idx - start_idx)
-            .cloned()
-            .collect();
-
-        let reflowed = Self::reflow_lines(&to_reflow, cols, &blank_cell);
-
-        // Take the last scroll_offset + rows from reflowed
-        let skip = reflowed.len().saturating_sub(self.scroll_offset + rows);
-        let visible_start = skip + (reflowed.len() - skip).saturating_sub(self.scroll_offset);
-        let mut result: Vec<Vec<TerminalCell>> = reflowed[visible_start..].iter().map(|l| l.cells.clone()).collect();
-
-        // Ensure we don't have more than grid rows from scrollback
-        if result.len() > rows {
-            result.truncate(rows);
-        }
-
-        // Fill remaining rows with current grid
-        for row in self.grid.iter() {
-            if result.len() < rows {
-                result.push(self.normalize_line_width(row.to_vec(), cols));
-            } else {
-                break;
+    pub fn get_visible_cells(&mut self) -> Vec<Vec<TerminalCell>> {
+        // Check if cache is valid
+        if let Some((cached_version, cached_offset, ref cells)) = self.visible_cells_cache {
+            if cached_version == self.grid_version && cached_offset == self.scroll_offset {
+                // Return clone of cached data (cheap: only clones Vec pointers, not cells)
+                return cells.clone();
             }
         }
 
-        // Pad with empty rows if needed
-        while result.len() < rows {
-            result.push(self.blank_line(cols));
-        }
+        // Cache miss - rebuild
+        let rows = self.grid.rows();
+        let cols = if rows > 0 { self.grid.row_len() } else { 80 };
 
-        result
+        let cells = if self.scroll_offset == 0 {
+            // Fast path: just get current grid
+            self.grid.to_vec()
+        } else {
+            // Slow path: reflow scrollback
+            let blank_cell = self.create_blank_cell();
+
+            let mut start_idx = self.scrollback.len().saturating_sub(self.scroll_offset + rows);
+            while start_idx > 0 && self.scrollback[start_idx - 1].is_wrapped {
+                start_idx -= 1;
+            }
+            let end_idx = self.scrollback.len();
+            let to_reflow: Vec<ScrollbackLine> = self.scrollback
+                .iter()
+                .skip(start_idx)
+                .take(end_idx - start_idx)
+                .cloned()
+                .collect();
+
+            let reflowed = Self::reflow_lines(&to_reflow, cols, &blank_cell);
+            let skip = reflowed.len().saturating_sub(self.scroll_offset + rows);
+            let visible_start = skip + (reflowed.len() - skip).saturating_sub(self.scroll_offset);
+            let mut result: Vec<Vec<TerminalCell>> = reflowed[visible_start..].iter().map(|l| l.cells.clone()).collect();
+
+            if result.len() > rows {
+                result.truncate(rows);
+            }
+
+            for row in self.grid.iter() {
+                if result.len() < rows {
+                    result.push(self.normalize_line_width(row.to_vec(), cols));
+                } else {
+                    break;
+                }
+            }
+
+            while result.len() < rows {
+                result.push(self.blank_line(cols));
+            }
+
+            result
+        };
+
+        // Store in cache and return clone
+        let result_clone = cells.clone();
+        self.visible_cells_cache = Some((self.grid_version, self.scroll_offset, cells));
+        result_clone
     }
 
     pub fn get_cursor_pos(&self) -> (usize, usize) {
