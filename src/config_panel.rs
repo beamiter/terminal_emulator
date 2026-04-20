@@ -34,6 +34,7 @@ pub struct ConfigPanel {
     // 编辑中的临时值
     edit_font_size: f32,
     edit_font_weight: f32,
+    edit_font_sharpness: f32,
     edit_line_spacing: f32,
     edit_padding: f32,
     edit_scrollback_lines: usize,
@@ -70,7 +71,8 @@ impl ConfigPanel {
             active_tab: ConfigTab::Font,
             edit_opacity: 1.0,
             edit_font_size: 14.0,
-            edit_font_weight: 1.0,
+            edit_font_weight: 0.85,
+            edit_font_sharpness: 0.75,
             edit_line_spacing: 1.3,
             edit_padding: 2.0,
             edit_scrollback_lines: 10000,
@@ -135,6 +137,7 @@ impl ConfigPanel {
         self.has_changes = false;
         self.edit_font_size = config.font_size;
         self.edit_font_weight = config.font_weight;
+        self.edit_font_sharpness = config.font_sharpness;
         self.edit_line_spacing = config.line_spacing;
         self.edit_padding = config.padding;
         self.edit_scrollback_lines = config.scrollback_lines;
@@ -152,6 +155,7 @@ impl ConfigPanel {
     pub fn apply_to_config(&self, config: &mut Config) {
         config.font_size = self.edit_font_size;
         config.font_weight = self.edit_font_weight;
+        config.font_sharpness = self.edit_font_sharpness;
         config.line_spacing = self.edit_line_spacing;
         config.padding = self.edit_padding;
         config.scrollback_lines = self.edit_scrollback_lines;
@@ -295,6 +299,20 @@ impl ConfigPanel {
             if ui
                 .add(
                     egui::Slider::new(&mut self.edit_font_weight, 0.5..=2.0)
+                        .step_by(0.05)
+                        .show_value(true),
+                )
+                .changed()
+            {
+                self.has_changes = true;
+            }
+        });
+
+        ui.horizontal(|ui| {
+            ui.label("Sharpness:");
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.edit_font_sharpness, 0.5..=1.0)
                         .step_by(0.05)
                         .show_value(true),
                 )

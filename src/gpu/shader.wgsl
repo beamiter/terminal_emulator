@@ -6,7 +6,7 @@ struct Uniforms {
     atlas_width: f32,
     atlas_height: f32,
     render_phase: f32,
-    _pad1: f32,
+    sharpness: f32,  // gamma exponent for sharpening (0.5-1.0, lower=sharper)
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -157,10 +157,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let alpha_g = textureSample(atlas_texture, atlas_sampler, uv).r;
         let alpha_b = textureSample(atlas_texture, atlas_sampler, uv + vec2(subpixel_step, 0.0)).r;
 
-        // Apply gentler sharpening (0.9 instead of 0.85) to reduce harshness
-        let sharp_r = pow(alpha_r, 0.9);
-        let sharp_g = pow(alpha_g, 0.9);
-        let sharp_b = pow(alpha_b, 0.9);
+        // Apply adjustable sharpening (controlled by uniform)
+        let sharp_r = pow(alpha_r, u.sharpness);
+        let sharp_g = pow(alpha_g, u.sharpness);
+        let sharp_b = pow(alpha_b, u.sharpness);
 
         // Only apply glyph where pixel falls within the glyph area
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)

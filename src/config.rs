@@ -64,6 +64,9 @@ pub struct Config {
     #[serde(default = "default_font_weight")]
     pub font_weight: f32,
 
+    #[serde(default = "default_font_sharpness")]
+    pub font_sharpness: f32,
+
     #[serde(default)]
     pub font_backend: FontBackendType,
 
@@ -125,7 +128,11 @@ fn default_font_size() -> f32 {
 }
 
 fn default_font_weight() -> f32 {
-    1.0 // Match CPU rendering without artificial thickening
+    0.85 // Thinner for better readability
+}
+
+fn default_font_sharpness() -> f32 {
+    0.75 // Lower = sharper (gamma exponent), range 0.5-1.0
 }
 
 fn default_line_spacing() -> f32 {
@@ -239,6 +246,7 @@ impl Default for Config {
             font_size: default_font_size(),
             font_family: default_font_family(),
             font_weight: default_font_weight(),
+            font_sharpness: default_font_sharpness(),
             font_backend: FontBackendType::default(),
             padding: default_padding(),
             line_spacing: default_line_spacing(),
