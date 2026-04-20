@@ -614,7 +614,9 @@ impl TerminalState {
             kitty_graphics: KittyGraphicsState::new(),
             dirty_region,
             grid_version: 1,
-            row_versions: vec![1; rows],
+            // IMPORTANT: row_versions must match grid.rows(), not the parameter 'rows'
+            // This ensures dirty tracking works correctly even with scrollback
+            row_versions: vec![1; rows],  // Use 'rows' here since grid.rows() == rows at init
             visible_cells_cache: None,
             current_hyperlink: None,
             osc8_hyperlinks: Vec::new(),
@@ -2696,6 +2698,12 @@ impl TerminalState {
 
         self.grid.resize(rows, cols, blank_cell.clone());
         self.alt_grid.resize(rows, cols, blank_cell.clone());
+
+        // CRITICAL: Sync row_versions size with grid size to prevent dirty mark loss
+        // When grid grows, we need to extend row_versions; when it shrinks, truncate it
+        if rows != self.row_versions.len() {
+            self.row_versions.resize(rows, self.grid_version);
+        }
 
         self.scroll_offset = 0;
         self.cursor_row = self.cursor_row.min(rows.saturating_sub(1));
