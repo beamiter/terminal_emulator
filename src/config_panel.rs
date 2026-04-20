@@ -83,7 +83,7 @@ impl ConfigPanel {
             edit_debug_overlay: false,
             edit_gpu_rendering: true,
             edit_app_renderer: AppRendererType::Glow,
-            edit_ui_scale: 1.0,
+            edit_ui_scale: 0.0,
             monospace_fonts: Vec::new(),
             all_fonts: Vec::new(),
             available_themes: Vec::new(),
@@ -148,7 +148,7 @@ impl ConfigPanel {
         self.edit_opacity = config.opacity;
         self.edit_gpu_rendering = config.gpu_rendering;
         self.edit_app_renderer = config.app_renderer;
-        self.edit_ui_scale = config.ui_scale;
+        self.edit_ui_scale = config.ui_scale.unwrap_or(0.0);
     }
 
     /// Apply all buffered edit values to the given Config.
@@ -166,7 +166,11 @@ impl ConfigPanel {
         config.opacity = self.edit_opacity;
         config.gpu_rendering = self.edit_gpu_rendering;
         config.app_renderer = self.edit_app_renderer;
-        config.ui_scale = self.edit_ui_scale;
+        config.ui_scale = if self.edit_ui_scale > 0.0 {
+            Some(self.edit_ui_scale)
+        } else {
+            None
+        };
     }
 
     pub fn close(&mut self) {
@@ -590,8 +594,15 @@ impl ConfigPanel {
             ui.label("UI Scale:");
             if ui
                 .add(
-                    egui::Slider::new(&mut self.edit_ui_scale, 0.5..=3.0)
+                    egui::Slider::new(&mut self.edit_ui_scale, 0.0..=3.0)
                         .step_by(0.1)
+                        .custom_formatter(|v, _| {
+                            if v <= 0.0 {
+                                "Auto (native DPI)".to_string()
+                            } else {
+                                format!("{:.1}x", v)
+                            }
+                        })
                         .show_value(true),
                 )
                 .changed()

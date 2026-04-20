@@ -115,12 +115,8 @@ pub struct Config {
     #[serde(default = "default_scroll_speed")]
     pub scroll_speed: u32,
 
-    #[serde(default = "default_ui_scale")]
-    pub ui_scale: f32,
-}
-
-fn default_ui_scale() -> f32 {
-    1.0
+    #[serde(default)]
+    pub ui_scale: Option<f32>,
 }
 
 fn default_font_size() -> f32 {
@@ -263,7 +259,7 @@ impl Default for Config {
             gpu_rendering: default_gpu_rendering(),
             app_renderer: AppRendererType::default(),
             scroll_speed: default_scroll_speed(),
-            ui_scale: default_ui_scale(),
+            ui_scale: None,
         }
     }
 }

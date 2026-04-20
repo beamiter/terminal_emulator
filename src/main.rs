@@ -535,8 +535,11 @@ fn main() -> Result<(), eframe::Error> {
         options,
         Box::new(move |cc| {
             let cfg_clone = cfg.clone();
-            // Set UI scale from config
-            cc.egui_ctx.set_pixels_per_point(cfg_clone.ui_scale);
+            // Set UI scale: use config value if provided, otherwise use native DPI
+            let scale = cfg_clone.ui_scale.unwrap_or_else(|| {
+                cc.egui_ctx.native_pixels_per_point().unwrap_or(1.0)
+            });
+            cc.egui_ctx.set_pixels_per_point(scale);
             configure_fonts_and_gpu(&cc.egui_ctx, cc.wgpu_render_state.as_ref(), &cfg_clone);
             let initial_theme = theme::Theme::get_theme(&cfg_clone.theme).unwrap_or_default();
             apply_theme_visuals(&cc.egui_ctx, &initial_theme);
@@ -1032,8 +1035,11 @@ impl TerminalApp {
     }
 
     fn apply_runtime_config(&mut self, ctx: &egui::Context) {
-        // Apply UI scale
-        ctx.set_pixels_per_point(self.config.ui_scale);
+        // Apply UI scale: use config value if provided, otherwise use native DPI
+        let scale = self.config.ui_scale.unwrap_or_else(|| {
+            ctx.native_pixels_per_point().unwrap_or(1.0)
+        });
+        ctx.set_pixels_per_point(scale);
 
         configure_fonts_and_gpu(ctx, self.renderer.wgpu_render_state.as_ref(), &self.config);
         apply_theme_visuals(ctx, &self.current_theme);
