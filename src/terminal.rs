@@ -2352,6 +2352,21 @@ impl TerminalState {
         (self.cursor_row, self.cursor_col)
     }
 
+    /// 获取当前可见行的wrapped状态，用于跨行链接检测
+    pub fn get_visible_row_wrapped(&self) -> Vec<bool> {
+        let rows = self.grid.rows();
+
+        if self.scroll_offset == 0 {
+            // Fast path: just get current grid wrapped flags
+            self.grid.row_wrapped.clone()
+        } else {
+            // Slow path: need to reconstruct from scrollback
+            // For simplicity, when scrolling we disable wrapped link detection
+            // by returning all false (can be improved later with full reflow)
+            vec![false; rows]
+        }
+    }
+
     pub fn get_output(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.output_buffer)
     }

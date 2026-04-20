@@ -1797,9 +1797,10 @@ impl TerminalApp {
                     if let Some(session) = self.session_manager.get_session_mut(session_idx) {
                         let mut terminal_guard = session.terminal.lock();
                         let visible_cells = terminal_guard.get_visible_cells();
+                        let row_wrapped = terminal_guard.get_visible_row_wrapped();
                         let links = self
                             .link_detector
-                            .detect_links_in_visible_cells(&visible_cells);
+                            .detect_links_in_visible_cells_with_wrapping(&visible_cells, &row_wrapped);
 
                         // 获取当前窗格的渲染器
                         let renderer = &mut self.pane_renderers[pane_idx];
@@ -1876,7 +1877,8 @@ impl TerminalApp {
                         || scroll_offset != self.cached_links_scroll_offset
                     {
                         let visible_cells = terminal_guard.get_visible_cells();
-                        self.cached_links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
+                        let row_wrapped = terminal_guard.get_visible_row_wrapped();
+                        self.cached_links = self.link_detector.detect_links_in_visible_cells_with_wrapping(&visible_cells, &row_wrapped);
                         self.cached_links_grid_version = grid_version;
                         self.cached_links_scroll_offset = scroll_offset;
                     }
@@ -3313,7 +3315,8 @@ impl eframe::App for TerminalApp {
                 || scroll_offset != self.cached_links_scroll_offset
             {
                 let visible_cells = terminal.get_visible_cells();
-                self.cached_links = self.link_detector.detect_links_in_visible_cells(&visible_cells);
+                let row_wrapped = terminal.get_visible_row_wrapped();
+                self.cached_links = self.link_detector.detect_links_in_visible_cells_with_wrapping(&visible_cells, &row_wrapped);
                 self.cached_links_grid_version = grid_version;
                 self.cached_links_scroll_offset = scroll_offset;
             }

@@ -109,7 +109,7 @@ fn default_font_size() -> f32 {
 }
 
 fn default_font_weight() -> f32 {
-    1.15
+    1.25 // Increased from 1.15 for better regular font clarity
 }
 
 fn default_line_spacing() -> f32 {

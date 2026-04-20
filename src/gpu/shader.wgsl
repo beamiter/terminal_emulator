@@ -120,9 +120,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         var alpha = textureSample(atlas_texture, atlas_sampler, uv).r;
 
-        // Subtle alpha sharpening for crisper text (counters fontdue's softness)
+        // More aggressive alpha sharpening for crisp text rendering
         // Using pow < 1.0 boosts mid-range values, making edges sharper
-        alpha = pow(alpha, 0.92);
+        // 0.75 exponent provides much better clarity than the previous 0.92
+        alpha = pow(alpha, 0.75);
+
+        // Optional: clip very faint edges (< 2%) to pure transparent
+        // This helps prevent ghosting artifacts
+        if (alpha < 0.02) {
+            alpha = 0.0;
+        }
 
         // Only apply glyph where pixel falls within the glyph area
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)

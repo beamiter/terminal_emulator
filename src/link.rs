@@ -233,17 +233,92 @@ impl LinkDetector {
         all_links
     }
 
-    /// 在当前可视内容中检测链接。
+    /// 在当前可视内容中检测链接，处理跨行换行的URL。
     pub fn detect_links_in_visible_cells(
         &self,
         visible_cells: &[Vec<crate::terminal::TerminalCell>],
     ) -> Vec<Link> {
+        self.detect_links_in_visible_cells_with_wrapping(visible_cells, &[])
+    }
+
+    /// 在当前可视内容中检测链接，支持传入row_wrapped标志以正确处理跨行链接。
+    pub fn detect_links_in_visible_cells_with_wrapping(
+        &self,
+        visible_cells: &[Vec<crate::terminal::TerminalCell>],
+        row_wrapped: &[bool],
+    ) -> Vec<Link> {
         let mut all_links = Vec::new();
 
+        if row_wrapped.is_empty() || row_wrapped.len() != visible_cells.len() {
+            for (line_idx, line) in visible_cells.iter().enumerate() {
+                let line_str: String = line.iter().map(|cell| cell.character).collect();
+                let links = self.detect_links_in_line(&line_str, line_idx);
+                all_links.extend(links);
+            }
+            return all_links;
+        }
+
+        // 将连续的换行行合并为逻辑行，记录每行的列数累积偏移
+        let mut logical_lines: Vec<(usize, usize, String, Vec<usize>)> = Vec::new();
+        let mut current_start = 0;
+        let mut current_text = String::new();
+        let mut row_char_offsets: Vec<usize> = Vec::new(); // 每个物理行在逻辑行中的起始字符偏移
+
         for (line_idx, line) in visible_cells.iter().enumerate() {
+            row_char_offsets.push(current_text.chars().count());
             let line_str: String = line.iter().map(|cell| cell.character).collect();
-            let links = self.detect_links_in_line(&line_str, line_idx);
-            all_links.extend(links);
+            current_text.push_str(&line_str);
+
+            if line_idx == visible_cells.len() - 1 || !row_wrapped[line_idx] {
+                logical_lines.push((
+                    current_start,
+                    line_idx,
+                    current_text.clone(),
+                    row_char_offsets.clone(),
+                ));
+                current_text.clear();
+                row_char_offsets.clear();
+                current_start = line_idx + 1;
+            }
+        }
+
+        for (start_row, _end_row, logical_text, char_offsets) in logical_lines {
+            let links = self.detect_links_in_line(&logical_text, 0);
+
+            for link in links {
+                let full_url = link.text.clone();
+                let link_start = link.col_start;
+                let link_end = link.col_end;
+
+                // 将逻辑偏移分割到多个物理行
+                for (i, &row_offset) in char_offsets.iter().enumerate() {
+                    let row_idx = start_row + i;
+                    let row_len = visible_cells[row_idx].iter().map(|c| c.character).count();
+                    let row_end_offset = row_offset + row_len;
+
+                    // 检查该链接是否与这个物理行重叠
+                    if link_start < row_end_offset && link_end > row_offset {
+                        let col_start = if link_start > row_offset {
+                            link_start - row_offset
+                        } else {
+                            0
+                        };
+                        let col_end = if link_end < row_end_offset {
+                            link_end - row_offset
+                        } else {
+                            row_len
+                        };
+
+                        all_links.push(Link {
+                            line: row_idx,
+                            col_start,
+                            col_end,
+                            link_type: link.link_type,
+                            text: full_url.clone(),
+                        });
+                    }
+                }
+            }
         }
 
         all_links
