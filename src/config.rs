@@ -128,15 +128,15 @@ fn default_font_size() -> f32 {
 }
 
 fn default_font_weight() -> f32 {
-    0.85 // Thinner for better readability
+    1.0
 }
 
 fn default_font_sharpness() -> f32 {
-    0.75 // Lower = sharper (gamma exponent), range 0.5-1.0
+    1.0
 }
 
 fn default_line_spacing() -> f32 {
-    1.3
+    1.0
 }
 
 fn detect_fonts_by_query(extra_args: &[&str]) -> Vec<String> {
