@@ -118,16 +118,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let t = clamp(rel / max(glyph_size, vec2<f32>(1.0, 1.0)), vec2<f32>(0.0), vec2<f32>(1.0));
         let uv = in.glyph_uv0 + t * (in.glyph_uv1 - in.glyph_uv0);
 
-        var alpha = textureSample(atlas_texture, atlas_sampler, uv).r;
+        // Subpixel RGB rendering: sample at 3 horizontal offsets
+        // Each LCD subpixel (R/G/B) gets its own coverage value
+        // Step size = 1/3 of a pixel in UV space
+        let subpixel_step = 1.0 / (3.0 * u.atlas_width);
 
-        // Balanced alpha sharpening for clear but smooth text
-        // 0.85 provides clarity without harsh edges (milder than 0.75, stronger than 0.92)
-        alpha = pow(alpha, 0.85);
+        let alpha_r = textureSample(atlas_texture, atlas_sampler, uv - vec2(subpixel_step, 0.0)).r;
+        let alpha_g = textureSample(atlas_texture, atlas_sampler, uv).r;
+        let alpha_b = textureSample(atlas_texture, atlas_sampler, uv + vec2(subpixel_step, 0.0)).r;
+
+        // Apply sharpening to each channel independently
+        // 0.85 provides clarity without harsh edges
+        let sharp_r = pow(alpha_r, 0.85);
+        let sharp_g = pow(alpha_g, 0.85);
+        let sharp_b = pow(alpha_b, 0.85);
 
         // Only apply glyph where pixel falls within the glyph area
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)
                       * step(rel.x, glyph_size.x) * step(rel.y, glyph_size.y);
-        color = mix(color, vec4<f32>(in.fg_color.rgb, 1.0), alpha * in_bounds);
+
+        // Blend each color channel separately (subpixel rendering)
+        color.r = mix(color.r, in.fg_color.r, sharp_r * in_bounds);
+        color.g = mix(color.g, in.fg_color.g, sharp_g * in_bounds);
+        color.b = mix(color.b, in.fg_color.b, sharp_b * in_bounds);
+        color.a = 1.0;
     }
 
     // Underline: 1-2px line at bottom of cell
