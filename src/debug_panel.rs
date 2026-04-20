@@ -82,6 +82,8 @@ impl DebugPanel {
         session_count: usize,
         scrollback_used: usize,
         scrollback_max: usize,
+        kitty_images_count: usize,
+        kitty_memory_mb: u64,
     ) {
         if !self.is_open {
             return;
@@ -125,6 +127,8 @@ impl DebugPanel {
                         "Scrollback",
                         format!("{} / {}", scrollback_used, scrollback_max),
                     ),
+                    ("Kitty Images", format!("{}", kitty_images_count)),
+                    ("Kitty Memory", format!("{} MB", kitty_memory_mb)),
                 ];
 
                 for (label, value) in &lines {

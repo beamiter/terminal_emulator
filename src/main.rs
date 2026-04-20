@@ -2227,6 +2227,8 @@ impl TerminalApp {
             let grid_cols = terminal.grid.cols();
             let grid_rows = terminal.grid.rows();
             let scrollback_used = terminal.scrollback.len();
+            let kitty_images_count = terminal.kitty_graphics.image_count();
+            let kitty_memory_mb = terminal.kitty_graphics.image_memory_mb();
             let scrollback_max = terminal.max_scrollback();
             drop(terminal);
             let session_count = self.session_manager.len();
@@ -2237,6 +2239,8 @@ impl TerminalApp {
                 session_count,
                 scrollback_used,
                 scrollback_max,
+                kitty_images_count,
+                kitty_memory_mb,
             );
         }
     }

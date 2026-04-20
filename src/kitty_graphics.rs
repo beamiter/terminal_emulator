@@ -2,6 +2,9 @@ use base64::Engine;
 use image;
 use std::collections::HashMap;
 
+const MAX_KITTY_IMAGES: usize = 100;
+const MAX_KITTY_CACHE_MB: u64 = 256;
+
 /// 图像格式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
@@ -81,9 +84,10 @@ pub struct KittyGraphicsState {
     placements: Vec<KittyPlacement>,
     pending_transfer: Option<PendingTransfer>,
     next_placement_id: u32,
-    // Performance stats
     total_decoded: u32,
     total_bytes_processed: u64,
+    total_image_memory: u64,
+    access_order: std::collections::VecDeque<u32>,
 }
 
 impl KittyGraphicsState {
@@ -95,6 +99,22 @@ impl KittyGraphicsState {
             next_placement_id: 1,
             total_decoded: 0,
             total_bytes_processed: 0,
+            total_image_memory: 0,
+            access_order: std::collections::VecDeque::new(),
+        }
+    }
+
+    fn enforce_image_limits(&mut self) {
+        while self.images.len() > MAX_KITTY_IMAGES
+            || self.total_image_memory > MAX_KITTY_CACHE_MB * 1024 * 1024 {
+            if let Some(oldest_id) = self.access_order.pop_front() {
+                if let Some(img) = self.images.remove(&oldest_id) {
+                    self.total_image_memory -= img.data.len() as u64;
+                    self.placements.retain(|p| p.image_id != oldest_id);
+                }
+            } else {
+                break;
+            }
         }
     }
 
@@ -213,11 +233,12 @@ impl KittyGraphicsState {
                 }
             };
 
-            // 更新性能统计
+            let data_size = final_data.len() as u64;
             self.total_decoded += 1;
-            self.total_bytes_processed += final_data.len() as u64;
+            self.total_bytes_processed += data_size;
+            self.total_image_memory += data_size;
+            self.access_order.push_back(image_id);
 
-            // 存储图像
             self.images.insert(
                 image_id,
                 KittyImage {
@@ -228,6 +249,8 @@ impl KittyGraphicsState {
                     data: final_data,
                 },
             );
+
+            self.enforce_image_limits();
 
             log::info!("[KITTY_GRAPHICS] Stored image {} ({}x{}) format: {:?} | Stats: {} images, {}MB total",
                 image_id, width, height, format, self.images.len(), self.total_bytes_processed / 1_000_000);
@@ -304,8 +327,11 @@ impl KittyGraphicsState {
     /// 处理删除操作 (a=d)
     fn handle_delete(&mut self, params: KittyGraphicsParams) -> Result<(), String> {
         if let Some(image_id) = params.image_id {
-            self.images.remove(&image_id);
+            if let Some(img) = self.images.remove(&image_id) {
+                self.total_image_memory -= img.data.len() as u64;
+            }
             self.placements.retain(|p| p.image_id != image_id);
+            self.access_order.retain(|&id| id != image_id);
             log::info!("[KITTY_GRAPHICS] Deleted image {}", image_id);
         } else if let Some(placement_id) = params.placement_id {
             self.placements
@@ -346,6 +372,14 @@ impl KittyGraphicsState {
     /// 获取图像
     pub fn get_image(&self, id: u32) -> Option<&KittyImage> {
         self.images.get(&id)
+    }
+
+    pub fn image_count(&self) -> usize {
+        self.images.len()
+    }
+
+    pub fn image_memory_mb(&self) -> u64 {
+        self.total_image_memory / 1_000_000
     }
 
     /// 清除所有数据

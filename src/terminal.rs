@@ -575,7 +575,7 @@ impl TerminalState {
             scrollback: VecDeque::new(),
             selection: None,
             scroll_offset: 0,
-            max_scrollback: 10000,
+            max_scrollback: 2000,
             use_alt_buffer: false,
             cursor_row: 0,
             cursor_col: 0,
