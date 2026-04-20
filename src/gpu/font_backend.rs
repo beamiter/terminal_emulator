@@ -16,7 +16,7 @@ pub struct GlyphRegion {
 pub struct AtlasGlyphKey {
     pub ch: char,
     pub bold: bool,
-    /// Subpixel horizontal offset: 0 = 0.0px, 1 = 0.33px, 2 = 0.67px
+    /// Subpixel horizontal offset: 0 = 0.0px, 1 = 0.25px, 2 = 0.5px, 3 = 0.75px
     pub subpixel_offset: u8,
 }
 

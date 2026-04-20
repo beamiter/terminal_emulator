@@ -3,9 +3,10 @@ use crate::gpu;
 use crate::terminal::{clamp_terminal_dimensions, TerminalState};
 use egui::{Color32, FontId, Response, Ui, Vec2};
 
-/// Quantize to 1/3 pixel increments for subpixel rendering cache coherence.
-fn quantize_subpixel(v: f32) -> f32 {
-    (v * 3.0).round() / 3.0
+/// Quantize to 1/4 pixel increments for subpixel rendering cache coherence.
+fn quantize_subpixel(v: f32) -> u8 {
+    let quantized = (v * 4.0).round() as u8;
+    (quantized % 4).min(3)
 }
 
 fn resolve_foreground_color(
@@ -1631,8 +1632,9 @@ impl TerminalRenderer {
             }
 
             let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
-                // Use subpixel offset 0 for now - shader handles subpixel at texture sampling level
-                let region = gpu_res.atlas.get_or_rasterize(cell.character, bold, 0);
+                let cell_x = col_idx as f32 * cell_width + glyph_offset_x_adjust;
+                let subpixel_bin = quantize_subpixel(cell_x.fract().abs());
+                let region = gpu_res.atlas.get_or_rasterize(cell.character, bold, subpixel_bin);
                 if region.width_px > 0.0 && region.height_px > 0.0 {
                     (
                         region.u0,

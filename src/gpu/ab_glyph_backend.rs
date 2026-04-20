@@ -74,12 +74,12 @@ impl AbGlyphAtlas {
 
     fn prepopulate_ascii(&mut self) {
         for ch in ' '..='~' {
-            for subpixel in 0..=2 {
+            for subpixel in 0..=3 {
                 self.get_or_rasterize(ch, false, subpixel);
             }
         }
         for ch in ' '..='~' {
-            for subpixel in 0..=2 {
+            for subpixel in 0..=3 {
                 self.get_or_rasterize(ch, true, subpixel);
             }
         }
@@ -231,10 +231,11 @@ impl FontBackend for AbGlyphAtlas {
 
             self.dirty = true;
 
-            // Apply subpixel offset to bearing_x: 0 → 0.0px, 1 → 0.33px, 2 → 0.67px
+            // Apply subpixel offset to bearing_x: 0 → 0.0px, 1 → 0.25px, 2 → 0.5px, 3 → 0.75px
             let subpixel_shift = match subpixel_offset {
-                1 => 1.0 / 3.0,
-                2 => 2.0 / 3.0,
+                1 => 0.25,
+                2 => 0.5,
+                3 => 0.75,
                 _ => 0.0,
             };
 
