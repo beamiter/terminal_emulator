@@ -1242,6 +1242,10 @@ impl TerminalState {
                                             );
                                         }
                                     }
+                                    self.mark_rows_dirty(
+                                        self.scroll_region_top,
+                                        self.scroll_region_bottom,
+                                    );
                                 }
                             }
                         }
@@ -1370,6 +1374,7 @@ impl TerminalState {
                 // Cursor up - should scroll region down if at top
                 let n = params.first().copied().unwrap_or(1) as usize;
 
+                let mut scrolled = false;
                 for _ in 0..n {
                     if self.cursor_row > self.scroll_region_top {
                         // Cursor is not at top of scroll region, just move up
@@ -1395,9 +1400,13 @@ impl TerminalState {
                                     self.grid.set_row(self.scroll_region_top + j, line.clone());
                                 }
                             }
+                            scrolled = true;
                         }
                         // Cursor stays at top row
                     }
+                }
+                if scrolled {
+                    self.mark_rows_dirty(self.scroll_region_top, self.scroll_region_bottom);
                 }
             }
             'B' => {
@@ -1544,6 +1553,7 @@ impl TerminalState {
                         self.grid.set_row(self.cursor_row, self.blank_line(cols));
                     }
                 }
+                self.mark_rows_dirty(self.cursor_row, self.scroll_region_bottom);
             }
             'M' => {
                 // Delete line(s) at cursor position (pull lines up)
@@ -1563,6 +1573,7 @@ impl TerminalState {
                             .set_row(self.scroll_region_bottom, self.blank_line(cols));
                     }
                 }
+                self.mark_rows_dirty(self.cursor_row, self.scroll_region_bottom);
             }
             'm' => {
                 if private_prefix == Some(b'>') && intermediates.is_empty() {
@@ -1679,6 +1690,7 @@ impl TerminalState {
                                 self.grid.set_row(self.scroll_region_top + i, line.clone());
                             }
                         }
+                        self.mark_rows_dirty(self.scroll_region_top, self.scroll_region_bottom);
                     }
                 }
             }
@@ -1775,6 +1787,8 @@ impl TerminalState {
                             );
                         }
                     }
+                    // Mark row as dirty after modification
+                    self.mark_row_dirty(self.cursor_row);
                 }
             }
             'P' => {
@@ -1790,6 +1804,8 @@ impl TerminalState {
                         *self.grid.get_mut(self.cursor_row, last_col) = blank_cell.clone();
                     }
                 }
+                // Mark row as dirty after modification
+                self.mark_row_dirty(self.cursor_row);
             }
             'X' => {
                 // ECH - Erase Character(s)
@@ -1802,6 +1818,8 @@ impl TerminalState {
                         break;
                     }
                 }
+                // Mark row as dirty after modification
+                self.mark_row_dirty(self.cursor_row);
             }
             'q' => {
                 if private_prefix == Some(b'>') && intermediates.is_empty() {

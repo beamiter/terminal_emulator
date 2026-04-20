@@ -3007,6 +3007,9 @@ impl eframe::App for TerminalApp {
         // Force repaint if we have any keyboard/cursor input - ensures input renders immediately
         if has_keyboard_input || has_cursor_move_input {
             ctx.request_repaint();
+            // On high-latency systems with much history, request multiple repaints to ensure
+            // keyboard input displays immediately without waiting for mouse interaction
+            ctx.request_repaint_after(std::time::Duration::from_millis(1));
         }
 
         // Step 6: 处理 shell 事件
