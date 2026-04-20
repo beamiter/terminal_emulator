@@ -108,7 +108,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return color;
     }
 
-    // Composite glyph foreground using atlas alpha
+    // Composite glyph foreground using atlas alpha with subpixel RGB rendering
     if has_glyph {
         // Glyph size in physical pixels (derived from atlas UV extent)
         let glyph_size = (in.glyph_uv1 - in.glyph_uv0) * vec2<f32>(u.atlas_width, u.atlas_height);
@@ -120,7 +120,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         // Subpixel RGB rendering: sample at 3 horizontal offsets
         // Each LCD subpixel (R/G/B) gets its own coverage value
-        // Step size = 1/3 of a pixel in UV space
         let subpixel_step = 1.0 / (3.0 * u.atlas_width);
 
         let alpha_r = textureSample(atlas_texture, atlas_sampler, uv - vec2(subpixel_step, 0.0)).r;
@@ -128,7 +127,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let alpha_b = textureSample(atlas_texture, atlas_sampler, uv + vec2(subpixel_step, 0.0)).r;
 
         // Apply sharpening to each channel independently
-        // 0.85 provides clarity without harsh edges
         let sharp_r = pow(alpha_r, 0.85);
         let sharp_g = pow(alpha_g, 0.85);
         let sharp_b = pow(alpha_b, 0.85);
@@ -137,11 +135,21 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)
                       * step(rel.x, glyph_size.x) * step(rel.y, glyph_size.y);
 
-        // Blend each color channel separately (subpixel rendering)
-        color.r = mix(color.r, in.fg_color.r, sharp_r * in_bounds);
-        color.g = mix(color.g, in.fg_color.g, sharp_g * in_bounds);
-        color.b = mix(color.b, in.fg_color.b, sharp_b * in_bounds);
-        color.a = 1.0;
+        // Pre-blend each channel against the cell's background color.
+        // Output opaque (alpha=1) so hardware blend fully replaces the background pass.
+        // This avoids colored halos from per-channel alpha differences.
+        let sr = sharp_r * in_bounds;
+        let sg = sharp_g * in_bounds;
+        let sb = sharp_b * in_bounds;
+
+        if max(sr, max(sg, sb)) > 0.001 {
+            color = vec4<f32>(
+                mix(in.bg_color.r, in.fg_color.r, sr),
+                mix(in.bg_color.g, in.fg_color.g, sg),
+                mix(in.bg_color.b, in.fg_color.b, sb),
+                1.0
+            );
+        }
     }
 
     // Underline: 1-2px line at bottom of cell
