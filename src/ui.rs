@@ -1628,20 +1628,16 @@ impl TerminalRenderer {
             }
 
             let (u0, v0, u1, v1, glyph_offset_x, glyph_offset_y) = if has_glyph {
-                // Compute subpixel offset: quantize horizontal glyph position to 3 bins
-                let glyph_x_pos = col_idx as f32 * cell_width + glyph_offset_x_adjust;
-                let frac = glyph_x_pos - glyph_x_pos.floor();
-                let subpixel_offset = ((frac * 3.0).round() as u8).min(2);
-
-                let region = gpu_res.atlas.get_or_rasterize(cell.character, bold, subpixel_offset);
+                // Use subpixel offset 0 for now - shader handles subpixel at texture sampling level
+                let region = gpu_res.atlas.get_or_rasterize(cell.character, bold, 0);
                 if region.width_px > 0.0 && region.height_px > 0.0 {
                     (
                         region.u0,
                         region.v0,
                         region.u1,
                         region.v1,
-                        quantize_subpixel(region.bearing_x + glyph_offset_x_adjust),
-                        (region.bearing_y + glyph_offset_y_adjust).round(), // integer y-snap
+                        (region.bearing_x + glyph_offset_x_adjust).round(),
+                        (region.bearing_y + glyph_offset_y_adjust).round(),
                     )
                 } else {
                     (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)

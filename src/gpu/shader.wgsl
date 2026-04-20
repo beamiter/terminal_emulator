@@ -149,18 +149,18 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let t = clamp(rel / max(glyph_size, vec2<f32>(1.0, 1.0)), vec2<f32>(0.0), vec2<f32>(1.0));
         let uv = in.glyph_uv0 + t * (in.glyph_uv1 - in.glyph_uv0);
 
-        // Subpixel RGB rendering: sample at 3 horizontal offsets
-        // Each LCD subpixel (R/G/B) gets its own coverage value
-        let subpixel_step = 1.0 / (3.0 * u.atlas_width);
+        // Optimized subpixel rendering: reduce color fringing by using smaller offsets
+        // Use 1/6 pixel offset instead of 1/3 to reduce color separation
+        let subpixel_step = 1.0 / (6.0 * u.atlas_width);
 
         let alpha_r = textureSample(atlas_texture, atlas_sampler, uv - vec2(subpixel_step, 0.0)).r;
         let alpha_g = textureSample(atlas_texture, atlas_sampler, uv).r;
         let alpha_b = textureSample(atlas_texture, atlas_sampler, uv + vec2(subpixel_step, 0.0)).r;
 
-        // Apply sharpening to each channel independently
-        let sharp_r = pow(alpha_r, 0.85);
-        let sharp_g = pow(alpha_g, 0.85);
-        let sharp_b = pow(alpha_b, 0.85);
+        // Apply gentler sharpening (0.9 instead of 0.85) to reduce harshness
+        let sharp_r = pow(alpha_r, 0.9);
+        let sharp_g = pow(alpha_g, 0.9);
+        let sharp_b = pow(alpha_b, 0.9);
 
         // Only apply glyph where pixel falls within the glyph area
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)
@@ -175,11 +175,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let fg_linear = srgb_to_linear_vec3(in.fg_color.rgb);
             let bg_linear = srgb_to_linear_vec3(in.bg_color.rgb);
 
-            // Blend in linear space (per-channel for subpixel RGB)
+            // Reduce subpixel effect by averaging with grayscale alpha
+            let avg_alpha = (sr + sg + sb) / 3.0;
+            let blend_factor = 0.3; // 30% subpixel, 70% grayscale to reduce fringing
+
+            let final_r = mix(avg_alpha, sr, blend_factor);
+            let final_g = mix(avg_alpha, sg, blend_factor);
+            let final_b = mix(avg_alpha, sb, blend_factor);
+
+            // Blend in linear space with adjusted per-channel alphas
             let blended_linear = vec3<f32>(
-                mix(bg_linear.r, fg_linear.r, sr),
-                mix(bg_linear.g, fg_linear.g, sg),
-                mix(bg_linear.b, fg_linear.b, sb)
+                mix(bg_linear.r, fg_linear.r, final_r),
+                mix(bg_linear.g, fg_linear.g, final_g),
+                mix(bg_linear.b, fg_linear.b, final_b)
             );
 
             // Convert back to sRGB for display
