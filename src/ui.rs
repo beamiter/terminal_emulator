@@ -1252,13 +1252,13 @@ impl TerminalRenderer {
             // Selection overlay changes
             if self.last_rendered_selection != current_selection {
                 // Mark rows affected by old and new selection
-                Self::mark_selection_rows(&self.last_rendered_selection, rows, &mut dirty_rows);
-                Self::mark_selection_rows(&current_selection, rows, &mut dirty_rows);
+                Self::mark_selection_rows(&self.last_rendered_selection, rows, &mut dirty_rows, terminal);
+                Self::mark_selection_rows(&current_selection, rows, &mut dirty_rows, terminal);
             }
 
             // Also always mark current selection rows during drag (workaround for selection rendering issue)
             if current_selection.is_some() {
-                Self::mark_selection_rows(&current_selection, rows, &mut dirty_rows);
+                Self::mark_selection_rows(&current_selection, rows, &mut dirty_rows, terminal);
             }
 
             // Search overlay changes
@@ -1499,11 +1499,15 @@ impl TerminalRenderer {
         selection: &Option<crate::terminal::Selection>,
         rows: usize,
         dirty_rows: &mut [bool],
+        terminal: &TerminalState,
     ) {
         if let Some(sel) = selection {
-            let min_row = sel.anchor.0.min(sel.active.0);
-            let max_row = sel.anchor.0.max(sel.active.0);
-            for r in min_row..=max_row.min(rows - 1) {
+            let min_abs = sel.anchor.0.min(sel.active.0);
+            let max_abs = sel.anchor.0.max(sel.active.0);
+            let scrollback_offset = terminal.scrollback.len().saturating_sub(terminal.scroll_offset);
+            let start = min_abs.max(scrollback_offset) - scrollback_offset;
+            let end = max_abs.saturating_sub(scrollback_offset);
+            for r in start..=end.min(rows.saturating_sub(1)) {
                 dirty_rows[r] = true;
             }
         }
