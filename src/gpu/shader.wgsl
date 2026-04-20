@@ -88,6 +88,37 @@ fn vs_main(
     return out;
 }
 
+// Gamma correction helpers for proper subpixel blending
+fn srgb_to_linear(srgb: f32) -> f32 {
+    if srgb <= 0.04045 {
+        return srgb / 12.92;
+    }
+    return pow((srgb + 0.055) / 1.055, 2.4);
+}
+
+fn linear_to_srgb(linear: f32) -> f32 {
+    if linear <= 0.0031308 {
+        return linear * 12.92;
+    }
+    return 1.055 * pow(linear, 1.0 / 2.4) - 0.055;
+}
+
+fn srgb_to_linear_vec3(srgb: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        srgb_to_linear(srgb.r),
+        srgb_to_linear(srgb.g),
+        srgb_to_linear(srgb.b)
+    );
+}
+
+fn linear_to_srgb_vec3(linear: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        linear_to_srgb(linear.r),
+        linear_to_srgb(linear.g),
+        linear_to_srgb(linear.b)
+    );
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let has_glyph = (in.flags & 1u) != 0u;
@@ -135,20 +166,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)
                       * step(rel.x, glyph_size.x) * step(rel.y, glyph_size.y);
 
-        // Pre-blend each channel against the cell's background color.
-        // Output opaque (alpha=1) so hardware blend fully replaces the background pass.
-        // This avoids colored halos from per-channel alpha differences.
         let sr = sharp_r * in_bounds;
         let sg = sharp_g * in_bounds;
         let sb = sharp_b * in_bounds;
 
         if max(sr, max(sg, sb)) > 0.001 {
-            color = vec4<f32>(
-                mix(in.bg_color.r, in.fg_color.r, sr),
-                mix(in.bg_color.g, in.fg_color.g, sg),
-                mix(in.bg_color.b, in.fg_color.b, sb),
-                1.0
+            // Convert to linear space for proper blending
+            let fg_linear = srgb_to_linear_vec3(in.fg_color.rgb);
+            let bg_linear = srgb_to_linear_vec3(in.bg_color.rgb);
+
+            // Blend in linear space (per-channel for subpixel RGB)
+            let blended_linear = vec3<f32>(
+                mix(bg_linear.r, fg_linear.r, sr),
+                mix(bg_linear.g, fg_linear.g, sg),
+                mix(bg_linear.b, fg_linear.b, sb)
             );
+
+            // Convert back to sRGB for display
+            color = vec4<f32>(linear_to_srgb_vec3(blended_linear), 1.0);
         }
     }
 
