@@ -125,7 +125,7 @@ fn default_font_size() -> f32 {
 }
 
 fn default_font_weight() -> f32 {
-    1.2 // Slightly increased from 1.15 for better clarity, but not too heavy
+    1.0 // Match CPU rendering without artificial thickening
 }
 
 fn default_line_spacing() -> f32 {

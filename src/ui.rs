@@ -1303,10 +1303,11 @@ impl TerminalRenderer {
                 atlas_h = ah as f32;
                 let font_cell_width = advance;
                 let font_cell_height = ascent - descent;
+                // Round adjustments to integer pixels to prevent blur from linear filtering
                 let glyph_offset_x_adjust =
-                    ((target_cell_width - font_cell_width) * 0.5).max(0.0);
+                    ((target_cell_width - font_cell_width) * 0.5).max(0.0).round();
                 let glyph_offset_y_adjust =
-                    ((target_cell_height - font_cell_height) * 0.5).max(0.0);
+                    ((target_cell_height - font_cell_height) * 0.5).max(0.0).round();
 
                 // Build link map for O(1) lookup instead of O(n) search per cell
                 let mut link_map: std::collections::HashMap<usize, Vec<&crate::link::Link>> =
@@ -1640,7 +1641,7 @@ impl TerminalRenderer {
                         region.u1,
                         region.v1,
                         quantize_subpixel(region.bearing_x + glyph_offset_x_adjust),
-                        quantize_subpixel(region.bearing_y + glyph_offset_y_adjust),
+                        (region.bearing_y + glyph_offset_y_adjust).round(), // integer y-snap
                     )
                 } else {
                     (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
