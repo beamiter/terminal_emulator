@@ -44,7 +44,7 @@ use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
-use terminal::TerminalState;
+use terminal::{clamp_terminal_dimensions, TerminalState};
 use ui::TerminalRenderer;
 
 fn detect_image_mime_type(data: &[u8]) -> Option<&'static str> {
@@ -484,7 +484,7 @@ fn configure_fonts_and_gpu(
             font_size_px
         );
     } else {
-        eprintln!("[GPU] Warning: wgpu render state or font data not available, falling back to CPU rendering");
+        eprintln!("[Renderer] Using low-memory Glow renderer; terminal GPU callbacks disabled");
     }
 }
 
@@ -514,11 +514,17 @@ fn main() -> Result<(), eframe::Error> {
     // Load configuration
     let cfg = config::Config::load();
 
+    let renderer = match cfg.app_renderer {
+        config::AppRendererType::Glow => eframe::Renderer::Glow,
+        config::AppRendererType::Wgpu => eframe::Renderer::Wgpu,
+    };
+    let transparent = !matches!(renderer, eframe::Renderer::Glow);
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([cfg.initial_width, cfg.initial_height])
-            .with_transparent(true),
-        renderer: eframe::Renderer::Wgpu,
+            .with_transparent(transparent),
+        renderer,
         ..Default::default()
     };
 
@@ -868,8 +874,14 @@ impl TerminalApp {
         repaint_ctx: egui::Context,
         wgpu_render_state: Option<egui_wgpu::RenderState>,
     ) -> Self {
-        let cols = cfg.cols;
-        let rows = cfg.rows;
+        let (cols, rows) = clamp_terminal_dimensions(cfg.cols, cfg.rows);
+        crate::debug_log!(
+            "[INIT] terminal dimensions cfg=({}, {}) clamped=({}, {})",
+            cfg.cols,
+            cfg.rows,
+            cols,
+            rows
+        );
 
         // 尝试获取实例锁，成功表示没有其他实例在运行
         let lock_file = session_persistence::try_acquire_instance_lock();
@@ -1030,7 +1042,8 @@ impl TerminalApp {
         self.renderer.scrollbar_visibility = self.config.scrollbar_visibility.clone();
         self.renderer.theme = self.current_theme.clone();
         self.renderer.opacity = self.config.opacity;
-        self.renderer.gpu_rendering = self.config.gpu_rendering;
+        self.renderer.gpu_rendering = matches!(self.config.app_renderer, config::AppRendererType::Wgpu)
+            && self.config.gpu_rendering;
         self.renderer.sync_font_metrics(ctx);
 
         for renderer in &mut self.pane_renderers {
@@ -1040,7 +1053,8 @@ impl TerminalApp {
             renderer.scrollbar_visibility = self.config.scrollbar_visibility.clone();
             renderer.theme = self.current_theme.clone();
             renderer.opacity = self.config.opacity;
-            renderer.gpu_rendering = self.config.gpu_rendering;
+            renderer.gpu_rendering = matches!(self.config.app_renderer, config::AppRendererType::Wgpu)
+                && self.config.gpu_rendering;
             renderer.sync_font_metrics(ctx);
         }
 
@@ -1057,8 +1071,7 @@ impl TerminalApp {
         name: Option<String>,
         tags: Option<Vec<String>>,
     ) -> usize {
-        let cols = self.cols.max(1);
-        let rows = self.rows.max(1);
+        let (cols, rows) = clamp_terminal_dimensions(self.cols, self.rows);
         self.session_manager
             .new_session(name, tags, cols, rows, self.config.scrollback_lines)
     }
@@ -1760,6 +1773,7 @@ impl TerminalApp {
             // 终端显示区域
             self.renderer.sync_font_metrics(ctx);
             let (cols, rows) = self.renderer.grid_dimensions(ui.available_size());
+            crate::debug_log!("[RESIZE] grid_dimensions => {}x{}", cols, rows);
 
             if cols != self.cols || rows != self.rows || self.force_resize_session {
                 let session = self.session_manager.get_active_session_mut();

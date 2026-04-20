@@ -1,4 +1,5 @@
 use crate::pty::Pty;
+use crate::terminal::clamp_terminal_dimensions;
 use crossbeam::channel::{unbounded, Receiver};
 use eframe::egui;
 use std::os::unix::io::RawFd;
@@ -41,6 +42,7 @@ impl ShellSession {
         session_id: Option<&str>,
         repaint_ctx: egui::Context,
     ) -> std::result::Result<Self, String> {
+        let (cols, rows) = clamp_terminal_dimensions(cols, rows);
         match Pty::new_with_cwd(cols, rows, cwd, session_id) {
             Ok(pty) => {
                 // 在把 pty 放入 Arc<Mutex> 前获取 child_pid

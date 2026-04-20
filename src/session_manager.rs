@@ -1,7 +1,7 @@
 use crate::session::Session;
 use crate::session_persistence;
 use crate::shell::ShellSession;
-use crate::terminal::TerminalState;
+use crate::terminal::{clamp_terminal_dimensions, TerminalState};
 use eframe::egui;
 use parking_lot::Mutex as ParkingMutex;
 use std::sync::Arc;
@@ -40,6 +40,7 @@ impl SessionManager {
         rows: usize,
         scrollback_lines: usize,
     ) -> usize {
+        let (cols, rows) = clamp_terminal_dimensions(cols, rows);
         let insert_index = self.active_index + 1;
         let name = name.unwrap_or_else(|| format!("Session {}", self.sessions.len() + 1));
         let tags = tags.unwrap_or_default();

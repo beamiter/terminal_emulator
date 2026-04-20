@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{AppRendererType, Config};
 use crate::theme::Theme;
 use egui::{Color32, RichText};
 
@@ -43,6 +43,7 @@ pub struct ConfigPanel {
     edit_opacity: f32,
     pub edit_debug_overlay: bool,
     edit_gpu_rendering: bool,
+    edit_app_renderer: AppRendererType,
     edit_ui_scale: f32,
     // 系统字体缓存
     monospace_fonts: Vec<String>,
@@ -77,6 +78,7 @@ impl ConfigPanel {
             edit_restore_session: false,
             edit_debug_overlay: false,
             edit_gpu_rendering: true,
+            edit_app_renderer: AppRendererType::Glow,
             edit_ui_scale: 1.0,
             monospace_fonts: Vec::new(),
             all_fonts: Vec::new(),
@@ -139,6 +141,7 @@ impl ConfigPanel {
         self.edit_restore_session = config.restore_session;
         self.edit_opacity = config.opacity;
         self.edit_gpu_rendering = config.gpu_rendering;
+        self.edit_app_renderer = config.app_renderer;
         self.edit_ui_scale = config.ui_scale;
     }
 
@@ -154,6 +157,7 @@ impl ConfigPanel {
         config.restore_session = self.edit_restore_session;
         config.opacity = self.edit_opacity;
         config.gpu_rendering = self.edit_gpu_rendering;
+        config.app_renderer = self.edit_app_renderer;
         config.ui_scale = self.edit_ui_scale;
     }
 
@@ -836,11 +840,44 @@ impl ConfigPanel {
 
         ui.separator();
 
+        ui.label(RichText::new("App Renderer").strong());
+        ui.horizontal(|ui| {
+            if ui
+                .radio_value(&mut self.edit_app_renderer, AppRendererType::Glow, "Glow")
+                .changed()
+            {
+                self.has_changes = true;
+            }
+            if ui
+                .radio_value(&mut self.edit_app_renderer, AppRendererType::Wgpu, "Wgpu")
+                .changed()
+            {
+                self.has_changes = true;
+            }
+        });
+        if self.edit_app_renderer == AppRendererType::Glow {
+            let muted = ui.visuals().weak_text_color();
+            ui.label(
+                RichText::new("Glow uses less memory. Terminal GPU rendering is disabled in this mode.")
+                    .size(11.0)
+                    .color(muted),
+            );
+        }
+
+        ui.separator();
+
         if ui
-            .checkbox(&mut self.edit_gpu_rendering, "GPU rendering")
+            .add_enabled(
+                self.edit_app_renderer == AppRendererType::Wgpu,
+                egui::Checkbox::new(&mut self.edit_gpu_rendering, "GPU rendering"),
+            )
             .changed()
         {
             self.has_changes = true;
+        }
+
+        if self.edit_app_renderer != AppRendererType::Wgpu {
+            self.edit_gpu_rendering = false;
         }
     }
 }

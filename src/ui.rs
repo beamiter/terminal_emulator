@@ -1,6 +1,6 @@
 use crate::color;
 use crate::gpu;
-use crate::terminal::TerminalState;
+use crate::terminal::{clamp_terminal_dimensions, TerminalState};
 use egui::{Color32, FontId, Response, Ui, Vec2};
 
 /// Quantize to 1/3 pixel increments for subpixel rendering cache coherence.
@@ -500,7 +500,7 @@ impl TerminalRenderer {
         let cols = (usable_width / self.char_width).floor().max(1.0) as usize;
         let rows = (usable_height / self.line_height).floor().max(1.0) as usize;
 
-        (cols, rows)
+        clamp_terminal_dimensions(cols, rows)
     }
 
     /// 在指定矩形内渲染（用于多窗格模式）

@@ -27,6 +27,19 @@ impl Default for FontBackendType {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AppRendererType {
+    Glow,
+    Wgpu,
+}
+
+impl Default for AppRendererType {
+    fn default() -> Self {
+        AppRendererType::Glow
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ScrollbarVisibility {
@@ -92,6 +105,9 @@ pub struct Config {
 
     #[serde(default = "default_gpu_rendering")]
     pub gpu_rendering: bool,
+
+    #[serde(default)]
+    pub app_renderer: AppRendererType,
 
     #[serde(default = "default_scroll_speed")]
     pub scroll_speed: u32,
@@ -237,6 +253,7 @@ impl Default for Config {
             session_history_file: None,
             opacity: default_opacity(),
             gpu_rendering: default_gpu_rendering(),
+            app_renderer: AppRendererType::default(),
             scroll_speed: default_scroll_speed(),
             ui_scale: default_ui_scale(),
         }

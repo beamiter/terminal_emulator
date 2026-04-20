@@ -53,6 +53,15 @@ fn is_token_suffix_wrapper(c: char) -> bool {
 const PRIMARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[?65;1;9c";
 const SECONDARY_DEVICE_ATTRIBUTES_RESPONSE: &[u8] = b"\x1b[>1;7802;0c";
 const XTERM_VERSION_RESPONSE: &[u8] = b"\x1bP>|VTE(7802)\x1b\\";
+pub const MAX_TERMINAL_COLS: usize = 1024;
+pub const MAX_TERMINAL_ROWS: usize = 512;
+
+pub fn clamp_terminal_dimensions(cols: usize, rows: usize) -> (usize, usize) {
+    (
+        cols.clamp(1, MAX_TERMINAL_COLS),
+        rows.clamp(1, MAX_TERMINAL_ROWS),
+    )
+}
 
 /// 连续内存网格存储 - 优化内存局部性和缓存命中率
 /// 内存布局: cells[row * cols + col] 对应 grid[row][col]
@@ -558,6 +567,7 @@ impl TerminalState {
     }
 
     pub fn new(cols: usize, rows: usize) -> Self {
+        let (cols, rows) = clamp_terminal_dimensions(cols, rows);
         let grid = TerminalGrid::new(rows, cols);
         let alt_grid = TerminalGrid::new(rows, cols);
 
@@ -2704,6 +2714,8 @@ impl TerminalState {
         if cols == 0 || rows == 0 {
             return;
         }
+
+        let (cols, rows) = clamp_terminal_dimensions(cols, rows);
 
         let old_rows = self.grid.rows();
         let had_full_screen_region = old_rows == 0
