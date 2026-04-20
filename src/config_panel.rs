@@ -43,6 +43,7 @@ pub struct ConfigPanel {
     edit_opacity: f32,
     pub edit_debug_overlay: bool,
     edit_gpu_rendering: bool,
+    edit_ui_scale: f32,
     // 系统字体缓存
     monospace_fonts: Vec<String>,
     all_fonts: Vec<String>,
@@ -76,6 +77,7 @@ impl ConfigPanel {
             edit_restore_session: false,
             edit_debug_overlay: false,
             edit_gpu_rendering: true,
+            edit_ui_scale: 1.0,
             monospace_fonts: Vec::new(),
             all_fonts: Vec::new(),
             available_themes: Vec::new(),
@@ -137,6 +139,7 @@ impl ConfigPanel {
         self.edit_restore_session = config.restore_session;
         self.edit_opacity = config.opacity;
         self.edit_gpu_rendering = config.gpu_rendering;
+        self.edit_ui_scale = config.ui_scale;
     }
 
     /// Apply all buffered edit values to the given Config.
@@ -151,6 +154,7 @@ impl ConfigPanel {
         config.restore_session = self.edit_restore_session;
         config.opacity = self.edit_opacity;
         config.gpu_rendering = self.edit_gpu_rendering;
+        config.ui_scale = self.edit_ui_scale;
     }
 
     pub fn close(&mut self) {
@@ -533,6 +537,21 @@ impl ConfigPanel {
                 .add(
                     egui::Slider::new(&mut self.edit_opacity, 0.05..=1.0)
                         .step_by(0.05)
+                        .show_value(true),
+                )
+                .changed()
+            {
+                self.has_changes = true;
+            }
+        });
+
+        // UI Scale slider
+        ui.horizontal(|ui| {
+            ui.label("UI Scale:");
+            if ui
+                .add(
+                    egui::Slider::new(&mut self.edit_ui_scale, 0.5..=3.0)
+                        .step_by(0.1)
                         .show_value(true),
                 )
                 .changed()
