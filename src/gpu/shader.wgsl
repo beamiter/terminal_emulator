@@ -103,8 +103,8 @@ fn gamma_from_linear_rgb(linear: vec3<f32>) -> vec3<f32> {
     return select(higher, lower, cutoff);
 }
 
-@fragment
-fn fs_main_gamma(in: VertexOutput) -> @location(0) vec4<f32> {
+// Compute final fragment color (shared by both entry points)
+fn compute_fragment_color(in: VertexOutput) -> vec4<f32> {
     let has_glyph = (in.flags & 1u) != 0u;
     let has_underline = (in.flags & 4u) != 0u;
     let has_strikethrough = (in.flags & 8u) != 0u;
@@ -165,8 +165,13 @@ fn fs_main_gamma(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 @fragment
+fn fs_main_gamma(in: VertexOutput) -> @location(0) vec4<f32> {
+    return compute_fragment_color(in);
+}
+
+@fragment
 fn fs_main_linear(in: VertexOutput) -> @location(0) vec4<f32> {
-    let result_gamma = fs_main_gamma(in);
+    let result_gamma = compute_fragment_color(in);
     let result_linear_rgb = linear_from_gamma_rgb(result_gamma.rgb);
     return vec4<f32>(result_linear_rgb, result_gamma.a);
 }
