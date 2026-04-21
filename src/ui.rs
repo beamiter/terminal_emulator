@@ -280,7 +280,6 @@ fn xterm_encode_modify_other_keys(
 
 pub struct TerminalRenderer {
     pub font_size: f32,
-    pub font_sharpness: f32,
     pub char_width: f32,
     pub line_height: f32,
     pub padding: f32,
@@ -328,7 +327,6 @@ impl TerminalRenderer {
 
     pub fn new(
         font_size: f32,
-        font_sharpness: f32,
         padding: f32,
         line_spacing: f32,
         scrollbar_visibility: crate::config::ScrollbarVisibility,
@@ -341,7 +339,6 @@ impl TerminalRenderer {
 
         TerminalRenderer {
             font_size,
-            font_sharpness,
             char_width,
             line_height,
             padding,
@@ -1468,7 +1465,7 @@ impl TerminalRenderer {
             atlas_width: atlas_w,
             atlas_height: atlas_h,
             render_phase: 0.0,
-            sharpness: self.font_sharpness,
+            _pad: 0.0,
         };
 
         let foreground_uniforms = gpu::instance::GridUniforms {

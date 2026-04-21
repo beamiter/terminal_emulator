@@ -110,6 +110,5 @@ pub struct GridUniforms {
     pub atlas_height: f32,
     /// 0.0 = background pass, 1.0 = foreground pass
     pub render_phase: f32,
-    /// Gamma exponent for font sharpening (0.5-1.0, lower = sharper)
-    pub sharpness: f32,
+    pub _pad: f32,
 }

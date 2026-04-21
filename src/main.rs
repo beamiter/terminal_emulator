@@ -960,7 +960,6 @@ impl TerminalApp {
 
         let mut renderer = TerminalRenderer::new(
             cfg.font_size,
-            cfg.font_sharpness,
             cfg.padding,
             cfg.line_spacing,
             cfg.scrollbar_visibility.clone(),
@@ -978,7 +977,6 @@ impl TerminalApp {
         for _ in 0..4 {
             let mut pr = TerminalRenderer::new(
                 cfg.font_size,
-                cfg.font_sharpness,
                 cfg.padding,
                 cfg.line_spacing,
                 cfg.scrollbar_visibility.clone(),
@@ -1045,7 +1043,6 @@ impl TerminalApp {
         apply_theme_visuals(ctx, &self.current_theme);
 
         self.renderer.font_size = self.config.font_size;
-        self.renderer.font_sharpness = self.config.font_sharpness;
         self.renderer.padding = self.config.padding;
         self.renderer.line_spacing = self.config.line_spacing;
         self.renderer.scrollbar_visibility = self.config.scrollbar_visibility.clone();
@@ -1057,7 +1054,6 @@ impl TerminalApp {
 
         for renderer in &mut self.pane_renderers {
             renderer.font_size = self.config.font_size;
-            renderer.font_sharpness = self.config.font_sharpness;
             renderer.padding = self.config.padding;
             renderer.line_spacing = self.config.line_spacing;
             renderer.scrollbar_visibility = self.config.scrollbar_visibility.clone();

@@ -1,6 +1,6 @@
 use ab_glyph::{point, Font, FontVec, GlyphId, PxScale, ScaleFont};
 use std::collections::HashMap;
-use super::font_backend::{FontBackend, GlyphRegion, AtlasGlyphKey, GLYPH_PADDING, INITIAL_ATLAS_SIZE, MAX_ATLAS_SIZE, create_gpu_resources, upload_bitmap, empty_glyph_region};
+use super::font_backend::{FontBackend, GlyphRegion, AtlasGlyphKey, GLYPH_PADDING, INITIAL_ATLAS_SIZE, MAX_ATLAS_SIZE, create_gpu_resources, upload_bitmap, empty_glyph_region, alpha_from_coverage};
 
 pub struct AbGlyphAtlas {
     font_regular: FontVec,
@@ -43,7 +43,7 @@ impl AbGlyphAtlas {
 
         let width = INITIAL_ATLAS_SIZE;
         let height = INITIAL_ATLAS_SIZE;
-        let bitmap = vec![0u8; (width * height) as usize];
+        let bitmap = vec![0u8; (width * height * 4) as usize];
 
         let (texture, view, sampler) = create_gpu_resources(device, width, height);
         upload_bitmap(queue, &texture, &bitmap, width, height);
@@ -112,12 +112,12 @@ impl AbGlyphAtlas {
             return false;
         }
 
-        let mut new_bitmap = vec![0u8; (new_size * new_size) as usize];
+        let mut new_bitmap = vec![0u8; (new_size * new_size * 4) as usize];
         for y in 0..self.height {
-            let src_start = (y * self.width) as usize;
-            let src_end = src_start + self.width as usize;
-            let dst_start = (y * new_size) as usize;
-            new_bitmap[dst_start..dst_start + self.width as usize]
+            let src_start = (y * self.width * 4) as usize;
+            let src_end = src_start + (self.width * 4) as usize;
+            let dst_start = (y * new_size * 4) as usize;
+            new_bitmap[dst_start..dst_start + (self.width * 4) as usize]
                 .copy_from_slice(&self.bitmap[src_start..src_end]);
         }
 
@@ -225,7 +225,10 @@ impl FontBackend for AbGlyphAtlas {
                 let py = by + y;
                 if px < self.width && py < self.height {
                     let boosted_alpha = (alpha * weight_boost).min(1.0);
-                    self.bitmap[(py * self.width + px) as usize] = (boosted_alpha * 255.0 + 0.5) as u8;
+                    let coverage_alpha = alpha_from_coverage(boosted_alpha);
+                    let pixel = [255, 255, 255, (coverage_alpha * 255.0 + 0.5) as u8];
+                    let dst_idx = ((py * self.width + px) * 4) as usize;
+                    self.bitmap[dst_idx..dst_idx + 4].copy_from_slice(&pixel);
                 }
             });
 
@@ -281,7 +284,7 @@ impl FontBackend for AbGlyphAtlas {
 
         let w = INITIAL_ATLAS_SIZE;
         let h = INITIAL_ATLAS_SIZE;
-        self.bitmap = vec![0u8; (w * h) as usize];
+        self.bitmap = vec![0u8; (w * h * 4) as usize];
         self.width = w;
         self.height = h;
 

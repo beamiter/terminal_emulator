@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use super::font_backend::{FontBackend, GlyphRegion, AtlasGlyphKey, GLYPH_PADDING, INITIAL_ATLAS_SIZE, MAX_ATLAS_SIZE, create_gpu_resources, upload_bitmap, empty_glyph_region};
+use super::font_backend::{FontBackend, GlyphRegion, AtlasGlyphKey, GLYPH_PADDING, INITIAL_ATLAS_SIZE, MAX_ATLAS_SIZE, create_gpu_resources, upload_bitmap, empty_glyph_region, alpha_from_coverage};
 
 pub struct FontdueAtlas {
     font_regular: fontdue::Font,
@@ -48,7 +48,7 @@ impl FontdueAtlas {
 
         let width = INITIAL_ATLAS_SIZE;
         let height = INITIAL_ATLAS_SIZE;
-        let bitmap = vec![0u8; (width * height) as usize];
+        let bitmap = vec![0u8; (width * height * 4) as usize];
 
         let (texture, view, sampler) = create_gpu_resources(device, width, height);
         upload_bitmap(queue, &texture, &bitmap, width, height);
@@ -129,12 +129,12 @@ impl FontdueAtlas {
             return false;
         }
 
-        let mut new_bitmap = vec![0u8; (new_size * new_size) as usize];
+        let mut new_bitmap = vec![0u8; (new_size * new_size * 4) as usize];
         for y in 0..self.height {
-            let src_start = (y * self.width) as usize;
-            let src_end = src_start + self.width as usize;
-            let dst_start = (y * new_size) as usize;
-            new_bitmap[dst_start..dst_start + self.width as usize]
+            let src_start = (y * self.width * 4) as usize;
+            let src_end = src_start + (self.width * 4) as usize;
+            let dst_start = (y * new_size * 4) as usize;
+            new_bitmap[dst_start..dst_start + (self.width * 4) as usize]
                 .copy_from_slice(&self.bitmap[src_start..src_end]);
         }
 
@@ -193,28 +193,24 @@ impl FontdueAtlas {
 
         let weight_boost = if bold { 1.0 } else { self.font_weight };
 
-        // Copy bitmap row by row into atlas
         for gy in 0..glyph_h {
             for gx in 0..glyph_w {
                 let src_idx = (gy * glyph_w + gx) as usize;
                 let dst_x = bx + gx;
                 let dst_y = by + gy;
                 if dst_x < self.width && dst_y < self.height {
-                    let alpha = glyph_bitmap[src_idx] as f32 / 255.0;
-                    let boosted = (alpha * weight_boost).min(1.0);
-                    self.bitmap[(dst_y * self.width + dst_x) as usize] = (boosted * 255.0 + 0.5) as u8;
+                    let coverage = glyph_bitmap[src_idx] as f32 / 255.0;
+                    let boosted = (coverage * weight_boost).min(1.0);
+                    let alpha = alpha_from_coverage(boosted);
+                    let pixel = [255, 255, 255, (alpha * 255.0 + 0.5) as u8];
+                    let dst_idx = ((dst_y * self.width + dst_x) * 4) as usize;
+                    self.bitmap[dst_idx..dst_idx + 4].copy_from_slice(&pixel);
                 }
             }
         }
 
         self.dirty = true;
 
-        // Convert fontdue coordinates to match ab_glyph convention:
-        // fontdue ymin: bottom of glyph relative to baseline (positive = above baseline)
-        // ab_glyph bearing_y: top of glyph relative to top of cell (ascent-based)
-        // bearing_y in screen coords = ascent - (ymin + height)
-
-        // Apply subpixel offset to bearing_x: 0 → 0.0px, 1 → 0.33px, 2 → 0.67px
         let subpixel_shift = match key.subpixel_offset {
             1 => 0.25,
             2 => 0.5,
@@ -322,7 +318,7 @@ impl FontBackend for FontdueAtlas {
 
         let w = INITIAL_ATLAS_SIZE;
         let h = INITIAL_ATLAS_SIZE;
-        self.bitmap = vec![0u8; (w * h) as usize];
+        self.bitmap = vec![0u8; (w * h * 4) as usize];
         self.width = w;
         self.height = h;
 

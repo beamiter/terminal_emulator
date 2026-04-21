@@ -35,6 +35,14 @@ pub const GLYPH_PADDING: u32 = 2;
 pub const INITIAL_ATLAS_SIZE: u32 = 1024;
 pub const MAX_ATLAS_SIZE: u32 = 4096;
 
+/// Convert coverage alpha to baked color using TwoCoverageMinusCoverageSq function.
+/// This matches egui's approach: alpha = 2c - c² where c is coverage in [0,1].
+/// Produces perceptually correct blending for both light and dark backgrounds.
+pub fn alpha_from_coverage(coverage: f32) -> f32 {
+    let c = coverage.clamp(0.0, 1.0);
+    2.0 * c - c * c
+}
+
 pub fn create_gpu_resources(
     device: &wgpu::Device,
     width: u32,
@@ -50,7 +58,7 @@ pub fn create_gpu_resources(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R8Unorm,
+        format: wgpu::TextureFormat::Rgba8Unorm,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
@@ -78,7 +86,7 @@ pub fn upload_bitmap(queue: &wgpu::Queue, texture: &wgpu::Texture, bitmap: &[u8]
         bitmap,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(width),
+            bytes_per_row: Some(width * 4),
             rows_per_image: Some(height),
         },
         wgpu::Extent3d {

@@ -6,7 +6,7 @@ struct Uniforms {
     atlas_width: f32,
     atlas_height: f32,
     render_phase: f32,
-    sharpness: f32,  // gamma exponent for sharpening (0.5-1.0, lower=sharper)
+    _pad: f32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -88,36 +88,7 @@ fn vs_main(
     return out;
 }
 
-// Gamma correction helpers for proper subpixel blending
-fn srgb_to_linear(srgb: f32) -> f32 {
-    if srgb <= 0.04045 {
-        return srgb / 12.92;
-    }
-    return pow((srgb + 0.055) / 1.055, 2.4);
-}
 
-fn linear_to_srgb(linear: f32) -> f32 {
-    if linear <= 0.0031308 {
-        return linear * 12.92;
-    }
-    return 1.055 * pow(linear, 1.0 / 2.4) - 0.055;
-}
-
-fn srgb_to_linear_vec3(srgb: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(
-        srgb_to_linear(srgb.r),
-        srgb_to_linear(srgb.g),
-        srgb_to_linear(srgb.b)
-    );
-}
-
-fn linear_to_srgb_vec3(linear: vec3<f32>) -> vec3<f32> {
-    return vec3<f32>(
-        linear_to_srgb(linear.r),
-        linear_to_srgb(linear.g),
-        linear_to_srgb(linear.b)
-    );
-}
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -139,59 +110,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return color;
     }
 
-    // Composite glyph foreground using atlas alpha with subpixel RGB rendering
+    // Composite glyph foreground using atlas alpha with simple gamma-space blending
     if has_glyph {
-        // Glyph size in physical pixels (derived from atlas UV extent)
         let glyph_size = (in.glyph_uv1 - in.glyph_uv0) * vec2<f32>(u.atlas_width, u.atlas_height);
 
-        // Compute atlas UV from pixel position relative to glyph origin
         let rel = in.cell_px_pos - in.glyph_offset;
         let t = clamp(rel / max(glyph_size, vec2<f32>(1.0, 1.0)), vec2<f32>(0.0), vec2<f32>(1.0));
         let uv = in.glyph_uv0 + t * (in.glyph_uv1 - in.glyph_uv0);
 
-        // Optimized subpixel rendering: reduce color fringing by using smaller offsets
-        // Use 1/6 pixel offset instead of 1/3 to reduce color separation
-        let subpixel_step = 1.0 / (6.0 * u.atlas_width);
+        let alpha = textureSample(atlas_texture, atlas_sampler, uv).a;
 
-        let alpha_r = textureSample(atlas_texture, atlas_sampler, uv - vec2(subpixel_step, 0.0)).r;
-        let alpha_g = textureSample(atlas_texture, atlas_sampler, uv).r;
-        let alpha_b = textureSample(atlas_texture, atlas_sampler, uv + vec2(subpixel_step, 0.0)).r;
-
-        // Apply adjustable sharpening (controlled by uniform)
-        let sharp_r = pow(alpha_r, u.sharpness);
-        let sharp_g = pow(alpha_g, u.sharpness);
-        let sharp_b = pow(alpha_b, u.sharpness);
-
-        // Only apply glyph where pixel falls within the glyph area
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)
                       * step(rel.x, glyph_size.x) * step(rel.y, glyph_size.y);
 
-        let sr = sharp_r * in_bounds;
-        let sg = sharp_g * in_bounds;
-        let sb = sharp_b * in_bounds;
-
-        if max(sr, max(sg, sb)) > 0.001 {
-            // Convert to linear space for proper blending
-            let fg_linear = srgb_to_linear_vec3(in.fg_color.rgb);
-            let bg_linear = srgb_to_linear_vec3(in.bg_color.rgb);
-
-            // Reduce subpixel effect by averaging with grayscale alpha
-            let avg_alpha = (sr + sg + sb) / 3.0;
-            let blend_factor = 0.3; // 30% subpixel, 70% grayscale to reduce fringing
-
-            let final_r = mix(avg_alpha, sr, blend_factor);
-            let final_g = mix(avg_alpha, sg, blend_factor);
-            let final_b = mix(avg_alpha, sb, blend_factor);
-
-            // Blend in linear space with adjusted per-channel alphas
-            let blended_linear = vec3<f32>(
-                mix(bg_linear.r, fg_linear.r, final_r),
-                mix(bg_linear.g, fg_linear.g, final_g),
-                mix(bg_linear.b, fg_linear.b, final_b)
-            );
-
-            // Convert back to sRGB for display
-            color = vec4<f32>(linear_to_srgb_vec3(blended_linear), 1.0);
+        if alpha * in_bounds > 0.001 {
+            let glyph_color = in.fg_color * alpha;
+            color = mix(in.bg_color, glyph_color, alpha);
         }
     }
 
