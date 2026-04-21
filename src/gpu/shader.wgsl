@@ -88,10 +88,23 @@ fn vs_main(
     return out;
 }
 
+// Gamma ↔ Linear conversion functions (matching egui exactly)
+fn linear_from_gamma_rgb(srgb: vec3<f32>) -> vec3<f32> {
+    let cutoff = srgb < vec3<f32>(0.04045);
+    let lower = srgb / vec3<f32>(12.92);
+    let higher = pow((srgb + vec3<f32>(0.055)) / vec3<f32>(1.055), vec3<f32>(2.4));
+    return select(higher, lower, cutoff);
+}
 
+fn gamma_from_linear_rgb(linear: vec3<f32>) -> vec3<f32> {
+    let cutoff = linear <= vec3<f32>(0.0031308);
+    let lower = linear * vec3<f32>(12.92);
+    let higher = vec3<f32>(1.055) * pow(linear, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+    return select(higher, lower, cutoff);
+}
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main_gamma(in: VertexOutput) -> @location(0) vec4<f32> {
     let has_glyph = (in.flags & 1u) != 0u;
     let has_underline = (in.flags & 4u) != 0u;
     let has_strikethrough = (in.flags & 8u) != 0u;
@@ -123,9 +136,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let in_bounds = step(0.0, rel.x) * step(0.0, rel.y)
                       * step(rel.x, glyph_size.x) * step(rel.y, glyph_size.y);
 
-        if alpha * in_bounds > 0.001 {
-            let glyph_color = in.fg_color * alpha;
-            color = mix(in.bg_color, glyph_color, alpha);
+        let a = alpha * in_bounds;
+        if a > 0.001 {
+            color = vec4<f32>(mix(in.bg_color.rgb, in.fg_color.rgb, a), 1.0);
         }
     }
 
@@ -149,4 +162,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return color;
+}
+
+@fragment
+fn fs_main_linear(in: VertexOutput) -> @location(0) vec4<f32> {
+    let result_gamma = fs_main_gamma(in);
+    let result_linear_rgb = linear_from_gamma_rgb(result_gamma.rgb);
+    return vec4<f32>(result_linear_rgb, result_gamma.a);
 }

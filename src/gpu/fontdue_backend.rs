@@ -1,6 +1,27 @@
 use std::collections::HashMap;
 use super::font_backend::{FontBackend, GlyphRegion, AtlasGlyphKey, GLYPH_PADDING, INITIAL_ATLAS_SIZE, MAX_ATLAS_SIZE, create_gpu_resources, upload_bitmap, empty_glyph_region, alpha_from_coverage};
 
+/// Check if character is CJK or other wide script that shouldn't use subpixel binning.
+fn is_cjk_or_wide(ch: char) -> bool {
+    matches!(ch as u32,
+        0x2E80..=0x2EFF |     // CJK Radicals Supplement
+        0x3000..=0x303F |     // CJK Symbols and Punctuation
+        0x3040..=0x309F |     // Hiragana
+        0x30A0..=0x30FF |     // Katakana
+        0x3100..=0x312F |     // Bopomofo
+        0x3130..=0x318F |     // Hangul Compatibility Jamo
+        0x3190..=0x319F |     // Kanbun
+        0x31A0..=0x31BF |     // Bopomofo Extended
+        0x31C0..=0x31EF |     // CJK Strokes
+        0x31F0..=0x31FF |     // Katakana Phonetic Extensions
+        0x3200..=0x32FF |     // Enclosed CJK Letters and Months
+        0x3300..=0x33FF |     // CJK Compatibility
+        0x4E00..=0x9FFF |     // CJK Unified Ideographs
+        0xF900..=0xFAFF |     // CJK Compatibility Ideographs
+        0x20000..=0x2A6DF    // CJK Unified Ideographs Extension B+
+    )
+}
+
 pub struct FontdueAtlas {
     font_regular: fontdue::Font,
     font_bold: Option<fontdue::Font>,
@@ -237,7 +258,9 @@ impl FontdueAtlas {
 
 impl FontBackend for FontdueAtlas {
     fn get_or_rasterize(&mut self, ch: char, bold: bool, subpixel_offset: u8) -> GlyphRegion {
-        let key = AtlasGlyphKey { ch, bold, subpixel_offset };
+        // Force CJK characters to always use subpixel bin 0 (no subpixel variation needed)
+        let effective_subpixel = if is_cjk_or_wide(ch) { 0 } else { subpixel_offset };
+        let key = AtlasGlyphKey { ch, bold, subpixel_offset: effective_subpixel };
         if let Some(&region) = self.cache.get(&key) {
             return region;
         }

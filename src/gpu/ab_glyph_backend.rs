@@ -2,6 +2,26 @@ use ab_glyph::{point, Font, FontVec, GlyphId, PxScale, ScaleFont};
 use std::collections::HashMap;
 use super::font_backend::{FontBackend, GlyphRegion, AtlasGlyphKey, GLYPH_PADDING, INITIAL_ATLAS_SIZE, MAX_ATLAS_SIZE, create_gpu_resources, upload_bitmap, empty_glyph_region, alpha_from_coverage};
 
+fn is_cjk_or_wide(ch: char) -> bool {
+    matches!(ch as u32,
+        0x2E80..=0x2EFF |
+        0x3000..=0x303F |
+        0x3040..=0x309F |
+        0x30A0..=0x30FF |
+        0x3100..=0x312F |
+        0x3130..=0x318F |
+        0x3190..=0x319F |
+        0x31A0..=0x31BF |
+        0x31C0..=0x31EF |
+        0x31F0..=0x31FF |
+        0x3200..=0x32FF |
+        0x3300..=0x33FF |
+        0x4E00..=0x9FFF |
+        0xF900..=0xFAFF |
+        0x20000..=0x2A6DF
+    )
+}
+
 pub struct AbGlyphAtlas {
     font_regular: FontVec,
     font_bold: Option<FontVec>,
@@ -140,7 +160,8 @@ impl AbGlyphAtlas {
 
 impl FontBackend for AbGlyphAtlas {
     fn get_or_rasterize(&mut self, ch: char, bold: bool, subpixel_offset: u8) -> GlyphRegion {
-        let key = AtlasGlyphKey { ch, bold, subpixel_offset };
+        let effective_subpixel = if is_cjk_or_wide(ch) { 0 } else { subpixel_offset };
+        let key = AtlasGlyphKey { ch, bold, subpixel_offset: effective_subpixel };
         if let Some(&region) = self.cache.get(&key) {
             return region;
         }
@@ -256,9 +277,10 @@ impl FontBackend for AbGlyphAtlas {
             region
         } else {
             let h_advance = scaled_font.h_advance(glyph_id);
-            let subpixel_shift = match subpixel_offset {
-                1 => 1.0 / 3.0,
-                2 => 2.0 / 3.0,
+            let subpixel_shift = match effective_subpixel {
+                1 => 0.25,
+                2 => 0.5,
+                3 => 0.75,
                 _ => 0.0,
             };
             let region = GlyphRegion {

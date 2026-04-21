@@ -67,6 +67,13 @@ impl GridPipeline {
             immediate_size: 0,
         });
 
+        let fs_entry = if target_format.is_srgb() {
+            eprintln!("[GPU] sRGB framebuffer {:?}, using fs_main_linear", target_format);
+            "fs_main_linear"
+        } else {
+            "fs_main_gamma"
+        };
+
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("grid_pipeline"),
             layout: Some(&pipeline_layout),
@@ -78,7 +85,7 @@ impl GridPipeline {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &shader_module,
-                entry_point: Some("fs_main"),
+                entry_point: Some(fs_entry),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: target_format,
