@@ -613,6 +613,10 @@ struct TerminalApp {
     scroll_accumulator: f32,
     // 鼠标报告模式下的滚轮累积器，避免轻微触控板滚动被放大成大量事件
     mouse_scroll_accumulator: f32,
+    // Ctrl+滚轮字体缩放累积器，避免每次滚轮都重新配置GPU资源
+    font_size_accumulator: f32,
+    // 上一帧是否有Ctrl+滚轮事件
+    had_ctrl_scroll_last_frame: bool,
 }
 
 fn should_restore_terminal_shortcut_event(ctx: &egui::Context, modifiers: egui::Modifiers) -> bool {
@@ -1029,6 +1033,8 @@ impl TerminalApp {
             pending_output: Vec::new(),
             scroll_accumulator: 0.0,
             mouse_scroll_accumulator: 0.0,
+            font_size_accumulator: 0.0,
+            had_ctrl_scroll_last_frame: false,
         }
     }
 
@@ -1923,35 +1929,16 @@ impl TerminalApp {
                         }
                     }
 
-                    // Ctrl+滚轮字体缩放
+                    // Ctrl+滚轮字体缩放（积累事件而不是立即应用）
                     if scroll_delta_from_event != 0.0 && ctrl_pressed_render {
                         let font_size_delta = if scroll_delta_from_event > 0.0 {
                             1.0
                         } else {
                             -1.0
                         };
-                        drop(terminal_guard); // 先释放锁
-
-                        // 计算新的字体大小
-                        let new_font_size = config::Config::clamp_font_size(
-                            self.config.font_size + font_size_delta,
-                        );
-
-                        // 更新配置
-                        self.config.font_size = new_font_size;
-
-                        // 释放 session 引用，允许调用 &mut self 方法
-                        let _ = session;
-
-                        // 应用配置更改（会重新配置字体系统和GPU资源）
-                        self.apply_runtime_config(ui.ctx());
-
-                        // 触发配置保存（debounced）
-                        self.schedule_config_save();
-
-                        // 重新获取 session 引用
-                        let session = self.session_manager.get_active_session_mut();
-                        terminal_guard = session.terminal.lock();
+                        // 积累字体大小变化
+                        self.font_size_accumulator += font_size_delta;
+                        self.had_ctrl_scroll_last_frame = true;
                     }
 
                     self.renderer.render(
@@ -2427,6 +2414,47 @@ impl eframe::App for TerminalApp {
                 terminal.window_title.clone()
             };
         }
+
+        // Step 1.5: 处理累积的Ctrl+滚轮字体缩放
+        // 检查是否有ctrl+scroll事件
+        let has_ctrl_scroll_this_frame = {
+            let all_events = ctx.input(|i| i.events.clone());
+            let ctrl_pressed = ctx.input(|i| i.modifiers.ctrl);
+            ctrl_pressed && all_events.iter().any(|evt| {
+                matches!(evt, egui::Event::MouseWheel { modifiers, .. } if modifiers.ctrl)
+            })
+        };
+
+        // 如果有累积值，并且（滚轮事件停止 或 累积超过1.0），则应用变化
+        if self.font_size_accumulator.abs() > 0.0 {
+            let should_apply = !has_ctrl_scroll_this_frame // 滚轮停止
+                || self.font_size_accumulator.abs() >= 1.0; // 或累积超过1.0
+
+            if should_apply {
+                let steps = self.font_size_accumulator.floor() as i32;
+                if steps != 0 {
+                    let new_font_size = config::Config::clamp_font_size(
+                        self.config.font_size + steps as f32,
+                    );
+
+                    if (new_font_size - self.config.font_size).abs() > 0.01 {
+                        self.config.font_size = new_font_size;
+                        self.apply_runtime_config(ctx);
+                        self.schedule_config_save();
+                    }
+
+                    // 保留小数部分
+                    self.font_size_accumulator -= steps as f32;
+                }
+
+                // 如果滚轮停止，清空累积器
+                if !has_ctrl_scroll_this_frame {
+                    self.font_size_accumulator = 0.0;
+                }
+            }
+        }
+
+        self.had_ctrl_scroll_last_frame = has_ctrl_scroll_this_frame;
 
         // Step 2: 处理快捷键 - 使用可配置的快捷键系统
 
