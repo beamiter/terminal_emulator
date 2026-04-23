@@ -3030,6 +3030,7 @@ impl eframe::App for TerminalApp {
                 self.renderer.cursor_move_input.clear();
             }
             if !input_guard.is_empty() {
+                session.terminal.lock().scroll_to_bottom();
                 let _ = session.shell.write(&input_guard);
                 input_guard.clear();
             }

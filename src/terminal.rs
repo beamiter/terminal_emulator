@@ -2176,8 +2176,13 @@ impl TerminalState {
     pub fn is_cursor_visible(&self) -> bool {
         // Cursor is visible when mode 25 is SET (via \x1b[?25h)
         // Hidden when mode 25 is RESET (via \x1b[?25l)
-        // Default to visible
-        self.modes.contains(&25)
+        // While viewing scrollback we intentionally hide the live cursor,
+        // because the viewport no longer tracks the active prompt line.
+        self.modes.contains(&25) && self.scroll_offset == 0
+    }
+
+    pub fn scroll_to_bottom(&mut self) {
+        self.scroll_offset = 0;
     }
 
     pub fn get_mouse_report(&self, button: u8, col: usize, row: usize) -> Option<String> {
@@ -2847,6 +2852,37 @@ mod tests {
         assert!(visible.iter().all(|row| row.len() == 5));
         assert_eq!(visible[0][0].character, 'A');
         assert_eq!(visible[0][4].character, ' ');
+    }
+
+    #[test]
+    fn cursor_is_hidden_while_viewing_scrollback() {
+        let mut terminal = TerminalState::new(4, 2);
+        terminal.grid.get_mut(0, 0).character = 'A';
+        terminal.grid.get_mut(1, 0).character = 'B';
+        terminal.cursor_row = 1;
+
+        terminal.process_input(b"\n");
+
+        assert!(terminal.is_cursor_visible());
+
+        terminal.scroll(1);
+
+        assert!(!terminal.is_cursor_visible());
+    }
+
+    #[test]
+    fn scroll_to_bottom_restores_live_cursor_visibility() {
+        let mut terminal = TerminalState::new(4, 2);
+        terminal.grid.get_mut(0, 0).character = 'A';
+        terminal.grid.get_mut(1, 0).character = 'B';
+        terminal.cursor_row = 1;
+
+        terminal.process_input(b"\n");
+        terminal.scroll(1);
+        terminal.scroll_to_bottom();
+
+        assert_eq!(terminal.scroll_offset, 0);
+        assert!(terminal.is_cursor_visible());
     }
 
     #[test]
