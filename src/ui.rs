@@ -1081,37 +1081,41 @@ impl TerminalRenderer {
                     egui::pos2(x, y),
                     Vec2::new(cell_width, snapped_height),
                 );
+                let block_cursor_rect = cell_rect.shrink2(egui::vec2(
+                    (cell_width * 0.24).clamp(1.5, 3.0),
+                    0.5,
+                ));
 
                 match &terminal.cursor_shape {
                     crate::terminal::CursorShape::Block => {
                         let cursor_c = self.theme.cursor_color();
                         let [r, g, b, _] = cursor_c.to_srgba_unmultiplied();
                         painter.rect_filled(
-                            cell_rect,
+                            block_cursor_rect,
                             egui::CornerRadius::ZERO,
-                            Color32::from_rgba_unmultiplied(r, g, b, 100),
+                            Color32::from_rgba_unmultiplied(r, g, b, 56),
                         );
                         painter.rect_stroke(
-                            cell_rect,
+                            block_cursor_rect,
                             egui::CornerRadius::ZERO,
-                            egui::Stroke::new(1.5, cursor_c),
+                            egui::Stroke::new(0.8, cursor_c),
                             egui::StrokeKind::Middle,
                         );
                     }
                     crate::terminal::CursorShape::Underline => {
-                        let underline_y = y + line_height - 2.0;
+                        let underline_y = y + line_height - 1.25;
                         painter.line_segment(
                             [
                                 egui::pos2(x, underline_y),
                                 egui::pos2(x + cell_width, underline_y),
                             ],
-                            egui::Stroke::new(2.0, self.theme.cursor_color()),
+                            egui::Stroke::new(0.8, self.theme.cursor_color()),
                         );
                     }
                     crate::terminal::CursorShape::Beam => {
                         painter.line_segment(
-                            [egui::pos2(x + 1.0, y), egui::pos2(x + 1.0, y + line_height)],
-                            egui::Stroke::new(1.5, self.theme.cursor_color()),
+                            [egui::pos2(x + 0.25, y), egui::pos2(x + 0.25, y + line_height)],
+                            egui::Stroke::new(0.8, self.theme.cursor_color()),
                         );
                     }
                 }
