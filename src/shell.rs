@@ -19,7 +19,6 @@ pub enum ShellEvent {
 pub struct ShellSession {
     pty: Arc<Mutex<Pty>>,
     event_rx: Receiver<ShellEvent>,
-    pub is_running: bool,
     child_pid: i32,            // 存储 shell 子进程的 PID
     shutdown: Arc<AtomicBool>, // 通知 IO 线程退出
 }
@@ -63,7 +62,6 @@ impl ShellSession {
                 Ok(ShellSession {
                     pty,
                     event_rx,
-                    is_running: true,
                     child_pid,
                     shutdown,
                 })
@@ -357,11 +355,7 @@ impl ShellSession {
             .map_err(|e| format!("Resize error: {}", e))
     }
 
-    pub fn mark_exited(&mut self) {
-        self.is_running = false;
-    }
-
-    /// 获取 shell 子进程的 PID
+/// 获取 shell 子进程的 PID
     pub fn get_child_pid(&self) -> i32 {
         self.child_pid
     }

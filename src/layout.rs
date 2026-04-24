@@ -223,7 +223,7 @@ impl LayoutManager {
     /// 获取分割线矩形（如果有的话）
     pub fn get_divider_rect(&self) -> Option<Rect> {
         match self.mode {
-            SplitMode::VerticalSplit { ratio } => {
+            SplitMode::VerticalSplit { ratio: _ } => {
                 if let Some(pane0) = self.panes.get(0) {
                     let divider_x = pane0.rect.right();
                     Some(Rect::from_min_max(
@@ -234,7 +234,7 @@ impl LayoutManager {
                     None
                 }
             }
-            SplitMode::HorizontalSplit { ratio } => {
+            SplitMode::HorizontalSplit { ratio: _ } => {
                 if let Some(pane0) = self.panes.get(0) {
                     let divider_y = pane0.rect.bottom();
                     Some(Rect::from_min_max(

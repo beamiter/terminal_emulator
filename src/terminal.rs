@@ -112,6 +112,7 @@ impl TerminalGrid {
 
     /// 返回行数（兼容 grid.len()）
     #[inline]
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.rows
     }
@@ -142,41 +143,6 @@ impl TerminalGrid {
         result
     }
 
-    /// 删除一行（向上移动所有后续行）
-    pub fn remove_row(&mut self, row: usize) {
-        if row >= self.rows {
-            return;
-        }
-        // 向前移动所有后续行
-        let start = row * self.cols;
-        let end = start + self.cols;
-        for i in end..self.cells.len() {
-            self.cells[i - self.cols] = self.cells[i].clone();
-        }
-        // 最后一行替换为空白
-        let last_row_start = (self.rows - 1) * self.cols;
-        for i in last_row_start..self.cells.len() {
-            self.cells[i] = TerminalCell::default();
-        }
-    }
-
-    /// 在指定行插入一行（向下移动所有后续行）
-    pub fn insert_row(&mut self, row: usize, new_cells: Vec<TerminalCell>) {
-        if row > self.rows {
-            return;
-        }
-        // 向后移动所有后续行
-        let start = row * self.cols;
-        for i in (start..self.cells.len() - self.cols).rev() {
-            self.cells[i + self.cols] = self.cells[i].clone();
-        }
-        // 插入新行
-        for (i, cell) in new_cells.into_iter().enumerate() {
-            if start + i < self.cells.len() {
-                self.cells[start + i] = cell;
-            }
-        }
-    }
 
     /// 在行内指定列插入一个cell，右侧cell右移，末尾cell被丢弃
     pub fn insert_cell_in_row(&mut self, row: usize, col: usize, cell: TerminalCell) {
@@ -327,8 +293,11 @@ pub enum UnderlineStyle {
     None,
     Single,
     Double,
+    #[allow(dead_code)]
     Curly,   // SGR 4:3
+    #[allow(dead_code)]
     Dotted,  // SGR 4:4
+    #[allow(dead_code)]
     Dashed,  // SGR 4:5
 }
 
@@ -382,7 +351,9 @@ impl Default for TerminalCell {
 #[derive(Clone, Debug)]
 pub struct DirtyRegion {
     pub rows: Vec<(usize, usize)>, // (row_start, row_end)，包含端点
+    #[allow(dead_code)]
     pub col_start: usize,
+    #[allow(dead_code)]
     pub col_end: usize,
 }
 
@@ -425,15 +396,6 @@ impl DirtyRegion {
         self.rows.clear();
     }
 
-    /// 是否有脏区域
-    pub fn is_dirty(&self) -> bool {
-        !self.rows.is_empty()
-    }
-
-    /// 获取脏行数
-    pub fn dirty_rows_count(&self) -> usize {
-        self.rows.iter().map(|(start, end)| end - start + 1).sum()
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -538,6 +500,7 @@ pub struct TerminalState {
 
     // OSC 8 hyperlink tracking
     current_hyperlink: Option<(String, Option<String>)>, // (url, id)
+    #[allow(dead_code)]
     osc8_hyperlinks: Vec<crate::link::Link>, // Stored hyperlinks from OSC 8
 }
 
@@ -968,20 +931,24 @@ impl TerminalState {
         self.grid_version
     }
 
+    #[allow(dead_code)]
     pub fn is_focus_event_mode(&self) -> bool {
         self.modes.contains(&1004)
     }
 
+    #[allow(dead_code)]
     pub fn is_bracketed_paste_mode(&self) -> bool {
         self.modes.contains(&2004)
     }
 
+    #[allow(dead_code)]
     pub fn emit_focus_in(&mut self) {
         if self.modes.contains(&1004) {
             self.output_buffer.extend_from_slice(b"\x1b[I");
         }
     }
 
+    #[allow(dead_code)]
     pub fn emit_focus_out(&mut self) {
         if self.modes.contains(&1004) {
             self.output_buffer.extend_from_slice(b"\x1b[O");
@@ -2392,6 +2359,7 @@ impl TerminalState {
         self.scrollback.len().saturating_sub(self.scroll_offset) + viewport_row
     }
 
+    #[allow(dead_code)]
     pub fn select_text(&mut self, anchor: (usize, usize), active: (usize, usize)) {
         self.selection = Some(Selection { anchor, active });
     }

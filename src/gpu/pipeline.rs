@@ -244,14 +244,6 @@ impl GridPipeline {
         &self.pipeline
     }
 
-    pub fn bind_group_for_phase(&self, render_phase: f32) -> &wgpu::BindGroup {
-        if render_phase < 0.5 {
-            &self.background_bind_group
-        } else {
-            &self.foreground_bind_group
-        }
-    }
-
     pub fn instance_buffer(&self) -> &wgpu::Buffer {
         &self.instance_buffer
     }

@@ -56,6 +56,7 @@ mod unix_pty {
     }
 
     impl Pty {
+        #[allow(dead_code)]
         pub fn new(cols: usize, rows: usize) -> Result<Self> {
             Self::new_with_cwd(cols, rows, None, None)
         }

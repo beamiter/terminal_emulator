@@ -14,6 +14,7 @@ pub struct Hyperlink {
 }
 
 impl Hyperlink {
+    #[allow(dead_code)]
     pub fn to_ansi_string(&self) -> String {
         let id = self.id.as_deref().unwrap_or("");
         format!(
@@ -22,6 +23,7 @@ impl Hyperlink {
         )
     }
 
+    #[allow(dead_code)]
     pub fn from_ansi_string(s: &str) -> Option<Self> {
         // 简化解析：\x1b]8;id;url\x1b\text\x1b]8;;\x1b\
         if !s.contains("\x1b]8;") {
@@ -234,6 +236,7 @@ impl LinkDetector {
     }
 
     /// 在当前可视内容中检测链接，处理跨行换行的URL。
+    #[allow(dead_code)]
     pub fn detect_links_in_visible_cells(
         &self,
         visible_cells: &[Vec<crate::terminal::TerminalCell>],

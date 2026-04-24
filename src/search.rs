@@ -2,7 +2,6 @@
 use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
-use std::path::PathBuf;
 
 /// 单个搜索匹配项
 #[derive(Clone, Debug, Copy, PartialEq, Eq)]
@@ -103,6 +102,7 @@ impl SearchState {
     }
 
     /// 获取当前匹配项（如果有）
+    #[allow(dead_code)]
     pub fn current_match(&self) -> Option<SearchMatch> {
         if self.matches.is_empty() {
             None
@@ -130,12 +130,14 @@ impl SearchState {
     }
 
     /// 切换大小写敏感
+    #[allow(dead_code)]
     pub fn toggle_case_sensitive(&mut self) {
         self.case_sensitive = !self.case_sensitive;
         self.current_match_index = 0;
     }
 
     /// 切换正则表达式模式
+    #[allow(dead_code)]
     pub fn toggle_regex(&mut self) {
         self.use_regex = !self.use_regex;
         self.current_match_index = 0;
@@ -210,37 +212,10 @@ impl SearchState {
     }
 
     /// 清除搜索历史
+    #[allow(dead_code)]
     pub fn clear_history(&mut self) {
         self.history.clear();
         self.history_nav_index = None;
-    }
-
-    /// 获取搜索历史保存路径
-    pub fn history_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let data_dir = dirs::data_local_dir().ok_or("Could not determine data directory")?;
-        Ok(data_dir.join("jterm2/search_history.json"))
-    }
-
-    /// 保存搜索历史到文件
-    pub fn save_history(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let path = Self::history_path()?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let json = serde_json::to_string_pretty(&self.history)?;
-        std::fs::write(path, json)?;
-        Ok(())
-    }
-
-    /// 从文件加载搜索历史
-    pub fn load_history(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let path = Self::history_path()?;
-        if path.exists() {
-            let json = std::fs::read_to_string(path)?;
-            let history: VecDeque<SearchHistoryEntry> = serde_json::from_str(&json)?;
-            self.history = history;
-        }
-        Ok(())
     }
 }
 

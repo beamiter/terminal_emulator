@@ -22,9 +22,11 @@ pub struct AtlasGlyphKey {
 
 pub trait FontBackend: Send + Sync {
     fn get_or_rasterize(&mut self, ch: char, bold: bool, subpixel_offset: u8) -> GlyphRegion;
+    #[allow(dead_code)]
     fn reset(&mut self, device: &wgpu::Device, queue: &wgpu::Queue);
     fn font_metrics(&self) -> (f32, f32, f32);
     fn ensure_uploaded(&mut self, device: &wgpu::Device, queue: &wgpu::Queue);
+    #[allow(dead_code)]
     fn backend_name(&self) -> &'static str;
     fn gpu_resources(&self) -> (&wgpu::TextureView, &wgpu::Sampler);
     fn atlas_dimensions(&self) -> (u32, u32);
